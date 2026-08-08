@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <!-- Background Linear Gradient (Dark Luxury Midnight Navy) -->
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#181133"/>
+      <stop offset="50%" stop-color="#0e0822"/>
+      <stop offset="100%" stop-color="#05020c"/>
+    </linearGradient>
+
+    <!-- Premium Gold Crown Gradient -->
+    <linearGradient id="goldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffe57f"/>
+      <stop offset="35%" stop-color="#ffb300"/>
+      <stop offset="70%" stop-color="#ff8f00"/>
+      <stop offset="100%" stop-color="#ff6f00"/>
+    </linearGradient>
+
+    <!-- Electric Neon Magenta-Cyan P Gradient -->
+    <linearGradient id="neonPGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00f2fe"/>
+      <stop offset="40%" stop-color="#4facfe"/>
+      <stop offset="75%" stop-color="#bf00ff"/>
+      <stop offset="100%" stop-color="#ff007f"/>
+    </linearGradient>
+
+    <!-- Diamond White Gradient -->
+    <linearGradient id="diamondGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="100%" stop-color="#e0f7fa"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Base Dark Canvas -->
+  <rect width="512" height="512" rx="100" fill="url(#bgGrad)"/>
+  
+  <!-- Outer Gold Border Frame -->
+  <rect x="12" y="12" width="488" height="488" rx="90" fill="none" stroke="url(#goldGrad)" stroke-width="5" opacity="0.5"/>
+
+  <!-- GOLD CROWN AT TOP -->
+  <!-- Crown Base Band -->
+  <path d="M 170 120 L 342 120 L 332 135 L 180 135 Z" fill="url(#goldGrad)"/>
+  <!-- Crown Base Jewels -->
+  <circle cx="210" cy="127.5" r="4" fill="#ffffff"/>
+  <circle cx="256" cy="127.5" r="5" fill="#00f2fe"/>
+  <circle cx="302" cy="127.5" r="4" fill="#ffffff"/>
+
+  <!-- Crown Peaks -->
+  <path d="M 160 118 L 135 55 L 195 90 L 256 38 L 317 90 L 377 55 L 352 118 Z" fill="url(#goldGrad)"/>
+
+  <!-- Crown Tip Diamonds -->
+  <circle cx="135" cy="50" r="10" fill="url(#diamondGrad)"/>
+  <circle cx="256" cy="32" r="13" fill="url(#diamondGrad)"/>
+  <circle cx="377" cy="50" r="10" fill="url(#diamondGrad)"/>
+
+  <!-- BOLD EMBLEM LETTER 'P' -->
+  <!-- Stem (Vertical Bar) -->
+  <rect x="150" y="150" width="68" height="275" rx="14" fill="url(#neonPGrad)"/>
+  <!-- Inner Gold Inset Accent on Stem -->
+  <rect x="162" y="165" width="22" height="245" rx="8" fill="url(#goldGrad)" opacity="0.9"/>
+
+  <!-- Loop Outer Arch -->
+  <path d="M 218 150 L 325 150 C 400 150, 400 295, 325 295 L 218 295 Z" fill="url(#neonPGrad)"/>
+  <!-- Loop Inner Cutout (Dark Midnight Background) -->
+  <path d="M 218 198 L 310 198 C 345 198, 345 247, 310 247 L 218 247 Z" fill="#0e0822"/>
+
+  <!-- Singer Mic Icon inside 'P' loop -->
+  <circle cx="265" cy="222.5" r="11" fill="url(#diamondGrad)"/>
+  <rect x="261" y="233.5" width="8" height="12" rx="3" fill="url(#goldGrad)"/>
+
+  <!-- TEXT BELOW: PARDAIS PARTY -->
+  <text x="256" y="458" font-family="Arial, Helvetica, sans-serif" font-weight="900" font-size="28" fill="#ffffff" text-anchor="middle" letter-spacing="4">PARDAIS</text>
+  <text x="256" y="488" font-family="Arial, Helvetica, sans-serif" font-weight="800" font-size="20" fill="#00f2fe" text-anchor="middle" letter-spacing="6">PARTY</text>
+
+  <!-- Party Confetti Stars -->
+  <polygon points="105,185 110,195 120,195 112,202 115,212 105,205 95,212 98,202 90,195 100,195" fill="#ffe57f"/>
+  <polygon points="405,350 410,360 420,360 412,367 415,377 405,370 395,377 398,367 390,360 400,360" fill="#00f2fe"/>
+  <circle cx="100" cy="280" r="5" fill="#ff007f"/>
+  <circle cx="410" cy="250" r="6" fill="#ffe57f"/>
+</svg>
