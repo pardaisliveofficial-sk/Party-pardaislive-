@@ -146,7 +146,7 @@ export const VipRideAnimationOverlay: React.FC<VipRideAnimationOverlayProps> = (
 
         {/* Speed Line Particles under mount */}
         <div className="mt-2 flex items-center justify-center space-x-1 text-[9px] font-mono text-gray-300">
-          <span className="animate-pulse">⚡ VIP {effect.vipLevel} {effect.vehicleName.toUpperCase()} ENTRANCE EFFECT ACTIVATED ⚡</span>
+          <span className="animate-pulse">⚡ VIP {effect.vipLevel} {(effect.vehicleName || "ride").toUpperCase()} ENTRANCE EFFECT ACTIVATED ⚡</span>
         </div>
       </div>
     </div>

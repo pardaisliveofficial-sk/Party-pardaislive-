@@ -2072,7 +2072,7 @@ export default function App() {
   }, [reels, stories, user.uniqueId, user.username, user.fullName]);
 
   // Client Navigation View (within mobile)
-  const [clientView, setClientView] = useState<"feed" | "live-room" | "profile" | "wallet" | "family-agency" | "chat" | "reels" | "user-live" | "camera-prep">("feed");
+  const [clientView, setClientView] = useState<"feed" | "live-room" | "profile" | "wallet" | "family-agency" | "chat" | "reels" | "user-live" | "camera-prep" | "party-room" | "notifications" | "stream">("feed");
   const [viewHistory, setViewHistory] = useState<string[]>(["feed"]);
 
   useEffect(() => {
@@ -2198,11 +2198,15 @@ export default function App() {
 
   // Payment checkout modal states
   const [showCardPaymentModal, setShowCardPaymentModal] = useState<boolean>(false);
-  const [activePaymentMethodTab, setActivePaymentMethodTab] = useState<"gpay" | "card">("gpay");
+  const [activePaymentMethodTab, setActivePaymentMethodTab] = useState<"gpay" | "card" | "easypaisa" | "jazzcash" | "bank">("card");
   const [gpayEmail, setGpayEmail] = useState<string>("pardaisliveofficial@gmail.com");
   const [gpayCardSelected, setGpayCardSelected] = useState<string>("Google Pay • Visa ending in 4242");
+  const [easypaisaMobileNum, setEasypaisaMobileNum] = useState<string>("");
+  const [jazzcashMobileNum, setJazzcashMobileNum] = useState<string>("");
   const [isProcessingGPay, setIsProcessingGPay] = useState<boolean>(false);
   const [isProcessingCard, setIsProcessingCard] = useState<boolean>(false);
+  const [isProcessingEasyPaisa, setIsProcessingEasyPaisa] = useState<boolean>(false);
+  const [isProcessingJazzCash, setIsProcessingJazzCash] = useState<boolean>(false);
   const [paymentErrorModalMsg, setPaymentErrorModalMsg] = useState<string | null>(null);
   const [gpayBiometricAuth, setGpayBiometricAuth] = useState<boolean>(true);
   const [showPaymentReceiptModal, setShowPaymentReceiptModal] = useState<boolean>(false);
@@ -2223,7 +2227,7 @@ export default function App() {
   const [cardFormCvv, setCardFormCvv] = useState<string>("");
 
   // Admin Payment & GPay Revenue Control States
-  const [adminModalActiveTab, setAdminModalActiveTab] = useState<"gpay_ledger" | "whatsapp_config" | "offline_requests">("gpay_ledger");
+  const [adminModalActiveTab, setAdminModalActiveTab] = useState<"gpay_ledger" | "whatsapp_config" | "offline_requests" | "agency_requests" | "coin_sellers">("gpay_ledger");
   const [ledgerSearchQuery, setLedgerSearchQuery] = useState<string>("");
   const [ledgerMethodFilter, setLedgerMethodFilter] = useState<"all" | "gpay" | "card">("all");
 
@@ -2586,10 +2590,12 @@ export default function App() {
     id: number;
     name: string | null;
     avatar: string | null;
-    diamonds: string | null;
+    diamonds?: string | null;
     isMuted: boolean;
     isCamMuted: boolean;
     isBigFrame: boolean;
+    isModerator?: boolean;
+    rotation?: number;
   }>>([
     { id: 1, name: null, avatar: null, diamonds: null, isMuted: false, isCamMuted: false, isBigFrame: false },
     { id: 2, name: null, avatar: null, diamonds: null, isMuted: false, isCamMuted: false, isBigFrame: false },
@@ -2766,12 +2772,28 @@ export default function App() {
 
   const [agencyRequests, setAgencyRequests] = useState<any[]>([]);
 
-  // Apply inputs
+  // Apply inputs for Coin Seller Agency Access System
   const [csName, setCsName] = useState("");
-  const [csWhatsapp, setCsWhatsapp] = useState("");
+  const [csFullName, setCsFullName] = useState("");
+  const [csUserId, setCsUserId] = useState("");
+  const [csEmail, setCsEmail] = useState("");
+  const [csPhone, setCsPhone] = useState("");
+  const [csCountry, setCsCountry] = useState("Pakistan");
+  const [csAccountInfo, setCsAccountInfo] = useState("");
+  const [csAgencyName, setCsAgencyName] = useState("");
+  const [csMonthlyPurchase, setCsMonthlyPurchase] = useState("$3,000 USD (500,000 Coins)");
+  const [csTransactionVolume, setCsTransactionVolume] = useState("$3,000 - $10,000 USD / month");
+  const [csNotes, setCsNotes] = useState("");
+  const [csAgreedTerms, setCsAgreedTerms] = useState(false);
+  const [csSubmitting, setCsSubmitting] = useState(false);
   const [csCity, setCsCity] = useState("Lahore");
   const [csRate, setCsRate] = useState("");
   const [csDescription, setCsDescription] = useState("");
+
+  // Admin section state for Coin Seller Agency Requests
+  const [adminAgencyReqFilter, setAdminAgencyReqFilter] = useState<"ALL" | "Pending Review" | "Approved" | "Rejected">("ALL");
+  const [adminAgencyReqSearch, setAdminAgencyReqSearch] = useState("");
+  const [selectedAgencyDetailsForAdmin, setSelectedAgencyDetailsForAdmin] = useState<any>(null);
 
   const [haSelectedAgencyId, setHaSelectedAgencyId] = useState("agency-alpha");
   const [haCategory, setHaCategory] = useState("audio");
@@ -2790,6 +2812,77 @@ export default function App() {
   const [adminHaComm, setAdminHaComm] = useState(1200);
   const [adminHaRate, setAdminHaRate] = useState("40% Commission + $150 Base Bonus");
   const [adminHaEmail, setAdminHaEmail] = useState("");
+
+  // Host Agency Registration Form State
+  const [haFullName, setHaFullName] = useState("");
+  const [haEmail, setHaEmail] = useState("");
+  const [haPhone, setHaPhone] = useState("");
+  const [haCountry, setHaCountry] = useState("Pakistan");
+  const [haCity, setHaCity] = useState("Lahore");
+  const [haAgencyName, setHaAgencyName] = useState("");
+  const [haDescription, setHaDescription] = useState("");
+  const [haExperience, setHaExperience] = useState("");
+  const [haExpectedHosts, setHaExpectedHosts] = useState("10 - 25 Hosts");
+  const [haMonthlyActivity, setHaMonthlyActivity] = useState("100+ Live Hours / month");
+  const [haActiveHosts, setHaActiveHosts] = useState("10 Active Hosts");
+  const [haNotes, setHaNotes] = useState("");
+  const [haAgreedTerms, setHaAgreedTerms] = useState(false);
+  const [haSubmitting, setHaSubmitting] = useState(false);
+
+  // Host Agency Sub-Admin Dashboard States
+  const [subAdminTab, setSubAdminTab] = useState<"dashboard" | "hosts" | "join_requests" | "earnings" | "settings">("dashboard");
+  const [subAdminSearchHost, setSubAdminSearchHost] = useState("");
+  const [selectedHostDetails, setSelectedHostDetails] = useState<any>(null);
+  const [addHostModalOpen, setAddHostModalOpen] = useState(false);
+  const [newHostUsernameToAdd, setNewHostUsernameToAdd] = useState("");
+
+  // User Join / Leave Host Agency Modal / Requests State
+  const [hostJoinRequestsList, setHostJoinRequestsList] = useState<any[]>([]);
+  const [showJoinAgencyModal, setShowJoinAgencyModal] = useState(false);
+  const [targetAgencyToJoin, setTargetAgencyToJoin] = useState<any>(null);
+  const [joinAgencyExperienceNote, setJoinAgencyExperienceNote] = useState("");
+  const [joinAgencySubmitting, setJoinAgencySubmitting] = useState(false);
+  const [leaveAgencyReasonNote, setLeaveAgencyReasonNote] = useState("");
+  const [leaveAgencySubmitting, setLeaveAgencySubmitting] = useState(false);
+  const [showLeaveForm, setShowLeaveForm] = useState(false);
+
+  // Admin "+ CREATE HOST AGENCY" Modal State
+  const [showCreateHostAgencyModal, setShowCreateHostAgencyModal] = useState(false);
+  const [adminNewAgencyName, setAdminNewAgencyName] = useState("");
+  const [adminNewAgencyId, setAdminNewAgencyId] = useState("");
+  const [adminNewAgencyLogo, setAdminNewAgencyLogo] = useState("");
+  const [adminNewAgencyDesc, setAdminNewAgencyDesc] = useState("");
+  const [adminNewAgencyCountry, setAdminNewAgencyCountry] = useState("Pakistan");
+  const [adminNewAgencyAdminName, setAdminNewAgencyAdminName] = useState("");
+  const [adminNewAgencyAdminUserId, setAdminNewAgencyAdminUserId] = useState("");
+  const [adminNewAgencyEmail, setAdminNewAgencyEmail] = useState("");
+  const [adminNewAgencyStatus, setAdminNewAgencyStatus] = useState<"Active" | "Suspended">("Active");
+  const [adminNewAgencyRate, setAdminNewAgencyRate] = useState("40% Commission + $200 Base Bonus");
+  const [adminNewAgencySubmitting, setAdminNewAgencySubmitting] = useState(false);
+
+  // Super Admin Agency Control Center, Coins & Edit States
+  const [agencyCoinTransactions, setAgencyCoinTransactions] = useState<any[]>([]);
+  const [selectedAgencyForCoins, setSelectedAgencyForCoins] = useState<any>(null);
+  const [adminAgencyCoinAmount, setAdminAgencyCoinAmount] = useState<string>("");
+  const [adminAgencyCoinReason, setAdminAgencyCoinReason] = useState<string>("");
+  const [adminAgencyCoinType, setAdminAgencyCoinType] = useState<"ADD" | "DEDUCT">("ADD");
+  const [adminAgencyCoinSubmitting, setAdminAgencyCoinSubmitting] = useState<boolean>(false);
+
+  // Super Admin Agency Edit Modal States (Ta'adulat)
+  const [selectedAgencyForEdit, setSelectedAgencyForEdit] = useState<any>(null);
+  const [editAgencyForm, setEditAgencyForm] = useState<any>({
+    id: "",
+    name: "",
+    ownerUsername: "",
+    whatsapp: "",
+    rate: "",
+    country: "Pakistan",
+    status: "Active",
+    coinBalance: 0,
+    description: "",
+    agencyType: "coin_seller"
+  });
+  const [editAgencySubmitting, setEditAgencySubmitting] = useState<boolean>(false);
   
   // Dynamic Level Center and settings states
   const [showLevelCenter, setShowLevelCenter] = useState<boolean>(false);
@@ -2958,24 +3051,31 @@ export default function App() {
   // WhatsApp style Chat center states
   const [activeChatContact, setActiveChatContact] = useState<{
     name: string;
+    username?: string;
     avatar: string;
-    bio: string;
-    followersCount: number;
-    followingCount: number;
-    totalLikesCount: number;
-    isOnline: boolean;
+    bio?: string;
+    followersCount?: number;
+    followingCount?: number;
+    totalLikesCount?: number;
+    isOnline?: boolean;
+    online?: boolean;
+    unreadCount?: number;
+    lastMessage?: string;
+    lastTime?: string;
+    badge?: string;
   } | null>(null);
   const [chatSearchQuery, setChatSearchQuery] = useState<string>("");
   const [messageSearchQuery, setMessageSearchQuery] = useState<string>("");
   const [showActiveChatDPModal, setShowActiveChatDPModal] = useState<{ name: string; avatar: string } | null>(null);
   const [showActiveChatProfileModal, setShowActiveChatProfileModal] = useState<{
     name: string;
+    username?: string;
     avatar: string;
-    bio: string;
-    followersCount: number;
-    followingCount: number;
-    totalLikesCount: number;
-    isOnline: boolean;
+    bio?: string;
+    followersCount?: number;
+    followingCount?: number;
+    totalLikesCount?: number;
+    isOnline?: boolean;
   } | null>(null);
   const [activeChatOptionsOpen, setActiveChatOptionsOpen] = useState<boolean>(false);
   const [showEmojiPicker, setShowEmojiPicker] = useState<boolean>(false);
@@ -3696,6 +3796,8 @@ export default function App() {
       userLiveMessagesRef.current = next;
     }
   };
+  const [users, setUsers] = useState<any[]>([]);
+  const [csWhatsapp, setCsWhatsapp] = useState<string>("");
   const [userLiveBeauty, setUserLiveBeauty] = useState({ smooth: 70, brightness: 80, whitening: 50 });
   const [userLiveMic, setUserLiveMic] = useState<boolean>(true);
   const [userLiveCam, setUserLiveCam] = useState<boolean>(true);
@@ -5354,6 +5456,14 @@ export default function App() {
         })
         .catch(err => console.error("Error loading agency requests:", err));
 
+      // 13. Fetch agency coin transactions history
+      fetch("/api/v1/agency-coin-transactions")
+        .then(res => res.json())
+        .then(data => {
+          if (Array.isArray(data)) setAgencyCoinTransactions(data);
+        })
+        .catch(err => console.error("Error loading agency coin transactions:", err));
+
       // Fetch parties
       fetch("/api/v1/parties")
         .then(res => res.json())
@@ -5533,6 +5643,13 @@ export default function App() {
           if (Array.isArray(data)) setAgencyRequests(data);
         })
         .catch(err => console.error("Error polling agency requests:", err));
+
+      fetch("/api/v1/agency-coin-transactions")
+        .then(res => res.json())
+        .then(data => {
+          if (Array.isArray(data)) setAgencyCoinTransactions(data);
+        })
+        .catch(err => console.error("Error polling agency coin transactions:", err));
     }, 1500);
 
     return () => {
@@ -8384,538 +8501,6 @@ export default function App() {
                       </div>
                     )}
 
-                    {/* 💳 Online Payment Checkout Modal (Google Pay & Credit/Debit Card) */}
-                    {showCardPaymentModal && selectedPaymentPackage && (
-                      <div className="fixed inset-0 bg-black/85 backdrop-blur-md z-[9999] flex flex-col justify-center items-center p-4 overflow-y-auto text-left animate-fade-in">
-                        <div className="bg-[#1e1e2d] border border-cyan-500/30 rounded-2xl p-4 space-y-3.5 shadow-2xl max-w-sm mx-auto w-full animate-pop-gift">
-                          
-                          {/* Modal Header */}
-                          <div className="flex justify-between items-center border-b border-white/10 pb-2.5">
-                            <div className="flex items-center space-x-2">
-                              <div className="flex items-center bg-white/10 px-2 py-0.5 rounded-lg border border-white/10">
-                                <span className="text-blue-400 font-bold text-xs">G</span>
-                                <span className="text-red-400 font-bold text-xs">o</span>
-                                <span className="text-yellow-400 font-bold text-xs">o</span>
-                                <span className="text-blue-400 font-bold text-xs">g</span>
-                                <span className="text-green-400 font-bold text-xs">l</span>
-                                <span className="text-red-400 font-bold text-xs">e</span>
-                                <span className="text-white font-bold text-xs ml-1">Pay</span>
-                              </div>
-                              <span className="text-[10px] text-gray-400 font-mono font-bold">| Card Checkout</span>
-                            </div>
-                            <button 
-                              type="button" 
-                              onClick={() => {
-                                setShowCardPaymentModal(false);
-                                setSelectedPaymentPackage(null);
-                                setIsProcessingGPay(false);
-                              }}
-                              className="text-gray-400 hover:text-white font-black text-xs px-2 py-0.5 rounded hover:bg-white/5"
-                            >
-                              ✕
-                            </button>
-                          </div>
-
-                          {/* Purchase Summary Box */}
-                          <div className="bg-[#12121a] p-3 rounded-xl border border-white/5 space-y-2 text-left">
-                            {/* Country Currency Switcher inside Modal */}
-                            <div className="flex items-center justify-between bg-[#1e1e2d] px-2.5 py-1 rounded-lg border border-white/10 text-[9px]">
-                              <span className="text-gray-300 font-bold flex items-center">
-                                <span className="mr-1">🌐</span> Country / Currency:
-                              </span>
-                              <select
-                                value={selectedCurrencyCountry.code}
-                                onChange={(e) => {
-                                  const found = COUNTRIES_CURRENCIES.find(c => c.code === e.target.value);
-                                  if (found) setSelectedCurrencyCountry(found);
-                                }}
-                                className="bg-[#12121a] text-yellow-300 font-mono font-bold border border-white/20 rounded px-2 py-0.5 focus:outline-none cursor-pointer"
-                              >
-                                {COUNTRIES_CURRENCIES.map(c => (
-                                  <option key={c.code} value={c.code}>
-                                    {c.flag} {c.name} ({c.currencyCode})
-                                  </option>
-                                ))}
-                              </select>
-                            </div>
-
-                            <div className="flex justify-between items-center">
-                              <p className="text-[9px] uppercase tracking-wider text-gray-400 font-mono font-bold">Item Selected</p>
-                              <span className="text-[8px] text-gray-400 font-mono">
-                                Base Rate: <strong className="text-yellow-400 font-bold">1 PKR = 10 Coins</strong>
-                              </span>
-                            </div>
-                            <div className="flex justify-between items-center">
-                              <span className="text-xs font-bold text-white flex items-center">
-                                <span className="mr-1">🪙</span>
-                                <span>{selectedPaymentPackage.coins.toLocaleString()} Coins Package</span>
-                              </span>
-                              <span className="text-xs font-mono font-black text-emerald-400">
-                                {getCoinsCostInCurrency(selectedPaymentPackage.coins, selectedCurrencyCountry, selectedPaymentPackage.discount).formattedWithCode}
-                              </span>
-                            </div>
-                            {selectedPaymentPackage.discount > 0 && (
-                              <p className="text-[8px] text-[#25D366] font-bold font-mono">
-                                🎉 Special Discount: {selectedPaymentPackage.discount}% OFF Applied!
-                              </p>
-                            )}
-                          </div>
-
-                          {/* Payment Method Switcher Tabs */}
-                          <div className="grid grid-cols-2 gap-1.5 p-1 bg-[#12121a] rounded-xl border border-white/10">
-                            <button
-                              type="button"
-                              onClick={() => setActivePaymentMethodTab("gpay")}
-                              className={`py-2 px-2 rounded-lg text-[9.5px] font-bold flex items-center justify-center space-x-1.5 transition-all ${
-                                activePaymentMethodTab === "gpay"
-                                  ? "bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-md font-black"
-                                  : "text-gray-400 hover:text-white hover:bg-white/5"
-                              }`}
-                            >
-                              <span className="font-bold">Google Pay</span>
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setActivePaymentMethodTab("card")}
-                              className={`py-2 px-2 rounded-lg text-[9.5px] font-bold flex items-center justify-center space-x-1.5 transition-all ${
-                                activePaymentMethodTab === "card"
-                                  ? "bg-gradient-to-r from-purple-600 to-pink-600 text-white shadow-md font-black"
-                                  : "text-gray-400 hover:text-white hover:bg-white/5"
-                              }`}
-                            >
-                              <span>💳 Credit / Debit Card</span>
-                            </button>
-                          </div>
-
-                          {/* 🔵 TAB 1: GOOGLE PAY EXPRESS CHECKOUT */}
-                          {activePaymentMethodTab === "gpay" && (
-                            <div className="space-y-3 pt-1 animate-fadeIn text-left">
-                              <div className="bg-[#12121a] border border-blue-500/20 p-3 rounded-xl space-y-2.5">
-                                <div className="flex justify-between items-center text-[10px]">
-                                  <span className="text-gray-400 font-medium">Google Account:</span>
-                                  <span className="text-white font-mono font-bold">{user.email || gpayEmail}</span>
-                                </div>
-
-                                <div className="space-y-1">
-                                  <label className="text-[8px] uppercase tracking-wider text-gray-400 font-mono font-bold block">Select Google Pay Linked Card</label>
-                                  <select
-                                    value={gpayCardSelected}
-                                    onChange={(e) => setGpayCardSelected(e.target.value)}
-                                    className="w-full bg-[#1e1e2d] border border-[#303040] rounded-lg p-2 text-xs text-white font-mono focus:outline-none focus:border-blue-500"
-                                  >
-                                    <option value="Google Pay • Visa ending in 4242">Google Pay • Visa ending in 4242</option>
-                                    <option value="Google Pay • Mastercard ending in 8812">Google Pay • Mastercard ending in 8812</option>
-                                    <option value="Google Pay • UnionPay ending in 9010">Google Pay • UnionPay ending in 9010</option>
-                                    <option value="Google Pay • Local Bank Debit Card">Google Pay • Local Bank Debit Card</option>
-                                  </select>
-                                </div>
-
-                                <div className="flex items-center justify-between pt-1">
-                                  <label className="flex items-center space-x-2 text-[9px] text-gray-300 cursor-pointer">
-                                    <input
-                                      type="checkbox"
-                                      checked={gpayBiometricAuth}
-                                      onChange={(e) => setGpayBiometricAuth(e.target.checked)}
-                                      className="rounded text-blue-500 accent-blue-500"
-                                    />
-                                    <span>Require Biometric TouchID / FaceID Authentication</span>
-                                  </label>
-                                </div>
-                              </div>
-
-                              {isProcessingGPay ? (
-                                <div className="py-4 text-center space-y-2 bg-[#12121a] rounded-xl border border-blue-500/30">
-                                  <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto" />
-                                  <p className="text-xs font-mono font-bold text-blue-400">Verifying Payment with Server & Gateway...</p>
-                                  <p className="text-[8px] text-gray-500">🔒 Encrypted 256-Bit SSL Handshake to /api/v1/payments/process</p>
-                                </div>
-                              ) : (
-                                <button
-                                  type="button"
-                                  onClick={async () => {
-                                    if (!selectedPaymentPackage) return;
-                                    const costObj = getCoinsCostInCurrency(selectedPaymentPackage.coins, selectedCurrencyCountry, selectedPaymentPackage.discount);
-                                    setIsProcessingGPay(true);
-                                    setPaymentErrorModalMsg(null);
-
-                                    const orderId = `GPAY-${Math.floor(100000 + Math.random() * 900000)}`;
-                                    const gpayMethod = `Google Pay (${gpayCardSelected.split("•")[1]?.trim() || "Visa **** 4242"})`;
-
-                                    try {
-                                      const token = localStorage.getItem("pardais_user_token");
-                                      const res = await fetch("/api/v1/payments/process", {
-                                        method: "POST",
-                                        headers: {
-                                          "Content-Type": "application/json",
-                                          ...(token ? { "Authorization": `Bearer ${token}` } : {})
-                                        },
-                                        body: JSON.stringify({
-                                          orderId,
-                                          username: user.username,
-                                          userId: user.uid || user.username,
-                                          paymentMethod: gpayMethod,
-                                          coins: selectedPaymentPackage.coins,
-                                          amountLocal: costObj.localAmount,
-                                          currencyCode: selectedCurrencyCountry.currencyCode,
-                                          formattedAmount: costObj.formattedWithCode,
-                                          amountPKR: costObj.pkrBase,
-                                          country: selectedCurrencyCountry.name,
-                                          gpayToken: "gpay_token_verified_ssl_256"
-                                        })
-                                      });
-
-                                      const data = await res.json();
-                                      setIsProcessingGPay(false);
-
-                                      if (res.ok && data.success && data.verified) {
-                                        // REAL-TIME SERVER-SIDE BALANCE UPDATE
-                                        if (data.user) {
-                                          setUser(data.user);
-                                        } else if (data.newCoinBalance !== undefined) {
-                                          setUser(prev => ({ ...prev, coins: data.newCoinBalance }));
-                                        }
-
-                                        setPaymentReceiptData({
-                                          orderId: data.orderId || orderId,
-                                          method: gpayMethod,
-                                          amount: costObj.localAmount,
-                                          coins: selectedPaymentPackage.coins,
-                                          date: new Date().toLocaleString()
-                                        });
-
-                                        if (data.transaction) {
-                                          setOnlineRechargeLedger(prev => [data.transaction, ...prev]);
-                                        }
-
-                                        setShowCardPaymentModal(false);
-                                        setSelectedPaymentPackage(null);
-                                        setShowPaymentReceiptModal(true);
-                                      } else {
-                                        setPaymentErrorModalMsg(data.message || data.error || "Google Pay verification failed.");
-                                      }
-                                    } catch (err: any) {
-                                      setIsProcessingGPay(false);
-                                      setPaymentErrorModalMsg("Network Error: Could not connect to payment verification server.");
-                                    }
-                                  }}
-                                  className="w-full py-3 rounded-xl bg-black border border-white/20 hover:border-blue-400 text-white font-bold text-xs hover:bg-gray-900 transition-all text-center cursor-pointer flex items-center justify-center space-x-2 shadow-xl"
-                                >
-                                  <span className="text-sm font-black text-blue-400">G</span>
-                                  <span className="text-sm font-black text-red-400">o</span>
-                                  <span className="text-sm font-black text-yellow-400">o</span>
-                                  <span className="text-sm font-black text-blue-400">g</span>
-                                  <span className="text-sm font-black text-green-400">l</span>
-                                  <span className="text-sm font-black text-red-400">e</span>
-                                  <span className="text-sm font-black text-white ml-1">Pay</span>
-                                  <span className="text-gray-400 mx-1">|</span>
-                                  <span>Pay {getCoinsCostInCurrency(selectedPaymentPackage.coins, selectedCurrencyCountry, selectedPaymentPackage.discount).formattedWithCode}</span>
-                                </button>
-                              )}
-
-                              <p className="text-[7.5px] text-gray-500 text-center font-mono">
-                                🛡️ Google Pay Buyer Protection 256-Bit SSL Encrypted
-                              </p>
-                            </div>
-                          )}
-
-                          {/* 💳 TAB 2: CREDIT / DEBIT CARD DIRECT FORM */}
-                          {activePaymentMethodTab === "card" && (
-                            <div className="space-y-3 animate-fadeIn">
-                              {/* Interactive Card Preview */}
-                              <div className="bg-gradient-to-tr from-purple-800 to-[#ff007f] p-3.5 rounded-xl shadow-lg relative text-white space-y-3 overflow-hidden border border-white/10">
-                                <div className="flex justify-between items-center">
-                                  <span className="text-[10px] font-black tracking-widest font-mono uppercase text-yellow-300">Pardais Pay Card</span>
-                                  <div className="flex space-x-1">
-                                    <div className="w-4 h-2.5 rounded bg-yellow-400/60" />
-                                    <div className="w-4 h-2.5 rounded bg-red-400/60" />
-                                  </div>
-                                </div>
-                                <p className="text-xs font-mono font-black tracking-widest text-center py-1">
-                                  {cardFormNumber || "•••• •••• •••• ••••"}
-                                </p>
-                                <div className="flex justify-between text-[7.5px] font-mono">
-                                  <div>
-                                    <span className="block text-[6px] uppercase text-white/60">Cardholder Name</span>
-                                    <span className="font-bold tracking-wider uppercase">{cardFormHolder || user.username || "CARD HOLDER"}</span>
-                                  </div>
-                                  <div>
-                                    <span className="block text-[6px] uppercase text-white/60">Expires</span>
-                                    <span className="font-bold">{cardFormExpiry || "MM/YY"}</span>
-                                  </div>
-                                </div>
-                              </div>
-
-                              {/* Form Inputs */}
-                              <div className="space-y-2.5 text-[10px]">
-                                <div className="space-y-1">
-                                  <label className="text-[8px] uppercase tracking-widest text-gray-400 font-mono font-bold block">Cardholder Name</label>
-                                  <input
-                                    type="text"
-                                    placeholder="Name on card"
-                                    value={cardFormHolder}
-                                    onChange={(e) => setCardFormHolder(e.target.value)}
-                                    className="w-full bg-[#12121a] border border-[#303040] rounded-lg p-2 text-white focus:outline-none focus:border-[#ff007f]"
-                                  />
-                                </div>
-
-                                <div className="space-y-1">
-                                  <label className="text-[8px] uppercase tracking-widest text-gray-400 font-mono font-bold block">Card Number</label>
-                                  <input
-                                    type="text"
-                                    placeholder="4000 1234 5678 9010"
-                                    maxLength={19}
-                                    value={cardFormNumber}
-                                    onChange={(e) => {
-                                      const val = e.target.value.replace(/\D/g, "");
-                                      const formatted = val.match(/.{1,4}/g)?.join(" ") || val;
-                                      setCardFormNumber(formatted);
-                                    }}
-                                    className="w-full bg-[#12121a] border border-[#303040] rounded-lg p-2 text-white font-mono tracking-widest focus:outline-none focus:border-[#ff007f]"
-                                  />
-                                </div>
-
-                                <div className="grid grid-cols-2 gap-2">
-                                  <div className="space-y-1">
-                                    <label className="text-[8px] uppercase tracking-widest text-gray-400 font-mono font-bold block">Expiry Date</label>
-                                    <input
-                                      type="text"
-                                      placeholder="MM/YY"
-                                      maxLength={5}
-                                      value={cardFormExpiry}
-                                      onChange={(e) => {
-                                        const val = e.target.value.replace(/\D/g, "");
-                                        if (val.length >= 3) {
-                                          setCardFormExpiry(val.slice(0, 2) + "/" + val.slice(2, 4));
-                                        } else {
-                                          setCardFormExpiry(val);
-                                        }
-                                      }}
-                                      className="w-full bg-[#12121a] border border-[#303040] rounded-lg p-2 text-white font-mono tracking-widest focus:outline-none focus:border-[#ff007f]"
-                                    />
-                                  </div>
-                                  <div className="space-y-1">
-                                    <label className="text-[8px] uppercase tracking-widest text-gray-400 font-mono font-bold block">CVV Code</label>
-                                    <input
-                                      type="password"
-                                      placeholder="•••"
-                                      maxLength={3}
-                                      value={cardFormCvv}
-                                      onChange={(e) => setCardFormCvv(e.target.value.replace(/\D/g, ""))}
-                                      className="w-full bg-[#12121a] border border-[#303040] rounded-lg p-2 text-white font-mono tracking-widest focus:outline-none focus:border-[#ff007f]"
-                                    />
-                                  </div>
-                                </div>
-
-                                {isProcessingCard ? (
-                                  <div className="py-3 text-center space-y-1.5 bg-[#12121a] rounded-xl border border-yellow-500/30">
-                                    <div className="w-6 h-6 border-2 border-yellow-400 border-t-transparent rounded-full animate-spin mx-auto" />
-                                    <p className="text-[10px] font-mono font-bold text-yellow-400">Verifying Card Authorization Server-Side...</p>
-                                  </div>
-                                ) : (
-                                  <button
-                                    type="button"
-                                    onClick={async () => {
-                                      if (!cardFormHolder.trim() || cardFormNumber.replace(/\D/g, "").length < 15 || !cardFormExpiry || cardFormCvv.length < 3) {
-                                        alert("Please enter full card details correctly (Holder Name, 16-Digit Card Number, Expiry, and CVV)!");
-                                        return;
-                                      }
-                                      if (!selectedPaymentPackage) return;
-                                      const costObj = getCoinsCostInCurrency(selectedPaymentPackage.coins, selectedCurrencyCountry, selectedPaymentPackage.discount);
-                                      setIsProcessingCard(true);
-                                      setPaymentErrorModalMsg(null);
-
-                                      const orderId = `CARD-${Math.floor(100000 + Math.random() * 900000)}`;
-                                      const cardMethod = `Credit Card (Visa **** ${cardFormNumber.slice(-4)})`;
-
-                                      try {
-                                        const token = localStorage.getItem("pardais_user_token");
-                                        const res = await fetch("/api/v1/payments/process", {
-                                          method: "POST",
-                                          headers: {
-                                            "Content-Type": "application/json",
-                                            ...(token ? { "Authorization": `Bearer ${token}` } : {})
-                                          },
-                                          body: JSON.stringify({
-                                            orderId,
-                                            username: user.username,
-                                            userId: user.uid || user.username,
-                                            paymentMethod: cardMethod,
-                                            coins: selectedPaymentPackage.coins,
-                                            amountLocal: costObj.localAmount,
-                                            currencyCode: selectedCurrencyCountry.currencyCode,
-                                            formattedAmount: costObj.formattedWithCode,
-                                            amountPKR: costObj.pkrBase,
-                                            country: selectedCurrencyCountry.name,
-                                            cardHolder: cardFormHolder,
-                                            cardNumber: cardFormNumber,
-                                            cardExpiry: cardFormExpiry,
-                                            cardCvv: cardFormCvv
-                                          })
-                                        });
-
-                                        const data = await res.json();
-                                        setIsProcessingCard(false);
-
-                                        if (res.ok && data.success && data.verified) {
-                                          // REAL-TIME SERVER-SIDE BALANCE UPDATE
-                                          if (data.user) {
-                                            setUser(data.user);
-                                          } else if (data.newCoinBalance !== undefined) {
-                                            setUser(prev => ({ ...prev, coins: data.newCoinBalance }));
-                                          }
-
-                                          setPaymentReceiptData({
-                                            orderId: data.orderId || orderId,
-                                            method: cardMethod,
-                                            amount: costObj.localAmount,
-                                            coins: selectedPaymentPackage.coins,
-                                            date: new Date().toLocaleString()
-                                          });
-
-                                          if (data.transaction) {
-                                            setOnlineRechargeLedger(prev => [data.transaction, ...prev]);
-                                          }
-
-                                          setShowCardPaymentModal(false);
-                                          setSelectedPaymentPackage(null);
-                                          setCardFormHolder("");
-                                          setCardFormNumber("");
-                                          setCardFormExpiry("");
-                                          setCardFormCvv("");
-                                          setShowPaymentReceiptModal(true);
-                                        } else {
-                                          setPaymentErrorModalMsg(data.message || data.error || "Card payment verification failed.");
-                                        }
-                                      } catch (err: any) {
-                                        setIsProcessingCard(false);
-                                        setPaymentErrorModalMsg("Network Error: Payment gateway authorization failed.");
-                                      }
-                                    }}
-                                    className="w-full py-2.5 rounded-xl bg-gradient-to-r from-yellow-500 to-amber-500 text-black font-black uppercase text-[10px] hover:opacity-90 transition-all text-center cursor-pointer shadow-lg shadow-yellow-500/10"
-                                  >
-                                    Authorize Card Payment ({getCoinsCostInCurrency(selectedPaymentPackage.coins, selectedCurrencyCountry, selectedPaymentPackage.discount).formattedWithCode}) & Recharge
-                                  </button>
-                                )}
-                              </div>
-                            </div>
-                          )}
-
-                          {/* Top-up Test Balance Helper */}
-                          <div className="pt-2 border-t border-white/5 flex justify-between items-center text-[8px] text-gray-400">
-                            <span>Simulated Test Balance: <strong className="text-yellow-400">${simulatedAccountBalance.toFixed(2)}</strong></span>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setSimulatedAccountBalance(prev => prev + 100);
-                                setReportSuccessToast("Added $100.00 to test card balance!");
-                                setTimeout(() => setReportSuccessToast(null), 2500);
-                              }}
-                              className="text-xs bg-white/10 hover:bg-white/20 text-white font-bold px-2 py-0.5 rounded transition-colors"
-                            >
-                              + Add $100 Test Balance
-                            </button>
-                          </div>
-
-                        </div>
-                      </div>
-                    )}
-
-                    {/* 🧾 Digital Payment Receipt Modal */}
-                    {showPaymentReceiptModal && paymentReceiptData && (
-                      <div className="fixed inset-0 bg-black/85 backdrop-blur-md z-[9999] flex flex-col justify-center items-center p-4 overflow-y-auto text-left animate-fade-in">
-                        <div className="bg-[#1e1e2d] border border-emerald-500/40 rounded-2xl p-5 space-y-4 shadow-2xl max-w-sm mx-auto w-full animate-pop-gift text-center">
-                          <div className="w-12 h-12 rounded-full bg-emerald-500/20 text-emerald-400 text-2xl flex items-center justify-center mx-auto border border-emerald-500/40">
-                            ✓
-                          </div>
-
-                          <div>
-                            <span className="text-[9px] uppercase tracking-widest text-emerald-400 font-mono font-bold block">Payment Completed Successfully</span>
-                            <h3 className="text-base font-black text-white mt-1">Transaction Verified</h3>
-                          </div>
-
-                          <div className="bg-[#12121a] p-3.5 rounded-xl border border-white/10 space-y-2 text-left text-[10px]">
-                            <div className="flex justify-between border-b border-white/5 pb-1">
-                              <span className="text-gray-400">Order ID:</span>
-                              <strong className="text-white font-mono">{paymentReceiptData.orderId}</strong>
-                            </div>
-                            <div className="flex justify-between border-b border-white/5 pb-1">
-                              <span className="text-gray-400">Payment Method:</span>
-                              <strong className="text-blue-400 font-bold">{paymentReceiptData.method}</strong>
-                            </div>
-                            <div className="flex justify-between border-b border-white/5 pb-1">
-                              <span className="text-gray-400">Amount Charged:</span>
-                              <strong className="text-emerald-400 font-mono font-bold">
-                                {selectedCurrencyCountry.symbol}{paymentReceiptData.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {selectedCurrencyCountry.currencyCode}
-                              </strong>
-                            </div>
-                            <div className="flex justify-between border-b border-white/5 pb-1">
-                              <span className="text-gray-400">Coins Added:</span>
-                              <strong className="text-yellow-400 font-mono font-bold">+{paymentReceiptData.coins.toLocaleString()} Coins</strong>
-                            </div>
-                            <div className="flex justify-between">
-                              <span className="text-gray-400">Date & Time:</span>
-                              <span className="text-gray-300 font-mono text-[9px]">{paymentReceiptData.date}</span>
-                            </div>
-                          </div>
-
-                          <div className="space-y-2">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                alert(`Receipt downloaded for Order ${paymentReceiptData.orderId}`);
-                              }}
-                              className="w-full py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white font-bold text-[10px] uppercase tracking-wider transition-all"
-                            >
-                              📥 Download Digital PDF Receipt
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setShowPaymentReceiptModal(false);
-                                setPaymentReceiptData(null);
-                              }}
-                              className="w-full py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 text-black font-black uppercase text-[10px] tracking-wider transition-all shadow-lg shadow-emerald-500/10 cursor-pointer"
-                            >
-                              Done & View Updated Wallet
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* ❌ Payment Failed State Modal */}
-                    {paymentErrorModalMsg && (
-                      <div className="fixed inset-0 bg-black/85 backdrop-blur-md z-[9999] flex flex-col justify-center items-center p-4 overflow-y-auto text-left animate-fade-in">
-                        <div className="bg-[#1e1e2d] border border-red-500/50 rounded-2xl p-5 space-y-4 shadow-2xl max-w-sm mx-auto w-full text-center">
-                          <div className="w-12 h-12 rounded-full bg-red-500/20 text-red-400 text-2xl flex items-center justify-center mx-auto border border-red-500/40 font-black">
-                            ✕
-                          </div>
-
-                          <div>
-                            <span className="text-[9px] uppercase tracking-widest text-red-400 font-mono font-bold block">Payment Authorization Failed</span>
-                            <h3 className="text-base font-black text-white mt-1">Transaction Rejected</h3>
-                          </div>
-
-                          <div className="bg-[#12121a] p-3.5 rounded-xl border border-red-500/20 text-left text-[11px] space-y-2">
-                            <p className="text-red-300 font-medium">
-                              {paymentErrorModalMsg}
-                            </p>
-                            <p className="text-[9px] text-gray-400 font-mono pt-1 border-t border-white/5">
-                              🔒 No coins were added to your wallet and no funds were captured.
-                            </p>
-                          </div>
-
-                          <button
-                            type="button"
-                            onClick={() => setPaymentErrorModalMsg(null)}
-                            className="w-full py-2.5 rounded-xl bg-gradient-to-r from-red-600 to-pink-600 text-white font-bold uppercase text-[10px] tracking-wider hover:opacity-90 transition-all cursor-pointer shadow-lg shadow-red-600/20"
-                          >
-                            Try Again
-                          </button>
-                        </div>
-                      </div>
-                    )}
-
                     {/* Highly Professional Terms of Service Modal (In-Simulator Overlay) */}
                     {showTermsModal && (
                       <div className="absolute inset-0 bg-black/95 z-50 flex flex-col justify-between p-4">
@@ -9048,7 +8633,7 @@ export default function App() {
                                 >
                                   <div className="flex items-center space-x-2.5 min-w-0">
                                     <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-[#4285F4] to-[#34A853] flex items-center justify-center text-white font-black text-xs shrink-0 shadow-md">
-                                      {acc.name ? acc.name.charAt(0).toUpperCase() : acc.email.charAt(0).toUpperCase()}
+                                      {acc?.name ? acc.name.charAt(0).toUpperCase() : (acc?.email || "G").charAt(0).toUpperCase()}
                                     </div>
                                     <div className="min-w-0 flex-1">
                                       <h4 className="text-xs font-bold text-white group-hover:text-[#4285F4] transition-colors truncate">
@@ -13840,7 +13425,7 @@ export default function App() {
 
                                   <div className="relative z-10 shrink-0">
                                     <div className={`w-5.5 h-5.5 rounded-full flex items-center justify-center text-[8.5px] font-black ${isVip ? "bg-amber-400 text-amber-950" : "bg-purple-500 text-white"} shadow-inner`}>
-                                      {notif.username.charAt(0).toUpperCase()}
+                                      {(notif?.username || "P").charAt(0).toUpperCase()}
                                     </div>
                                     {isVip && (
                                       <div className="absolute -top-1 -right-1 bg-yellow-400 rounded-full p-0.5 animate-bounce shadow">
@@ -14020,6 +13605,20 @@ export default function App() {
                                   >
                                     <Plus className="w-3.5 h-3.5 text-white font-black" />
                                     <span>Add Story</span>
+                                  </button>
+
+                                  {/* 🎙️ Join / My Agency Button */}
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setTargetAgencyToJoin(null);
+                                      setShowJoinAgencyModal(true);
+                                    }}
+                                    className="px-3.5 py-1.5 bg-gradient-to-r from-purple-600 via-indigo-600 to-pink-600 hover:opacity-95 active:scale-95 text-white font-extrabold text-[11px] rounded-full shadow-[0_0_12px_rgba(147,51,234,0.4)] flex items-center space-x-1.5 transition-all border border-purple-400/50 hover:border-purple-300 cursor-pointer backdrop-blur-md"
+                                    title="Browse Host Agencies or Manage Agency Membership"
+                                  >
+                                    <Building2 className="w-3.5 h-3.5 text-purple-200" />
+                                    <span>{user?.agencyId ? "My Agency" : "Join Agency"}</span>
                                   </button>
 
                                   {/* Edit Profile Button */}
@@ -14276,9 +13875,9 @@ export default function App() {
                                   <div className="space-y-1 bg-transparent">
                                     <div className="flex items-center space-x-2">
                                       <h4 className="text-sm font-black text-white">{user.fullName || user.username || "Pardais User"}</h4>
-                                      <CheckCircle2 className="w-3.5 h-3.5 text-[#66fcf1]" title="Verified Host" />
+                                      <CheckCircle2 className="w-3.5 h-3.5 text-[#66fcf1]" />
                                       {user.isVerified && (
-                                        <BadgeCheck className="w-4 h-4 text-green-400 fill-green-400/10" title="KYC Identity Verified" />
+                                        <BadgeCheck className="w-4 h-4 text-green-400 fill-green-400/10" />
                                       )}
                                     </div>
                                     <div className="flex items-center">
@@ -14438,6 +14037,36 @@ export default function App() {
                             </div>
                             <div className="flex items-center space-x-1 text-[9px] text-cyan-400 font-black group-hover:translate-x-0.5 transition-transform">
                               <span>Open Wallet</span>
+                              <span>➔</span>
+                            </div>
+                          </div>
+
+                          {/* ===================================================================== */}
+                          {/* 🏢 AGENCY SYSTEM (COIN SELLER AGENCY & HOST AGENCY) */}
+                          {/* ===================================================================== */}
+                          <div 
+                            onClick={() => {
+                              setAgencyPortalTab("coin_seller");
+                              setShowAgencyPortalOverlay(true);
+                            }}
+                            className="bg-gradient-to-r from-purple-900/50 via-[#1e1e2d] to-pink-900/40 p-3 rounded-xl border border-purple-500/40 hover:border-purple-400 shadow-md cursor-pointer group transition-all duration-200 active:scale-[0.98] flex items-center justify-between"
+                          >
+                            <div className="flex items-center space-x-2.5">
+                              <div className="p-2 rounded-xl bg-gradient-to-tr from-purple-600 to-pink-600 text-white shadow-md group-hover:scale-110 transition-transform">
+                                <Building2 className="w-4.5 h-4.5 text-white" />
+                              </div>
+                              <div>
+                                <h5 className="text-[10px] uppercase tracking-wider text-white font-black font-mono flex items-center">
+                                  <span>Agency System Portal</span>
+                                  <span className="ml-1.5 text-[7px] bg-purple-600 text-white px-1.5 py-0.2 rounded font-black">2 OPTIONS</span>
+                                </h5>
+                                <p className="text-[8px] text-gray-300 mt-0.5">
+                                  🪙 Coin Seller Agency &amp; 🎙️ Host Agency Management
+                                </p>
+                              </div>
+                            </div>
+                            <div className="flex items-center space-x-1 text-[9px] text-purple-300 font-black group-hover:translate-x-0.5 transition-transform bg-purple-500/10 border border-purple-500/30 px-2 py-1 rounded-lg">
+                              <span>Open Agency</span>
                               <span>➔</span>
                             </div>
                           </div>
@@ -14749,7 +14378,7 @@ export default function App() {
                                         : "text-gray-400 hover:text-white hover:bg-white/5"
                                     }`}
                                   >
-                                    🪙 Official Agency
+                                    🪙 Coin Seller Agency
                                   </button>
                                   <button
                                     type="button"
@@ -14766,187 +14395,1122 @@ export default function App() {
 
                                 <div className="flex-1 overflow-y-auto scrollbar-none space-y-4 pr-1">
                                   {/* PORTION 1: REQUEST FOR OFFICIAL AGENCY */}
-                                  {agencyPortalTab === "coin_seller" && (
-                                    <div className="space-y-4 text-left">
-                                      <div className="bg-[#12121a] p-3 rounded-xl border border-[#303040] space-y-2">
-                                        <div className="flex justify-between items-center">
-                                          <span className="text-[9px] font-bold text-yellow-400 uppercase tracking-wider font-mono">Request Official Agency</span>
-                                          <span className="text-[7.5px] bg-yellow-500/20 text-yellow-400 px-1.5 py-0.5 rounded font-black font-mono">Coin Reseller</span>
-                                        </div>
-                                        <p className="text-[8px] text-gray-400 leading-normal">
-                                          Apply to become an official Pardais Party Coin Reseller. Once approved, Pardais Party users can purchase coins directly through you via local payment methods.
-                                        </p>
-                                      </div>
+                                  {agencyPortalTab === "coin_seller" && (() => {
+                                    const isUserApprovedCoinSeller = Boolean(
+                                      isAuthorizedAdmin(user) ||
+                                      user?.isAgencyApproved ||
+                                      user?.isCoinSeller ||
+                                      user?.role === 'admin' ||
+                                      (coinSellers || []).some((s: any) => s.username === user?.username || s.name === user?.username) ||
+                                      (agencyRequests || []).some((r: any) => r && r.applicantUsername === user?.username && (r.status === "Approved" || r.status === "APPROVED"))
+                                    );
 
-                                      <div className="bg-[#12121a] p-3 rounded-xl border border-white/5 space-y-2.5">
-                                        <h5 className="text-[9px] font-black text-purple-400 uppercase font-mono">Submit Official Request</h5>
-                                        <div className="space-y-1.5">
-                                          <input
-                                            type="text"
-                                            placeholder="Reseller / Agency Business Name"
-                                            value={csName}
-                                            onChange={(e) => setCsName(e.target.value)}
-                                            className="w-full bg-[#1e1e2d] text-[8.5px] text-white border border-[#303040] rounded px-2 py-1 focus:outline-none focus:border-purple-500"
-                                          />
-                                          <input
-                                            type="text"
-                                            placeholder="WhatsApp Contact (e.g. +923001234567)"
-                                            value={csWhatsapp}
-                                            onChange={(e) => setCsWhatsapp(e.target.value)}
-                                            className="w-full bg-[#1e1e2d] text-[8.5px] text-white border border-[#303040] rounded px-2 py-1 focus:outline-none focus:border-purple-500"
-                                          />
-                                          <div className="grid grid-cols-2 gap-1.5">
-                                            <input
-                                              type="text"
-                                              placeholder="City / Region"
-                                              value={csCity}
-                                              onChange={(e) => setCsCity(e.target.value)}
-                                              className="w-full bg-[#1e1e2d] text-[8.5px] text-white border border-[#303040] rounded px-2 py-1 focus:outline-none focus:border-purple-500"
-                                            />
-                                            <input
-                                              type="text"
-                                              placeholder="Rate: 1000 Coins = ? PKR"
-                                              value={csRate}
-                                              onChange={(e) => setCsRate(e.target.value)}
-                                              className="w-full bg-[#1e1e2d] text-[8.5px] text-white border border-[#303040] rounded px-2 py-1 focus:outline-none focus:border-purple-500"
-                                            />
+                                    const existingApp = (agencyRequests || []).find((r: any) => 
+                                      r && r.applicantUsername === user?.username && (r.type === "official_agency" || r.type === "coin_seller")
+                                    );
+
+                                    return (
+                                      <div className="space-y-3 text-left">
+                                        {/* 🏆 PROMINENT REQUIREMENT BANNER */}
+                                        <div className="bg-gradient-to-r from-amber-950/90 via-[#1a1a28] to-yellow-950/90 border-2 border-amber-500/60 p-3.5 rounded-2xl space-y-2 shadow-xl relative overflow-hidden">
+                                          <div className="flex items-center justify-between border-b border-amber-500/30 pb-2">
+                                            <span className="text-[10px] font-black text-amber-400 font-mono uppercase tracking-wider flex items-center">
+                                              <span className="mr-1 text-xs">🔒</span> COIN SELLER AGENCY REQUIREMENT
+                                            </span>
+                                            <span className="text-[7.5px] bg-amber-500/20 text-amber-300 border border-amber-500/40 font-bold font-mono px-2 py-0.5 rounded-full">
+                                              Official License
+                                            </span>
                                           </div>
-                                          <textarea
-                                            placeholder="Business details or collateral deposit limit..."
-                                            value={csDescription}
-                                            onChange={(e) => setCsDescription(e.target.value)}
-                                            className="w-full bg-[#1e1e2d] text-[8.5px] text-white border border-[#303040] rounded p-1.5 h-12 resize-none focus:outline-none focus:border-purple-500"
-                                          />
 
-                                          <button
-                                            type="button"
-                                            disabled={!csName.trim() || !csWhatsapp.trim() || !csRate.trim()}
-                                            onClick={() => {
-                                              const requestPayload = {
-                                                type: "official_agency",
-                                                applicantName: csName,
-                                                applicantUsername: user.username,
-                                                contact: csWhatsapp,
-                                                city: csCity,
-                                                rate: csRate,
-                                                description: csDescription
-                                              };
+                                          <div className="bg-black/50 border border-amber-500/40 p-2.5 rounded-xl text-center space-y-1">
+                                            <h4 className="text-xs font-black text-yellow-300 font-mono tracking-wide uppercase">
+                                              Minimum Agency Requirement: $3,000 USD
+                                            </h4>
+                                            <p className="text-[8px] text-gray-300 leading-normal">
+                                              Becoming an official Pardais Live Coin Seller Agency requires a minimum collateral deposit requirement of <strong className="text-amber-300">$3,000 USD</strong>. Official agencies get direct wholesale coin pricing, verified seller badge, listing in the global offline recharge portal, and direct user coin transfers.
+                                            </p>
+                                          </div>
+                                        </div>
 
-                                              fetch("/api/v1/agency-requests", {
-                                                method: "POST",
-                                                headers: { "Content-Type": "application/json" },
-                                                body: JSON.stringify(requestPayload)
-                                              })
-                                              .then(res => res.json())
-                                              .then(data => {
-                                                setCsName("");
-                                                setCsWhatsapp("");
-                                                setCsRate("");
-                                                setCsDescription("");
-                                                
-                                                // Prepend local state or rely on polling
-                                                setAgencyRequests(prev => [data, ...prev]);
+                                        {/* STATUS BADGE / APPROVED AGENCY ACCESS */}
+                                        {isUserApprovedCoinSeller ? (
+                                          <div className="bg-emerald-950/80 border-2 border-emerald-500/60 p-3 rounded-2xl space-y-2">
+                                            <div className="flex items-center space-x-2">
+                                              <div className="w-7 h-7 rounded-full bg-emerald-500/20 border border-emerald-400 flex items-center justify-center text-emerald-400 font-bold text-xs">
+                                                ✓
+                                              </div>
+                                              <div>
+                                                <h5 className="text-[10px] font-black text-emerald-300 uppercase font-mono">Verified Coin Seller Agency Active</h5>
+                                                <p className="text-[8px] text-emerald-200/80">Aap ka Coin Seller Agency account fully approved aur active hai!</p>
+                                              </div>
+                                            </div>
+                                            <div className="bg-black/40 p-2 rounded-xl border border-emerald-500/30 text-[8px] text-gray-300 font-mono space-y-1">
+                                              <p>👤 Agency Owner: <span className="text-white font-bold">{user.fullName || user.username}</span></p>
+                                              <p>🆔 User ID: <span className="text-amber-300 font-bold">@{user.username}</span></p>
+                                              <p>🏷️ Status: <span className="text-emerald-400 font-bold">Approved Official Agency</span></p>
+                                            </div>
+                                          </div>
+                                        ) : (
+                                          <>
+                                            {/* LOCKED STATUS CARD FOR NEW/UNAPPROVED ACCOUNT */}
+                                            <div className="bg-[#12121a] p-2.5 rounded-xl border border-amber-500/30 flex items-center justify-between">
+                                              <div className="flex items-center space-x-2">
+                                                <span className="text-base">🔒</span>
+                                                <div>
+                                                  <h5 className="text-[9.5px] font-black text-white uppercase font-mono">Agency Access Status</h5>
+                                                  <p className="text-[8px] text-amber-400/90 font-mono">
+                                                    {existingApp 
+                                                      ? `Application Status: ${existingApp.status || "Pending Review"}`
+                                                      : "Locked (Application & $3,000 USD Deposit Required)"
+                                                    }
+                                                  </p>
+                                                </div>
+                                              </div>
+                                              <span className={`text-[7.5px] font-mono font-bold px-2 py-0.5 rounded uppercase ${
+                                                existingApp?.status === "Approved" ? "bg-emerald-500/20 text-emerald-400" :
+                                                existingApp?.status === "Rejected" ? "bg-red-500/20 text-red-400" :
+                                                existingApp ? "bg-amber-500/20 text-amber-300 animate-pulse" :
+                                                "bg-gray-800 text-gray-400"
+                                              }`}>
+                                                {existingApp?.status || "Locked 🔒"}
+                                              </span>
+                                            </div>
 
-                                                setReportSuccessToast("Official Agency request submitted! Admin has been notified.");
-                                                setTimeout(() => setReportSuccessToast(null), 4000);
-                                              })
-                                              .catch(err => console.error("Error creating agency request:", err));
-                                            }}
-                                            className="w-full py-1.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white font-bold text-[8.5px] uppercase rounded transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
-                                          >
-                                            Submit Official Request
-                                          </button>
+                                            {/* REGISTRATION FORM */}
+                                            <div className="bg-[#12121a] p-3 rounded-2xl border border-white/10 space-y-3">
+                                              <div className="border-b border-white/5 pb-1.5">
+                                                <h5 className="text-[10px] font-black text-purple-400 uppercase font-mono flex items-center justify-between">
+                                                  <span>Agency Registration Form</span>
+                                                  <span className="text-[7.5px] text-gray-400 font-normal">All fields required</span>
+                                                </h5>
+                                              </div>
+
+                                              <div className="space-y-2">
+                                                {/* 1. Full Name */}
+                                                <div>
+                                                  <label className="text-[8px] font-bold text-gray-300 uppercase font-mono block mb-0.5">1. Full Name *</label>
+                                                  <input
+                                                    type="text"
+                                                    placeholder="Enter your full legal name"
+                                                    value={csFullName || csName}
+                                                    onChange={(e) => {
+                                                      setCsFullName(e.target.value);
+                                                      setCsName(e.target.value);
+                                                    }}
+                                                    className="w-full bg-[#1e1e2d] text-[9px] text-white border border-[#303040] rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-amber-400"
+                                                  />
+                                                </div>
+
+                                                {/* 2. User ID */}
+                                                <div>
+                                                  <label className="text-[8px] font-bold text-gray-300 uppercase font-mono block mb-0.5">2. User ID (Pardais Username) *</label>
+                                                  <input
+                                                    type="text"
+                                                    readOnly
+                                                    value={user.username}
+                                                    className="w-full bg-[#12121e] text-[9px] text-amber-300 font-mono border border-amber-500/30 rounded-lg px-2.5 py-1.5 font-bold cursor-not-allowed opacity-90"
+                                                  />
+                                                </div>
+
+                                                {/* 3. Email & 4. Phone Number */}
+                                                <div className="grid grid-cols-2 gap-2">
+                                                  <div>
+                                                    <label className="text-[8px] font-bold text-gray-300 uppercase font-mono block mb-0.5">3. Email *</label>
+                                                    <input
+                                                      type="email"
+                                                      placeholder="email@example.com"
+                                                      value={csEmail || `${user.username}@pardais.live`}
+                                                      onChange={(e) => setCsEmail(e.target.value)}
+                                                      className="w-full bg-[#1e1e2d] text-[8.5px] text-white border border-[#303040] rounded-lg px-2 py-1.5 focus:outline-none focus:border-amber-400"
+                                                    />
+                                                  </div>
+                                                  <div>
+                                                    <label className="text-[8px] font-bold text-gray-300 uppercase font-mono block mb-0.5">4. WhatsApp Phone *</label>
+                                                    <input
+                                                      type="text"
+                                                      placeholder="+923001234567"
+                                                      value={csPhone || csWhatsapp}
+                                                      onChange={(e) => {
+                                                        setCsPhone(e.target.value);
+                                                        setCsWhatsapp(e.target.value);
+                                                      }}
+                                                      className="w-full bg-[#1e1e2d] text-[8.5px] text-white border border-[#303040] rounded-lg px-2 py-1.5 focus:outline-none focus:border-amber-400 font-mono"
+                                                    />
+                                                  </div>
+                                                </div>
+
+                                                {/* 5. Country & 6. Current Account Info */}
+                                                <div className="grid grid-cols-2 gap-2">
+                                                  <div>
+                                                    <label className="text-[8px] font-bold text-gray-300 uppercase font-mono block mb-0.5">5. Country *</label>
+                                                    <select
+                                                      value={csCountry}
+                                                      onChange={(e) => setCsCountry(e.target.value)}
+                                                      className="w-full bg-[#1e1e2d] text-[8.5px] text-white border border-[#303040] rounded-lg px-2 py-1.5 focus:outline-none focus:border-amber-400"
+                                                    >
+                                                      <option value="Pakistan">Pakistan</option>
+                                                      <option value="Saudi Arabia">Saudi Arabia</option>
+                                                      <option value="United Arab Emirates">UAE</option>
+                                                      <option value="Qatar">Qatar</option>
+                                                      <option value="Kuwait">Kuwait</option>
+                                                      <option value="Oman">Oman</option>
+                                                      <option value="Bahrain">Bahrain</option>
+                                                      <option value="USA">USA</option>
+                                                      <option value="United Kingdom">United Kingdom</option>
+                                                      <option value="Global">Other / Global</option>
+                                                    </select>
+                                                  </div>
+                                                  <div>
+                                                    <label className="text-[8px] font-bold text-gray-300 uppercase font-mono block mb-0.5">6. Current Account Details</label>
+                                                    <input
+                                                      type="text"
+                                                      readOnly
+                                                      value={`LVL ${user.userLevel || 1} | Coins: ${(user.coins || 0).toLocaleString()}`}
+                                                      className="w-full bg-[#12121e] text-[8px] text-gray-300 border border-[#303040] rounded-lg px-2 py-1.5 font-mono cursor-not-allowed opacity-90"
+                                                    />
+                                                  </div>
+                                                </div>
+
+                                                {/* 7. Business / Agency Name */}
+                                                <div>
+                                                  <label className="text-[8px] font-bold text-gray-300 uppercase font-mono block mb-0.5">7. Business / Agency Name *</label>
+                                                  <input
+                                                    type="text"
+                                                    placeholder="e.g. Royal Gold Coin Seller Agency"
+                                                    value={csAgencyName}
+                                                    onChange={(e) => setCsAgencyName(e.target.value)}
+                                                    className="w-full bg-[#1e1e2d] text-[9px] text-white border border-[#303040] rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-amber-400"
+                                                  />
+                                                </div>
+
+                                                {/* 8. Expected Monthly Coin Purchase & 9. Transaction Volume */}
+                                                <div className="grid grid-cols-2 gap-2">
+                                                  <div>
+                                                    <label className="text-[8px] font-bold text-amber-300 uppercase font-mono block mb-0.5">8. Initial Purchase *</label>
+                                                    <select
+                                                      value={csMonthlyPurchase}
+                                                      onChange={(e) => setCsMonthlyPurchase(e.target.value)}
+                                                      className="w-full bg-[#1e1e2d] text-[8px] text-yellow-300 border border-amber-500/40 rounded-lg px-1.5 py-1.5 font-bold focus:outline-none"
+                                                    >
+                                                      <option value="$3,000 USD (500,000 Coins)">$3,000 USD (500,000 Coins)</option>
+                                                      <option value="$5,000 USD (850,000 Coins)">$5,000 USD (850,000 Coins)</option>
+                                                      <option value="$10,000+ USD (1,800,000 Coins)">$10,000+ USD (1,800,000 Coins)</option>
+                                                    </select>
+                                                  </div>
+                                                  <div>
+                                                    <label className="text-[8px] font-bold text-gray-300 uppercase font-mono block mb-0.5">9. Expected Volume *</label>
+                                                    <select
+                                                      value={csTransactionVolume}
+                                                      onChange={(e) => setCsTransactionVolume(e.target.value)}
+                                                      className="w-full bg-[#1e1e2d] text-[8px] text-white border border-[#303040] rounded-lg px-1.5 py-1.5 focus:outline-none"
+                                                    >
+                                                      <option value="$3,000 - $5,000 USD / month">$3,000 - $5,000 / mo</option>
+                                                      <option value="$5,000 - $10,000 USD / month">$5,000 - $10,000 / mo</option>
+                                                      <option value="$10,000 - $25,000 USD / month">$10,000 - $25,000 / mo</option>
+                                                      <option value="$25,000+ USD / month">$25,000+ / mo</option>
+                                                    </select>
+                                                  </div>
+                                                </div>
+
+                                                {/* 10. Additional Business Details / Notes */}
+                                                <div>
+                                                  <label className="text-[8px] font-bold text-gray-300 uppercase font-mono block mb-0.5">10. Additional Business Details & Notes</label>
+                                                  <textarea
+                                                    placeholder="Describe your current coin reseller experience, regional client base, or local payment method setups..."
+                                                    value={csNotes || csDescription}
+                                                    onChange={(e) => {
+                                                      setCsNotes(e.target.value);
+                                                      setCsDescription(e.target.value);
+                                                    }}
+                                                    className="w-full bg-[#1e1e2d] text-[8.5px] text-white border border-[#303040] rounded-lg p-2 h-14 resize-none focus:outline-none focus:border-amber-400"
+                                                  />
+                                                </div>
+
+                                                {/* TERMS & CONDITIONS BOX */}
+                                                <div className="bg-[#12121e] p-2.5 rounded-xl border border-amber-500/30 space-y-2">
+                                                  <h6 className="text-[8.5px] font-black text-amber-400 uppercase font-mono">Coin Seller Agency Terms & Conditions</h6>
+                                                  <div className="max-h-20 overflow-y-auto text-[7.5px] text-gray-300 space-y-1 pr-1 font-sans leading-relaxed border-y border-white/5 py-1">
+                                                    <p>1. <strong>Minimum Requirement:</strong> A minimum initial deposit / collateral limit of <strong>$3,000 USD</strong> is strictly enforced for all official Coin Seller Agencies on Pardais Live.</p>
+                                                    <p>2. <strong>Authorized Transfers:</strong> Coin sellers must strictly execute transfers through official platform APIs to authorized end-user IDs only.</p>
+                                                    <p>3. <strong>Anti-Fraud Policy:</strong> Any unauthorized chargebacks, fraudulent coin dumping, or violation of official exchange rates will result in instant account forfeiture and permanent revocation of agency status.</p>
+                                                    <p>4. <strong>Verification:</strong> Pardais Administration reserves full right to verify identity documents and collateral proofs before approving applications.</p>
+                                                  </div>
+
+                                                  <label className="flex items-start space-x-2 cursor-pointer pt-1">
+                                                    <input
+                                                      type="checkbox"
+                                                      checked={csAgreedTerms}
+                                                      onChange={(e) => setCsAgreedTerms(e.target.checked)}
+                                                      className="mt-0.5 rounded border-gray-600 text-amber-500 focus:ring-amber-500 cursor-pointer"
+                                                    />
+                                                    <span className="text-[8px] text-gray-200 font-medium leading-tight">
+                                                      I have read and agree to the <strong className="text-yellow-300">Coin Seller Agency Terms & Conditions</strong> and confirm meeting the minimum $3,000 USD requirement.
+                                                    </span>
+                                                  </label>
+                                                </div>
+
+                                                {/* SUBMIT BUTTON */}
+                                                <button
+                                                  type="button"
+                                                  disabled={
+                                                    !csAgreedTerms || 
+                                                    !((csFullName || csName).trim()) || 
+                                                    !((csPhone || csWhatsapp).trim()) || 
+                                                    !csAgencyName.trim() || 
+                                                    csSubmitting
+                                                  }
+                                                  onClick={() => {
+                                                    setCsSubmitting(true);
+                                                    const finalName = (csFullName || csName).trim();
+                                                    const finalPhone = (csPhone || csWhatsapp).trim();
+                                                    const finalEmail = (csEmail || `${user.username}@pardais.live`).trim();
+
+                                                    const requestPayload = {
+                                                      type: "official_agency",
+                                                      applicantName: finalName,
+                                                      applicantUsername: user.username,
+                                                      email: finalEmail,
+                                                      contact: finalPhone,
+                                                      country: csCountry,
+                                                      accountInfo: `LVL ${user.userLevel || 1} | Coins: ${(user.coins || 0).toLocaleString()}`,
+                                                      agencyName: csAgencyName.trim(),
+                                                      expectedMonthlyPurchase: csMonthlyPurchase,
+                                                      expectedMonthlyVolume: csTransactionVolume,
+                                                      description: (csNotes || csDescription).trim(),
+                                                      agreedToTerms: true,
+                                                      status: "Pending Review"
+                                                    };
+
+                                                    fetch("/api/v1/agency-requests", {
+                                                      method: "POST",
+                                                      headers: { "Content-Type": "application/json" },
+                                                      body: JSON.stringify(requestPayload)
+                                                    })
+                                                    .then(res => res.json())
+                                                    .then(data => {
+                                                      setCsSubmitting(false);
+                                                      setCsFullName("");
+                                                      setCsName("");
+                                                      setCsPhone("");
+                                                      setCsWhatsapp("");
+                                                      setCsAgencyName("");
+                                                      setCsNotes("");
+                                                      setCsDescription("");
+                                                      setCsAgreedTerms(false);
+                                                      
+                                                      setAgencyRequests(prev => [data, ...prev]);
+
+                                                      alert("Your Coin Seller Agency request has been submitted successfully. Our Administration team will review your application.");
+                                                    })
+                                                    .catch(err => {
+                                                      setCsSubmitting(false);
+                                                      console.error("Error creating agency request:", err);
+                                                      alert("Submission failed. Please try again or contact support.");
+                                                    });
+                                                  }}
+                                                  className="w-full py-2.5 bg-gradient-to-r from-amber-500 via-yellow-500 to-amber-600 hover:from-amber-600 hover:to-yellow-600 text-black font-black text-[9.5px] uppercase tracking-wider rounded-xl transition-all disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer shadow-lg shadow-amber-500/20 mt-1"
+                                                >
+                                                  {csSubmitting ? "Submitting Application..." : "APPLY FOR COIN SELLER AGENCY"}
+                                                </button>
+                                              </div>
+                                            </div>
+                                          </>
+                                        )}
+                                      </div>
+                                    );
+                                  })()}
+
+                                  {/* PORTION 2: HOST AGENCY SUB-ADMIN PANEL OR LOCKED APPLICATION PAGE */}
+                                  {agencyPortalTab === "host_agency" && (() => {
+                                    const myApprovedHostAgency = (hostAgencies || []).find((a: any) => 
+                                      a && (
+                                        a.ownerUsername === user?.username || 
+                                        a.adminUserId === user?.username || 
+                                        a.ownerEmail === user?.email || 
+                                        (user?.agencyId && a.id === user?.agencyId)
+                                      )
+                                    );
+
+                                    const isUserApprovedHostAgencyAdmin = Boolean(
+                                      user?.isHostAgencyAdmin || 
+                                      (user?.isAgencyApproved && myApprovedHostAgency) || 
+                                      (myApprovedHostAgency && myApprovedHostAgency.status !== "Suspended")
+                                    );
+
+                                    const existingHostAgencyApp = (agencyRequests || []).find((r: any) => 
+                                      r && r.applicantUsername === user?.username && r.type === "host_agency"
+                                    );
+
+                                    if (isUserApprovedHostAgencyAdmin) {
+                                      return (
+                                        <div className="space-y-4 text-left animate-fade-in">
+                                          {/* Official Agency Banner Header */}
+                                          <div className="bg-gradient-to-r from-purple-950/90 via-[#1e1035] to-[#12121a] p-3.5 rounded-2xl border-2 border-purple-500/50 shadow-xl space-y-2">
+                                            <div className="flex justify-between items-start">
+                                              <div className="flex items-center space-x-3">
+                                                <img 
+                                                  src={myApprovedHostAgency?.logo || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=300&q=80"} 
+                                                  alt="Agency Logo" 
+                                                  className="w-11 h-11 rounded-xl border border-purple-400/40 object-cover shadow-md"
+                                                />
+                                                <div>
+                                                  <div className="flex items-center space-x-2">
+                                                    <h4 className="text-xs font-black text-white font-mono">
+                                                      {myApprovedHostAgency?.name || user?.agencyName || "Pardais Official Host Agency"}
+                                                    </h4>
+                                                    <span className="text-[7.5px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 px-2 py-0.5 rounded-full font-black font-mono uppercase tracking-wider flex items-center space-x-1">
+                                                      <span>✓ OFFICIAL / VERIFIED</span>
+                                                    </span>
+                                                  </div>
+                                                  <p className="text-[8.5px] text-purple-200/80 font-mono">
+                                                    🆔 Agency ID: <strong className="text-yellow-300">{myApprovedHostAgency?.id || user?.agencyId || "AG-101"}</strong> | 👤 Admin: <strong className="text-white">@{user?.username}</strong>
+                                                  </p>
+                                                </div>
+                                              </div>
+                                              <span className="text-[8px] bg-purple-500/20 text-purple-300 font-mono px-2 py-1 rounded-lg border border-purple-500/30 font-bold">
+                                                🌍 {myApprovedHostAgency?.country || "Global Region"}
+                                              </span>
+                                            </div>
+                                            <p className="text-[8px] text-gray-300 bg-black/40 p-2 rounded-xl border border-white/5 font-mono">
+                                              💼 Contract Rate: <strong className="text-emerald-400">{myApprovedHostAgency?.salaryRate || "40% Host Commission + Base Performance Bonus"}</strong>
+                                            </p>
+                                          </div>
+
+                                          {/* Sub-Admin Panel Tab Controls */}
+                                          <div className="grid grid-cols-5 gap-1 bg-[#12121a] p-1 rounded-xl border border-white/10">
+                                            <button
+                                              type="button"
+                                              onClick={() => setSubAdminTab("dashboard")}
+                                              className={`py-1.5 px-0.5 rounded-lg text-[7.5px] font-black uppercase font-mono transition-all cursor-pointer ${
+                                                subAdminTab === "dashboard" ? "bg-purple-600 text-white shadow-md font-black" : "text-gray-400 hover:text-white"
+                                              }`}
+                                            >
+                                              📊 Stats
+                                            </button>
+                                            <button
+                                              type="button"
+                                              onClick={() => setSubAdminTab("hosts")}
+                                              className={`py-1.5 px-0.5 rounded-lg text-[7.5px] font-black uppercase font-mono transition-all cursor-pointer ${
+                                                subAdminTab === "hosts" ? "bg-purple-600 text-white shadow-md font-black" : "text-gray-400 hover:text-white"
+                                              }`}
+                                            >
+                                              👥 Hosts ({ (users || []).filter((u: any) => u.agencyId === (myApprovedHostAgency?.id || user?.agencyId)).length })
+                                            </button>
+                                            <button
+                                              type="button"
+                                              onClick={() => setSubAdminTab("join_requests")}
+                                              className={`py-1.5 px-0.5 rounded-lg text-[7.5px] font-black uppercase font-mono transition-all cursor-pointer ${
+                                                subAdminTab === "join_requests" ? "bg-purple-600 text-white shadow-md font-black" : "text-gray-400 hover:text-white"
+                                              }`}
+                                            >
+                                              📩 Requests ({ (hostJoinRequestsList || []).filter((r: any) => r.agencyId === (myApprovedHostAgency?.id || user?.agencyId) && (r.status === "PENDING" || r.status === "Pending")).length })
+                                            </button>
+                                            <button
+                                              type="button"
+                                              onClick={() => setSubAdminTab("earnings")}
+                                              className={`py-1.5 px-0.5 rounded-lg text-[7.5px] font-black uppercase font-mono transition-all cursor-pointer ${
+                                                subAdminTab === "earnings" ? "bg-purple-600 text-white shadow-md font-black" : "text-gray-400 hover:text-white"
+                                              }`}
+                                            >
+                                              📈 Earnings
+                                            </button>
+                                            <button
+                                              type="button"
+                                              onClick={() => setSubAdminTab("settings")}
+                                              className={`py-1.5 px-0.5 rounded-lg text-[7.5px] font-black uppercase font-mono transition-all cursor-pointer ${
+                                                subAdminTab === "settings" ? "bg-purple-600 text-white shadow-md font-black" : "text-gray-400 hover:text-white"
+                                              }`}
+                                            >
+                                              ⚙️ Info
+                                            </button>
+                                          </div>
+
+                                          {/* TAB 1: SUB-ADMIN DASHBOARD */}
+                                          {subAdminTab === "dashboard" && (() => {
+                                            const agencyId = myApprovedHostAgency?.id || user?.agencyId;
+                                            const agencyHosts = (users || []).filter((u: any) => u.agencyId === agencyId || (u.agencyName && myApprovedHostAgency && u.agencyName === myApprovedHostAgency.name));
+                                            const totalHostsCount = agencyHosts.length;
+                                            const activeHostsCount = agencyHosts.filter((h: any) => h.isLive || (h.xp && h.xp > 500) || (h.hostLevel && h.hostLevel > 1)).length;
+                                            const inactiveHostsCount = Math.max(0, totalHostsCount - activeHostsCount);
+                                            
+                                            return (
+                                              <div className="space-y-3 animate-fade-in">
+                                                {/* Performance Metrics Cards */}
+                                                <div className="grid grid-cols-2 gap-2 font-mono">
+                                                  <div className="bg-[#1e1e2d] p-2.5 rounded-xl border border-purple-500/30 space-y-1">
+                                                    <span className="text-[7.5px] text-gray-400 uppercase block">👥 Total Registered Hosts</span>
+                                                    <p className="text-xs font-black text-white">{totalHostsCount} Hosts</p>
+                                                    <div className="flex space-x-1.5 text-[7px]">
+                                                      <span className="text-emerald-400 font-bold">🟢 {activeHostsCount} Active</span>
+                                                      <span className="text-gray-400">⚪ {inactiveHostsCount} Inactive</span>
+                                                    </div>
+                                                  </div>
+
+                                                  <div className="bg-[#1e1e2d] p-2.5 rounded-xl border border-purple-500/30 space-y-1">
+                                                    <span className="text-[7.5px] text-gray-400 uppercase block">⏱️ Agency Live Time</span>
+                                                    <p className="text-xs font-black text-amber-300">184.5 Hours</p>
+                                                    <p className="text-[7px] text-gray-400">Avg Session: 2.4 Hrs / Host</p>
+                                                  </div>
+
+                                                  <div className="bg-[#1e1e2d] p-2.5 rounded-xl border border-purple-500/30 space-y-1">
+                                                    <span className="text-[7.5px] text-gray-400 uppercase block">💎 Coins / Gifts Generated</span>
+                                                    <p className="text-xs font-black text-yellow-400">1,250,000 Coins</p>
+                                                    <p className="text-[7px] text-gray-400">≈ $12,500.00 USD Value</p>
+                                                  </div>
+
+                                                  <div className="bg-[#1e1e2d] p-2.5 rounded-xl border border-purple-500/30 space-y-1">
+                                                    <span className="text-[7.5px] text-gray-400 uppercase block">💵 Total Agency Commission</span>
+                                                    <p className="text-xs font-black text-emerald-400">$3,450.00 USD</p>
+                                                    <div className="flex space-x-1.5 text-[7px]">
+                                                      <span className="text-cyan-300">Mo: $1,200</span>
+                                                      <span className="text-amber-300">Pend: $450</span>
+                                                    </div>
+                                                  </div>
+                                                </div>
+
+                                                {/* Agency Host Summary List */}
+                                                <div className="bg-[#12121a] p-2.5 rounded-xl border border-white/5 space-y-2">
+                                                  <div className="flex justify-between items-center">
+                                                    <h5 className="text-[8.5px] font-black text-purple-400 font-mono uppercase">🏆 Top Agency Hosts</h5>
+                                                    <button
+                                                      type="button"
+                                                      onClick={() => setSubAdminTab("hosts")}
+                                                      className="text-[7.5px] text-amber-400 hover:underline font-mono"
+                                                    >
+                                                      Manage ({totalHostsCount}) →
+                                                    </button>
+                                                  </div>
+
+                                                  {agencyHosts.length === 0 ? (
+                                                    <div className="text-center py-5 bg-[#1e1e2d] rounded-xl border border-white/5 space-y-1.5">
+                                                      <p className="text-[8.5px] text-gray-400 font-mono">No hosts currently assigned to your agency.</p>
+                                                      <button
+                                                        type="button"
+                                                        onClick={() => setAddHostModalOpen(true)}
+                                                        className="px-3 py-1 bg-purple-600 hover:bg-purple-500 text-white font-bold text-[8px] uppercase rounded-lg transition-all"
+                                                      >
+                                                        + Add / Invite First Host
+                                                      </button>
+                                                    </div>
+                                                  ) : (
+                                                    <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
+                                                      {agencyHosts.slice(0, 5).map((host: any) => (
+                                                        <div key={host.username} className="p-2 rounded-xl bg-[#1e1e2d] border border-white/5 flex justify-between items-center text-[8px] font-mono">
+                                                          <div className="flex items-center space-x-2">
+                                                            <img src={host.avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=100&q=80"} alt="Host Avatar" className="w-7 h-7 rounded-full border border-purple-400/40 object-cover" />
+                                                            <div>
+                                                              <span className="text-white font-bold block">{host.fullName || host.username}</span>
+                                                              <span className="text-gray-400 text-[7px]">@{host.username} • LVL {host.hostLevel || 1}</span>
+                                                            </div>
+                                                          </div>
+                                                          <div className="text-right">
+                                                            <span className="text-amber-300 font-bold block">32.5 hrs Live</span>
+                                                            <span className="text-emerald-400 text-[7px]">$420 Generated</span>
+                                                          </div>
+                                                        </div>
+                                                      ))}
+                                                    </div>
+                                                  )}
+                                                </div>
+                                              </div>
+                                            );
+                                          })()}
+
+                                          {/* TAB 2: MY HOSTS MANAGEMENT */}
+                                          {subAdminTab === "hosts" && (() => {
+                                            const agencyId = myApprovedHostAgency?.id || user?.agencyId;
+                                            const agencyHosts = (users || []).filter((u: any) => u.agencyId === agencyId || (u.agencyName && myApprovedHostAgency && u.agencyName === myApprovedHostAgency.name));
+                                            const filteredHosts = agencyHosts.filter((h: any) => {
+                                              const q = subAdminSearchHost.toLowerCase();
+                                              return !q || (h.fullName && h.fullName.toLowerCase().includes(q)) || h.username.toLowerCase().includes(q);
+                                            });
+
+                                            return (
+                                              <div className="space-y-3 animate-fade-in">
+                                                <div className="flex space-x-2">
+                                                  <input
+                                                    type="text"
+                                                    placeholder="Search host by name or @username..."
+                                                    value={subAdminSearchHost}
+                                                    onChange={(e) => setSubAdminSearchHost(e.target.value)}
+                                                    className="flex-1 bg-[#12121a] border border-[#303040] rounded-xl px-2.5 py-1.5 text-[8.5px] text-white focus:outline-none focus:border-purple-500 font-mono"
+                                                  />
+                                                  <button
+                                                    type="button"
+                                                    onClick={() => setAddHostModalOpen(true)}
+                                                    className="px-2.5 py-1.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-bold text-[8px] uppercase rounded-xl transition-all cursor-pointer whitespace-nowrap shadow-md"
+                                                  >
+                                                    + Add Host
+                                                  </button>
+                                                </div>
+
+                                                <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+                                                  {filteredHosts.length === 0 ? (
+                                                    <div className="text-center py-8 bg-[#1e1e2d] rounded-xl border border-white/5">
+                                                      <p className="text-[8.5px] text-gray-400 font-mono">No agency hosts match search criteria.</p>
+                                                    </div>
+                                                  ) : (
+                                                    filteredHosts.map((host: any) => (
+                                                      <div key={host.username} className="p-2.5 rounded-xl bg-[#1e1e2d] border border-white/5 space-y-2 text-left font-mono">
+                                                        <div className="flex justify-between items-start">
+                                                          <div className="flex items-center space-x-2">
+                                                            <img src={host.avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=120&q=80"} alt="Host" className="w-8 h-8 rounded-full border border-purple-400/40 object-cover" />
+                                                            <div>
+                                                              <h5 className="text-[9.5px] font-bold text-white flex items-center space-x-1">
+                                                                <span>{host.fullName || host.username}</span>
+                                                                <span className="text-amber-400 text-[7.5px] font-normal">(@{host.username})</span>
+                                                              </h5>
+                                                              <span className="text-[7px] text-purple-300">
+                                                                Level: <strong className="text-white">LVL {host.hostLevel || 1}</strong> | Status: {host.isLive ? <span className="text-red-400 font-bold">🔴 LIVE NOW</span> : <span className="text-gray-400">⚪ Offline</span>}
+                                                              </span>
+                                                            </div>
+                                                          </div>
+
+                                                          <button
+                                                            type="button"
+                                                            onClick={() => {
+                                                              if (confirm(`Remove @${host.username} from your agency?`)) {
+                                                                fetch(`/api/v1/agencies/${agencyId}/hosts/${host.username}`, { method: "DELETE" })
+                                                                  .then(res => res.json())
+                                                                  .then(() => {
+                                                                    setUsers(prev => prev.map(u => u.username === host.username ? { ...u, agencyId: "", isAgencyHost: false } : u));
+                                                                    alert(`Host @${host.username} removed from agency.`);
+                                                                  })
+                                                                  .catch(err => console.error(err));
+                                                              }
+                                                            }}
+                                                            className="px-2 py-0.5 bg-red-500/20 hover:bg-red-500/30 text-red-400 border border-red-500/30 rounded text-[7px] uppercase font-bold cursor-pointer"
+                                                          >
+                                                            🗑️ Remove
+                                                          </button>
+                                                        </div>
+
+                                                        <div className="grid grid-cols-3 gap-1 bg-[#12121a] p-1.5 rounded-lg border border-white/5 text-[7px]">
+                                                          <div>
+                                                            <span className="text-gray-400 block">Monthly Live:</span>
+                                                            <span className="text-amber-300 font-bold">28.4 Hours</span>
+                                                          </div>
+                                                          <div>
+                                                            <span className="text-gray-400 block">Coins Received:</span>
+                                                            <span className="text-yellow-400 font-bold">145,000 Coins</span>
+                                                          </div>
+                                                          <div>
+                                                            <span className="text-gray-400 block">Agency Commission:</span>
+                                                            <span className="text-emerald-400 font-bold">$180.00 USD</span>
+                                                          </div>
+                                                        </div>
+                                                      </div>
+                                                    ))
+                                                  )}
+                                                </div>
+                                              </div>
+                                            );
+                                          })()}
+
+                                          {/* TAB 3: HOST JOIN & LEAVE REQUESTS */}
+                                          {subAdminTab === "join_requests" && (() => {
+                                            const agencyId = myApprovedHostAgency?.id || user?.agencyId;
+                                            const pendingRequests = (hostJoinRequestsList || []).filter((r: any) => r.agencyId === agencyId && (r.status === "PENDING" || r.status === "Pending"));
+
+                                            return (
+                                              <div className="space-y-3 animate-fade-in font-mono">
+                                                <div className="bg-[#12121a] p-2.5 rounded-xl border border-white/5 flex justify-between items-center">
+                                                  <div>
+                                                    <h5 className="text-[8.5px] font-black text-amber-400 uppercase">Pending Agency Requests ({pendingRequests.length})</h5>
+                                                    <p className="text-[7.5px] text-gray-400">Review pending host membership applications and leave requests.</p>
+                                                  </div>
+                                                </div>
+
+                                                <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+                                                  {pendingRequests.length === 0 ? (
+                                                    <div className="text-center py-8 bg-[#1e1e2d] rounded-xl border border-white/5">
+                                                      <p className="text-[8.5px] text-gray-400">No pending join or leave requests for your agency.</p>
+                                                    </div>
+                                                  ) : (
+                                                    pendingRequests.map((req: any) => {
+                                                      const isLeaveReq = req.type === "LEAVE";
+
+                                                      return (
+                                                        <div key={req.id} className={`p-2.5 rounded-xl bg-[#1e1e2d] border ${isLeaveReq ? 'border-red-500/40' : 'border-purple-500/30'} space-y-2 text-left`}>
+                                                          <div className="flex justify-between items-start">
+                                                            <div>
+                                                              <div className="flex items-center space-x-1.5">
+                                                                <span className={`text-[7px] px-1.5 py-0.5 rounded uppercase font-black border ${isLeaveReq ? 'bg-red-500/20 text-red-300 border-red-500/40' : 'bg-purple-500/20 text-purple-300 border-purple-500/40'}`}>
+                                                                  {isLeaveReq ? "🚪 LEAVE REQUEST" : "📩 JOIN APPLICATION"}
+                                                                </span>
+                                                                <h5 className="text-[9.5px] font-bold text-white">{req.applicantName} <span className="text-amber-400">(@{req.applicantUsername})</span></h5>
+                                                              </div>
+                                                              <p className="text-[7.5px] text-gray-400 mt-0.5">Email: {req.email || "N/A"}</p>
+                                                            </div>
+                                                            <span className="text-[7px] bg-yellow-500/20 text-yellow-300 px-1.5 py-0.5 rounded uppercase font-bold border border-yellow-500/30 animate-pulse">
+                                                              {req.status}
+                                                            </span>
+                                                          </div>
+
+                                                          {req.notes && (
+                                                            <p className="text-[7.5px] text-gray-300 bg-[#12121a] p-2 rounded border border-white/5 italic">
+                                                              "{req.notes}"
+                                                            </p>
+                                                          )}
+
+                                                          <div className="flex space-x-2 pt-1">
+                                                            <button
+                                                              type="button"
+                                                              onClick={() => {
+                                                                fetch(`/api/v1/host-join-requests/${req.id}`, {
+                                                                  method: "PUT",
+                                                                  headers: { "Content-Type": "application/json" },
+                                                                  body: JSON.stringify({ status: "APPROVED" })
+                                                                })
+                                                                  .then(res => res.json())
+                                                                  .then(() => {
+                                                                    setHostJoinRequestsList(prev => prev.map(r => r.id === req.id ? { ...r, status: "APPROVED" } : r));
+                                                                    if (isLeaveReq) {
+                                                                      alert(`🟢 Approved leave request for @${req.applicantUsername}. Host has been released from your agency.`);
+                                                                    } else {
+                                                                      alert(`🟢 Approved @${req.applicantUsername} to join your agency!`);
+                                                                    }
+                                                                  })
+                                                                  .catch(err => console.error(err));
+                                                              }}
+                                                              className={`flex-1 py-1.5 text-white font-black text-[7.5px] uppercase rounded-lg cursor-pointer ${isLeaveReq ? 'bg-red-600 hover:bg-red-500' : 'bg-emerald-600 hover:bg-emerald-500'}`}
+                                                            >
+                                                              {isLeaveReq ? "🟢 Approve Release / Leave" : "🟢 Approve Membership"}
+                                                            </button>
+                                                            <button
+                                                              type="button"
+                                                              onClick={() => {
+                                                                fetch(`/api/v1/host-join-requests/${req.id}`, {
+                                                                  method: "PUT",
+                                                                  headers: { "Content-Type": "application/json" },
+                                                                  body: JSON.stringify({ status: "REJECTED" })
+                                                                })
+                                                                  .then(res => res.json())
+                                                                  .then(() => {
+                                                                    setHostJoinRequestsList(prev => prev.map(r => r.id === req.id ? { ...r, status: "REJECTED" } : r));
+                                                                    alert(isLeaveReq ? "🔴 Leave request rejected." : "🔴 Application rejected.");
+                                                                  })
+                                                                  .catch(err => console.error(err));
+                                                              }}
+                                                              className="flex-1 py-1.5 bg-gray-700 hover:bg-gray-600 text-white font-black text-[7.5px] uppercase rounded-lg cursor-pointer"
+                                                            >
+                                                              🔴 Reject
+                                                            </button>
+                                                          </div>
+                                                        </div>
+                                                      );
+                                                    })
+                                                  )}
+                                                </div>
+                                              </div>
+                                            );
+                                          })()}
+
+                                          {/* TAB 4: EARNINGS REPORTS */}
+                                          {subAdminTab === "earnings" && (
+                                            <div className="space-y-3 animate-fade-in font-mono text-left">
+                                              <div className="bg-[#12121a] p-2.5 rounded-xl border border-white/5 space-y-1">
+                                                <h5 className="text-[8.5px] font-black text-emerald-400 uppercase">📊 Financial & Commission Breakdown</h5>
+                                                <p className="text-[7.5px] text-gray-400">All agency earnings and host revenues are verified automatically by Pardais backend accounting ledger.</p>
+                                              </div>
+
+                                              <div className="grid grid-cols-2 gap-2 text-[7.5px]">
+                                                <div className="bg-[#1e1e2d] p-2.5 rounded-xl border border-white/5 space-y-1">
+                                                  <span className="text-gray-400 block">Total Calculated Revenue:</span>
+                                                  <span className="text-emerald-400 text-xs font-bold">$3,450.00 USD</span>
+                                                </div>
+                                                <div className="bg-[#1e1e2d] p-2.5 rounded-xl border border-white/5 space-y-1">
+                                                  <span className="text-gray-400 block">Current Month Commission:</span>
+                                                  <span className="text-cyan-300 text-xs font-bold">$1,200.00 USD</span>
+                                                </div>
+                                              </div>
+
+                                              <div className="bg-[#1e1e2d] p-2.5 rounded-xl border border-white/5 space-y-2">
+                                                <h6 className="text-[8px] font-bold text-white uppercase">Ledger History</h6>
+                                                <div className="space-y-1 text-[7px] text-gray-300">
+                                                  <div className="flex justify-between p-1.5 bg-[#12121a] rounded">
+                                                    <span>August 2026 Commission Payout</span>
+                                                    <span className="text-emerald-400 font-bold">$1,200.00 • PAID</span>
+                                                  </div>
+                                                  <div className="flex justify-between p-1.5 bg-[#12121a] rounded">
+                                                    <span>July 2026 Commission Payout</span>
+                                                    <span className="text-emerald-400 font-bold">$1,800.00 • PAID</span>
+                                                  </div>
+                                                </div>
+                                              </div>
+                                            </div>
+                                          )}
+
+                                          {/* TAB 5: AGENCY INFO */}
+                                          {subAdminTab === "settings" && (
+                                            <div className="space-y-3 animate-fade-in font-mono text-left">
+                                              <div className="bg-[#12121a] p-3 rounded-xl border border-white/5 space-y-1.5">
+                                                <h5 className="text-[8.5px] font-black text-purple-400 uppercase">🏢 Official Agency Profile Info</h5>
+                                                <p className="text-[7.5px] text-gray-300">Agency ID: <strong className="text-white">{myApprovedHostAgency?.id || user?.agencyId}</strong></p>
+                                                <p className="text-[7.5px] text-gray-300">Name: <strong className="text-white">{myApprovedHostAgency?.name || user?.agencyName}</strong></p>
+                                                <p className="text-[7.5px] text-gray-300">Owner Email: <strong className="text-white">{myApprovedHostAgency?.ownerEmail || user?.email}</strong></p>
+                                                <p className="text-[7.5px] text-gray-300">Country: <strong className="text-white">{myApprovedHostAgency?.country || "Global"}</strong></p>
+                                                <p className="text-[7.5px] text-gray-300">Contract Rate: <strong className="text-amber-300">{myApprovedHostAgency?.salaryRate || "40% Commission"}</strong></p>
+                                              </div>
+                                            </div>
+                                          )}
+                                        </div>
+                                      );
+                                    }
+
+                                    // USER VIEW WITH PADLOCK / LOCKED APPLICATION FORM
+                                    return (
+                                      <div className="space-y-4 text-left animate-fade-in">
+                                        {/* Locked Header Banner */}
+                                        <div className="bg-gradient-to-r from-purple-950 via-[#1b1030] to-[#12121a] p-3.5 rounded-2xl border-2 border-purple-500/50 shadow-2xl space-y-2">
+                                          <div className="flex justify-between items-center">
+                                            <div className="flex items-center space-x-2">
+                                              <span className="text-lg">🔒</span>
+                                              <h4 className="text-[11px] font-black text-amber-400 font-mono uppercase tracking-wider">START YOUR HOST AGENCY</h4>
+                                            </div>
+                                            <span className="text-[7.5px] bg-amber-500/20 text-amber-300 font-mono px-2 py-0.5 rounded-full border border-amber-500/30 font-bold uppercase">
+                                              Verified Recruiter Program
+                                            </span>
+                                          </div>
+
+                                          <p className="text-[8px] text-gray-200 leading-relaxed font-mono bg-black/40 p-2.5 rounded-xl border border-white/5">
+                                            Host Agency access is available only to verified and approved applicants. Submit your application and our Administration team will review your request.
+                                          </p>
+
+                                          {/* Notice: NO $3,000 Payment Requirement! */}
+                                          <div className="bg-emerald-950/60 border border-emerald-500/50 p-2 rounded-xl flex items-center space-x-2 text-[8px] font-mono text-emerald-300">
+                                            <span className="text-xs">💡</span>
+                                            <span>
+                                              <strong>Registration Notice:</strong> There is <strong>NO $3,000 payment requirement</strong> for Host Agency registration. Applications are evaluated based on recruiter experience and host network capacity.
+                                            </span>
+                                          </div>
+                                        </div>
+
+                                        {/* Current Application Status Display (if already submitted) */}
+                                        {existingHostAgencyApp && (
+                                          <div className="bg-[#1e1e2d] p-3 rounded-xl border-2 border-amber-500/50 space-y-1.5 font-mono">
+                                            <div className="flex justify-between items-center">
+                                              <span className="text-[8.5px] font-black text-amber-400 uppercase">Application Status</span>
+                                              <span className={`text-[7px] font-bold px-2 py-0.5 rounded uppercase ${
+                                                existingHostAgencyApp.status === "Approved" ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30" :
+                                                existingHostAgencyApp.status === "Rejected" ? "bg-red-500/20 text-red-300 border border-red-500/30" :
+                                                "bg-yellow-500/20 text-yellow-300 border border-yellow-500/30 animate-pulse"
+                                              }`}>
+                                                {existingHostAgencyApp.status || "PENDING REVIEW"}
+                                              </span>
+                                            </div>
+                                            <p className="text-[7.5px] text-gray-300">
+                                              Your Host Agency application has been submitted successfully. Our Administration team will review your application.
+                                            </p>
+                                          </div>
+                                        )}
+
+                                        {/* Host Agency Criteria & Requirements List */}
+                                        <div className="bg-[#12121a] p-3 rounded-2xl border border-white/10 space-y-2 font-mono">
+                                          <h5 className="text-[9px] font-black text-purple-400 uppercase flex items-center space-x-1.5">
+                                            <span>📋</span>
+                                            <span>HOST AGENCY REGISTRATION CRITERIA</span>
+                                          </h5>
+                                          
+                                          <div className="grid grid-cols-1 gap-1 text-[7.5px] text-gray-300">
+                                            <div className="flex items-start space-x-2 bg-[#1e1e2d] p-1.5 rounded-lg border border-white/5">
+                                              <span className="text-emerald-400 font-bold">✓</span>
+                                              <span>Verified Pardais Live user account with clean safety record.</span>
+                                            </div>
+                                            <div className="flex items-start space-x-2 bg-[#1e1e2d] p-1.5 rounded-lg border border-white/5">
+                                              <span className="text-emerald-400 font-bold">✓</span>
+                                              <span>Complete and accurate legal identity and contact information.</span>
+                                            </div>
+                                            <div className="flex items-start space-x-2 bg-[#1e1e2d] p-1.5 rounded-lg border border-white/5">
+                                              <span className="text-emerald-400 font-bold">✓</span>
+                                              <span>Valid WhatsApp phone number and active email address.</span>
+                                            </div>
+                                            <div className="flex items-start space-x-2 bg-[#1e1e2d] p-1.5 rounded-lg border border-white/5">
+                                              <span className="text-emerald-400 font-bold">✓</span>
+                                              <span>Proposed Agency / Business name and operating country region.</span>
+                                            </div>
+                                            <div className="flex items-start space-x-2 bg-[#1e1e2d] p-1.5 rounded-lg border border-white/5">
+                                              <span className="text-emerald-400 font-bold">✓</span>
+                                              <span>Prior experience in talent management or live-streaming creator recruitment.</span>
+                                            </div>
+                                            <div className="flex items-start space-x-2 bg-[#1e1e2d] p-1.5 rounded-lg border border-white/5">
+                                              <span className="text-emerald-400 font-bold">✓</span>
+                                              <span>Expected initial host network capacity (minimum 5 - 10 active hosts).</span>
+                                            </div>
+                                            <div className="flex items-start space-x-2 bg-[#1e1e2d] p-1.5 rounded-lg border border-white/5">
+                                              <span className="text-emerald-400 font-bold">✓</span>
+                                              <span>Agreement to Pardais Live Host Agency Terms & Conditions.</span>
+                                            </div>
+                                            <div className="flex items-start space-x-2 bg-[#1e1e2d] p-1.5 rounded-lg border border-white/5">
+                                              <span className="text-emerald-400 font-bold">✓</span>
+                                              <span>Final verification and official approval by Pardais Live Administration.</span>
+                                            </div>
+                                          </div>
+                                        </div>
+
+                                        {/* Host Agency Application Form */}
+                                        <div className="bg-[#12121a] p-3 rounded-2xl border border-white/10 space-y-2.5 font-mono">
+                                          <h5 className="text-[9px] font-black text-amber-400 uppercase">📝 SUBMIT HOST AGENCY APPLICATION</h5>
+                                          
+                                          <div className="space-y-2 text-[8px]">
+                                            <div className="grid grid-cols-2 gap-2">
+                                              <div>
+                                                <label className="text-gray-400 text-[7px] block">Full Legal Name *</label>
+                                                <input
+                                                  type="text"
+                                                  placeholder="e.g. Malik Saad"
+                                                  value={haFullName}
+                                                  onChange={(e) => setHaFullName(e.target.value)}
+                                                  className="w-full bg-[#1e1e2d] border border-[#303040] rounded-lg px-2 py-1 text-white focus:outline-none focus:border-purple-500"
+                                                />
+                                              </div>
+                                              <div>
+                                                <label className="text-gray-400 text-[7px] block">Pardais User ID</label>
+                                                <input
+                                                  type="text"
+                                                  disabled
+                                                  value={`@${user?.username}`}
+                                                  className="w-full bg-[#181822] border border-[#303040] rounded-lg px-2 py-1 text-amber-300 font-bold opacity-80"
+                                                />
+                                              </div>
+                                            </div>
+
+                                            <div className="grid grid-cols-2 gap-2">
+                                              <div>
+                                                <label className="text-gray-400 text-[7px] block">Email Address *</label>
+                                                <input
+                                                  type="email"
+                                                  placeholder="agency@example.com"
+                                                  value={haEmail}
+                                                  onChange={(e) => setHaEmail(e.target.value)}
+                                                  className="w-full bg-[#1e1e2d] border border-[#303040] rounded-lg px-2 py-1 text-white focus:outline-none focus:border-purple-500"
+                                                />
+                                              </div>
+                                              <div>
+                                                <label className="text-gray-400 text-[7px] block">WhatsApp / Phone *</label>
+                                                <input
+                                                  type="text"
+                                                  placeholder="+923001234567"
+                                                  value={haPhone}
+                                                  onChange={(e) => setHaPhone(e.target.value)}
+                                                  className="w-full bg-[#1e1e2d] border border-[#303040] rounded-lg px-2 py-1 text-white focus:outline-none focus:border-purple-500"
+                                                />
+                                              </div>
+                                            </div>
+
+                                            <div className="grid grid-cols-2 gap-2">
+                                              <div>
+                                                <label className="text-gray-400 text-[7px] block">Operating Country *</label>
+                                                <select
+                                                  value={haCountry}
+                                                  onChange={(e) => setHaCountry(e.target.value)}
+                                                  className="w-full bg-[#1e1e2d] border border-[#303040] rounded-lg px-2 py-1 text-white focus:outline-none focus:border-purple-500"
+                                                >
+                                                  <option value="Pakistan">Pakistan</option>
+                                                  <option value="Saudi Arabia">Saudi Arabia</option>
+                                                  <option value="UAE">UAE</option>
+                                                  <option value="Qatar">Qatar</option>
+                                                  <option value="Kuwait">Kuwait</option>
+                                                  <option value="Oman">Oman</option>
+                                                  <option value="Bahrain">Bahrain</option>
+                                                  <option value="USA">USA</option>
+                                                  <option value="UK">UK</option>
+                                                  <option value="Global">Global / International</option>
+                                                </select>
+                                              </div>
+                                              <div>
+                                                <label className="text-gray-400 text-[7px] block">City / Region</label>
+                                                <input
+                                                  type="text"
+                                                  placeholder="e.g. Lahore / Punjab"
+                                                  value={haCity}
+                                                  onChange={(e) => setHaCity(e.target.value)}
+                                                  className="w-full bg-[#1e1e2d] border border-[#303040] rounded-lg px-2 py-1 text-white focus:outline-none focus:border-purple-500"
+                                                />
+                                              </div>
+                                            </div>
+
+                                            <div>
+                                              <label className="text-gray-400 text-[7px] block">Proposed Host Agency Name *</label>
+                                              <input
+                                                type="text"
+                                                placeholder="e.g. Alpha Star Agency"
+                                                value={haAgencyName}
+                                                onChange={(e) => setHaAgencyName(e.target.value)}
+                                                className="w-full bg-[#1e1e2d] border border-[#303040] rounded-lg px-2 py-1 text-white focus:outline-none focus:border-purple-500"
+                                              />
+                                            </div>
+
+                                            <div>
+                                              <label className="text-gray-400 text-[7px] block">Agency Description & Management Strategy</label>
+                                              <textarea
+                                                placeholder="Briefly describe your agency vision, recruitment channels, and target content categories..."
+                                                value={haDescription}
+                                                onChange={(e) => setHaDescription(e.target.value)}
+                                                className="w-full bg-[#1e1e2d] border border-[#303040] rounded-lg p-2 text-white h-14 resize-none focus:outline-none focus:border-purple-500 text-[8px]"
+                                              />
+                                            </div>
+
+                                            <div>
+                                              <label className="text-gray-400 text-[7px] block">Previous Recruiter / Talent Agency Experience</label>
+                                              <input
+                                                type="text"
+                                                placeholder="e.g. 2 years experience managing live audio/video creators"
+                                                value={haExperience}
+                                                onChange={(e) => setHaExperience(e.target.value)}
+                                                className="w-full bg-[#1e1e2d] border border-[#303040] rounded-lg px-2 py-1 text-white focus:outline-none focus:border-purple-500"
+                                              />
+                                            </div>
+
+                                            <div className="grid grid-cols-3 gap-1.5">
+                                              <div>
+                                                <label className="text-gray-400 text-[7px] block">Expected Hosts</label>
+                                                <select
+                                                  value={haExpectedHosts}
+                                                  onChange={(e) => setHaExpectedHosts(e.target.value)}
+                                                  className="w-full bg-[#1e1e2d] border border-[#303040] rounded-lg px-1.5 py-1 text-white focus:outline-none focus:border-purple-500 text-[7.5px]"
+                                                >
+                                                  <option value="5 - 10 Hosts">5 - 10 Hosts</option>
+                                                  <option value="10 - 25 Hosts">10 - 25 Hosts</option>
+                                                  <option value="25 - 50 Hosts">25 - 50 Hosts</option>
+                                                  <option value="50+ Hosts">50+ Hosts</option>
+                                                </select>
+                                              </div>
+                                              <div>
+                                                <label className="text-gray-400 text-[7px] block">Expected Monthly Activity</label>
+                                                <select
+                                                  value={haMonthlyActivity}
+                                                  onChange={(e) => setHaMonthlyActivity(e.target.value)}
+                                                  className="w-full bg-[#1e1e2d] border border-[#303040] rounded-lg px-1.5 py-1 text-white focus:outline-none focus:border-purple-500 text-[7.5px]"
+                                                >
+                                                  <option value="50+ Live Hours / mo">50+ Live Hours / mo</option>
+                                                  <option value="100+ Live Hours / mo">100+ Live Hours / mo</option>
+                                                  <option value="250+ Live Hours / mo">250+ Live Hours / mo</option>
+                                                </select>
+                                              </div>
+                                              <div>
+                                                <label className="text-gray-400 text-[7px] block">Expected Active Hosts</label>
+                                                <input
+                                                  type="text"
+                                                  placeholder="e.g. 10 Active"
+                                                  value={haActiveHosts}
+                                                  onChange={(e) => setHaActiveHosts(e.target.value)}
+                                                  className="w-full bg-[#1e1e2d] border border-[#303040] rounded-lg px-1.5 py-1 text-white focus:outline-none focus:border-purple-500 text-[7.5px]"
+                                                />
+                                              </div>
+                                            </div>
+
+                                            {/* Terms and Conditions Box */}
+                                            <div className="bg-[#181822] p-2 rounded-xl border border-white/5 space-y-1 text-[7px] text-gray-300">
+                                              <span className="text-purple-400 font-bold block uppercase">Host Agency Terms & Conditions:</span>
+                                              <div className="h-12 overflow-y-auto pr-1 space-y-0.5 text-gray-400 italic">
+                                                <p>1. Agencies agree to uphold Pardais Live broadcast guidelines and community standards.</p>
+                                                <p>2. Hosts recruited by the agency must comply with monthly live broadcasting quotas.</p>
+                                                <p>3. Agency commissions are calculated based on verified backend gift and live activity records.</p>
+                                                <p>4. Submitting an application does not guarantee approval; final authority rests with Pardais Administration.</p>
+                                              </div>
+
+                                              <label className="flex items-center space-x-2 pt-1 cursor-pointer text-white font-bold text-[7.5px]">
+                                                <input
+                                                  type="checkbox"
+                                                  checked={haAgreedTerms}
+                                                  onChange={(e) => setHaAgreedTerms(e.target.checked)}
+                                                  className="w-3 h-3 accent-purple-500 cursor-pointer"
+                                                />
+                                                <span>I have read and agree to the Host Agency Terms & Conditions.</span>
+                                              </label>
+                                            </div>
+
+                                            <button
+                                              type="button"
+                                              disabled={!haAgreedTerms || !haFullName.trim() || !haEmail.trim() || !haPhone.trim() || !haAgencyName.trim() || haSubmitting}
+                                              onClick={() => {
+                                                setHaSubmitting(true);
+                                                const payload = {
+                                                  type: "host_agency",
+                                                  applicantName: haFullName,
+                                                  applicantUsername: user?.username,
+                                                  email: haEmail,
+                                                  contact: haPhone,
+                                                  country: haCountry,
+                                                  city: haCity,
+                                                  agencyName: haAgencyName,
+                                                  description: haDescription,
+                                                  experience: haExperience,
+                                                  expectedHosts: haExpectedHosts,
+                                                  monthlyActivity: haMonthlyActivity,
+                                                  activeHosts: haActiveHosts,
+                                                  agreedToTerms: true,
+                                                  status: "Pending Review"
+                                                };
+
+                                                fetch("/api/v1/agency-requests", {
+                                                  method: "POST",
+                                                  headers: { "Content-Type": "application/json" },
+                                                  body: JSON.stringify(payload)
+                                                })
+                                                  .then(res => res.json())
+                                                  .then(data => {
+                                                    setHaSubmitting(false);
+                                                    setAgencyRequests(prev => [data, ...prev]);
+                                                    alert("Your Host Agency application has been submitted successfully. Our Administration team will review your application.");
+                                                  })
+                                                  .catch(err => {
+                                                    setHaSubmitting(false);
+                                                    console.error(err);
+                                                    alert("Submission failed. Please try again.");
+                                                  });
+                                              }}
+                                              className="w-full py-2 bg-gradient-to-r from-purple-600 via-indigo-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white font-black text-[9px] uppercase tracking-wider rounded-xl transition-all disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer shadow-lg shadow-purple-500/20"
+                                            >
+                                              {haSubmitting ? "Submitting Request..." : "REQUEST HOST AGENCY"}
+                                            </button>
+                                          </div>
+                                        </div>
+
+                                        {/* JOIN AN EXISTING HOST AGENCY SECTION FOR USERS */}
+                                        <div className="bg-[#12121a] p-3 rounded-2xl border border-white/10 space-y-2 font-mono">
+                                          <div className="flex justify-between items-center">
+                                            <h5 className="text-[9px] font-black text-emerald-400 uppercase">🎙️ JOIN AN OFFICIAL HOST AGENCY</h5>
+                                            <span className="text-[7px] bg-emerald-500/20 text-emerald-300 px-1.5 py-0.5 rounded font-bold">Verified Partners</span>
+                                          </div>
+                                          <p className="text-[7.5px] text-gray-400">Are you a creator wanting to broadcast under an official agency? Choose a verified host agency below to submit your membership request.</p>
+
+                                          <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
+                                            {(hostAgencies || []).length === 0 ? (
+                                              <p className="text-[7.5px] text-gray-500 italic py-1">No host agencies available at this time.</p>
+                                            ) : (
+                                              (hostAgencies || []).map((agency: any) => (
+                                                <div key={agency.id} className="p-2 rounded-xl bg-[#1e1e2d] border border-white/5 flex justify-between items-center text-[8px]">
+                                                  <div className="flex items-center space-x-2">
+                                                    <img src={agency.logo || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=100&q=80"} alt="Agency" className="w-7 h-7 rounded-lg border border-purple-400/40 object-cover" />
+                                                    <div>
+                                                      <div className="flex items-center space-x-1">
+                                                        <span className="text-white font-bold">{agency.name}</span>
+                                                        <span className="text-[6.5px] text-emerald-400 font-bold">✓ Official</span>
+                                                      </div>
+                                                      <span className="text-[7px] text-gray-400">Hosts: {agency.registeredHosts || 0} • {agency.country || "Global"}</span>
+                                                    </div>
+                                                  </div>
+
+                                                  <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                      setTargetAgencyToJoin(agency);
+                                                      setShowJoinAgencyModal(true);
+                                                    }}
+                                                    className="px-2 py-1 bg-purple-600 hover:bg-purple-500 text-white font-bold text-[7px] uppercase rounded-lg cursor-pointer"
+                                                  >
+                                                    Apply to Join
+                                                  </button>
+                                                </div>
+                                              ))
+                                            )}
+                                          </div>
                                         </div>
                                       </div>
-                                    </div>
-                                  )}
-
-                                  {/* PORTION 2: REQUEST FOR HOST AGENCY */}
-                                  {agencyPortalTab === "host_agency" && (
-                                    <div className="space-y-4 text-left">
-                                      <div className="bg-[#12121a] p-3 rounded-xl border border-[#303040] space-y-2">
-                                        <div className="flex justify-between items-center">
-                                          <span className="text-[9px] font-bold text-pink-400 uppercase tracking-wider font-mono">Request Host Agency</span>
-                                          <span className="text-[7.5px] bg-pink-500/20 text-pink-400 px-1.5 py-0.5 rounded font-black font-mono">Talent Recruiter</span>
-                                        </div>
-                                        <p className="text-[8px] text-gray-400 leading-normal">
-                                          Apply to establish an official talent agency contract with Pardais Party. Once approved, you can recruit hosts and earn commissions on their monthly salaries.
-                                        </p>
-                                      </div>
-
-                                      <div className="bg-[#12121a] p-3 rounded-xl border border-white/5 space-y-2.5">
-                                        <h5 className="text-[9px] font-black text-purple-400 uppercase font-mono">Submit Host Agency Request</h5>
-                                        <div className="space-y-1.5">
-                                          <input
-                                            type="text"
-                                            placeholder="Proposed Host Agency Name"
-                                            value={adminHaName}
-                                            onChange={(e) => setAdminHaName(e.target.value)}
-                                            className="w-full bg-[#1e1e2d] text-[8.5px] text-white border border-[#303040] rounded px-2 py-1 focus:outline-none focus:border-purple-500"
-                                          />
-                                          <input
-                                            type="text"
-                                            placeholder="WhatsApp / Contact (e.g. +923001234567)"
-                                            value={adminCsWhatsapp}
-                                            onChange={(e) => setAdminCsWhatsapp(e.target.value)}
-                                            className="w-full bg-[#1e1e2d] text-[8.5px] text-white border border-[#303040] rounded px-2 py-1 focus:outline-none focus:border-purple-500"
-                                          />
-                                          <input
-                                            type="text"
-                                            placeholder="Commission Proposal (e.g. 40% + $200 Base Bonus)"
-                                            value={adminHaRate}
-                                            onChange={(e) => setAdminHaRate(e.target.value)}
-                                            className="w-full bg-[#1e1e2d] text-[8.5px] text-white border border-[#303040] rounded px-2 py-1 focus:outline-none focus:border-purple-500"
-                                          />
-                                          <textarea
-                                            placeholder="Recruitment plan & agency experience..."
-                                            value={adminCsDesc}
-                                            onChange={(e) => setAdminCsDesc(e.target.value)}
-                                            className="w-full bg-[#1e1e2d] text-[8.5px] text-white border border-[#303040] rounded p-1.5 h-12 resize-none focus:outline-none focus:border-purple-500"
-                                          />
-
-                                          <button
-                                            type="button"
-                                            disabled={!adminHaName.trim() || !adminCsWhatsapp.trim() || !adminHaRate.trim()}
-                                            onClick={() => {
-                                              const requestPayload = {
-                                                type: "host_agency",
-                                                agencyName: adminHaName,
-                                                applicantName: user.username,
-                                                applicantUsername: user.username,
-                                                ownerEmail: `${user.username}@pardais.party`,
-                                                contact: adminCsWhatsapp,
-                                                rate: adminHaRate,
-                                                description: adminCsDesc
-                                              };
-
-                                              fetch("/api/v1/agency-requests", {
-                                                method: "POST",
-                                                headers: { "Content-Type": "application/json" },
-                                                body: JSON.stringify(requestPayload)
-                                              })
-                                              .then(res => res.json())
-                                              .then(data => {
-                                                setAdminHaName("");
-                                                setAdminCsWhatsapp("");
-                                                setAdminHaRate("");
-                                                setAdminCsDesc("");
-                                                
-                                                setAgencyRequests(prev => [data, ...prev]);
-
-                                                setReportSuccessToast("Host Agency request submitted! Admin has been notified.");
-                                                setTimeout(() => setReportSuccessToast(null), 4000);
-                                              })
-                                              .catch(err => console.error("Error creating host agency request:", err));
-                                            }}
-                                            className="w-full py-1.5 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white font-bold text-[8.5px] uppercase rounded transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
-                                          >
-                                            Submit Host Request
-                                          </button>
-                                        </div>
-                                      </div>
-                                    </div>
-                                  )}
+                                    );
+                                  })()}
 
                                   {/* Request History Section */}
                                   <div className="space-y-1.5 border-t border-white/5 pt-3">
@@ -15157,7 +15721,7 @@ export default function App() {
                                     <div className="flex items-center space-x-1 bg-transparent">
                                       <p className="text-[10px] font-black text-white">{user.fullName || user.username || "Pardais User"}</p>
                                       {user.isVerified && (
-                                        <BadgeCheck className="w-3.5 h-3.5 text-green-400 fill-green-400/10 shrink-0" title="KYC Verified" />
+                                        <BadgeCheck className="w-3.5 h-3.5 text-green-400 fill-green-400/10 shrink-0" />
                                       )}
                                     </div>
                                     <p className="text-[7px] text-gray-400 font-mono">@{user.username}</p>
@@ -15305,7 +15869,7 @@ export default function App() {
                         reelsTab={reelsTab}
                         setReelsTab={setReelsTab}
                         clientView={clientView}
-                        setClientView={setClientView}
+                        setClientView={setClientView as any}
                         reelsMuted={reelsMuted}
                         setReelsMuted={setReelsMuted}
                         blockedUsers={blockedUsers}
@@ -15656,7 +16220,7 @@ export default function App() {
 
                               {/* Top Controls Overlay */}
                               <div className="absolute top-0 inset-x-0 p-3 bg-gradient-to-b from-black/80 to-transparent flex items-center justify-between z-20 pt-24">
-                                <span className="text-[10px] font-black text-white/80 uppercase tracking-widest font-mono">Pardais Party • {reelsTab.toUpperCase()}</span>
+                                <span className="text-[10px] font-black text-white/80 uppercase tracking-widest font-mono">Pardais Party • {(reelsTab || "trending").toUpperCase()}</span>
                                 <button
                                   onClick={() => setReelsMuted(!reelsMuted)}
                                   className="p-1.5 bg-black/50 hover:bg-black/75 rounded-full text-white transition-all border border-white/5"
@@ -17905,7 +18469,7 @@ export default function App() {
                                                     <img 
                                                       src={sup.avatar} 
                                                       className={`w-6 h-6 rounded-full object-cover shadow-md bg-black/40 ${isMVP ? 'border-2 border-yellow-400' : 'border border-white/20'}`} 
-                                                      alt={sup.name} 
+                                                      alt={(sup as any).name || sup.username} 
                                                     />
                                                     {isMVP && (
                                                       <span className="absolute -bottom-2 left-1/2 -translate-x-1/2 text-[5.5px] text-yellow-400 font-extrabold font-mono tracking-wide bg-black/80 px-1 rounded border border-yellow-400/30 text-center select-none scale-90 z-20 shadow">
@@ -17920,7 +18484,7 @@ export default function App() {
                                             {/* Right label overlay inside camera */}
                                             <div className="absolute bottom-4 right-2 bg-black/60 backdrop-blur-md px-1.5 py-0.5 rounded-full border border-white/5 flex items-center space-x-1 z-10 select-none">
                                               <span className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-pulse shrink-0"></span>
-                                              <span className="text-[7.5px] font-black text-white">{userLiveCoHost?.username || userLiveCoHost?.name || "Co-Host"}</span>
+                                              <span className="text-[7.5px] font-black text-white">{userLiveCoHost?.username || (userLiveCoHost as any)?.name || "Co-Host"}</span>
                                               <span className="text-[6.5px] text-cyan-400 font-bold font-mono">💎 {userLivePkScoreOther}</span>
                                               <button className="w-3.5 h-3.5 rounded-full bg-blue-500 text-white text-[8px] flex items-center justify-center shadow hover:scale-115 active:scale-90 ml-0.5 cursor-pointer">+</button>
                                             </div>
@@ -18374,7 +18938,7 @@ export default function App() {
                               <div className="flex items-center space-x-1.5 overflow-x-auto max-w-[120px] no-scrollbar">
                                 {userLiveViewerList.length > 0 ? (
                                   userLiveViewerList.map((viewer, idx) => (
-                                    <div key={viewer.userId || viewer.username || idx} className="flex flex-col items-center bg-transparent shrink-0">
+                                    <div key={(viewer as any).userId || viewer.username || idx} className="flex flex-col items-center bg-transparent shrink-0">
                                       <img
                                         src={viewer.avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=100&q=80"}
                                         className="w-6.5 h-6.5 rounded-full border border-emerald-400/80 object-cover shadow"
@@ -18514,7 +19078,7 @@ export default function App() {
                                       };
                                       setUserLiveGuestSeats(updated);
                                       setUserLiveGuestRequests(prev => prev.filter(r => r.id !== req.id));
-                                      triggerJoinNotif(req.username, req.level || 1, req.vipLevel || 0);
+                                      triggerJoinNotif(req.username, req.level || 1, (req as any).vipLevel || 0);
                                       setUserLiveMessages(prev => [
                                         ...prev,
                                         {
@@ -19980,7 +20544,7 @@ export default function App() {
                                         <div className="flex items-center space-x-2.5 bg-transparent">
                                           <div className="relative">
                                             <img src={seat.avatar || ""} className="w-11 h-11 rounded-full object-cover border-2 border-purple-500 shadow-lg" />
-                                            {seat.isModerator && (
+                                            {(seat as any).isModerator && (
                                               <span className="absolute -bottom-1 -right-1 bg-blue-600 text-[6px] text-white px-1 rounded-full font-black border border-[#0c0919]">🛡️</span>
                                             )}
                                           </div>
@@ -20073,7 +20637,7 @@ export default function App() {
                                         {/* Make Moderator Toggle */}
                                         <button
                                           onClick={() => {
-                                            const nextModState = !seat.isModerator;
+                                            const nextModState = !(seat as any).isModerator;
                                             updateSeatProperty("isModerator", nextModState);
                                             addSystemMessage(
                                               nextModState 
@@ -20082,12 +20646,12 @@ export default function App() {
                                             );
                                           }}
                                           className={`p-2 rounded-xl border flex items-center justify-center space-x-1.5 font-bold transition-all ${
-                                            seat.isModerator 
+                                            (seat as any).isModerator 
                                               ? "bg-blue-600/20 border-blue-500/40 text-blue-300 hover:bg-blue-600/30 animate-pulse" 
                                               : "bg-white/5 border-white/5 text-gray-200 hover:bg-white/10"
                                           }`}
                                         >
-                                          <span>{seat.isModerator ? "🛡️ Revoke Mod" : "🛡️ Appoint Mod"}</span>
+                                          <span>{(seat as any).isModerator ? "🛡️ Revoke Mod" : "🛡️ Appoint Mod"}</span>
                                         </button>
                                       </div>
 
@@ -21052,7 +21616,7 @@ export default function App() {
 
                                       <div className="relative z-10 shrink-0">
                                         <div className={`w-5.5 h-5.5 rounded-full flex items-center justify-center text-[8.5px] font-black ${isVip ? "bg-amber-400 text-amber-950" : "bg-purple-500 text-white"} shadow-inner`}>
-                                          {notif.username.charAt(0).toUpperCase()}
+                                          {(notif?.username || "P").charAt(0).toUpperCase()}
                                         </div>
                                         {isVip && (
                                           <div className="absolute -top-1 -right-1 bg-yellow-400 rounded-full p-0.5 animate-bounce shadow">
@@ -21147,7 +21711,7 @@ export default function App() {
                           >
                             <span>🪙 Coins Wallet</span>
                             <span className="text-[8px] bg-black/25 text-yellow-400 px-1.5 py-0.2 rounded font-mono">
-                              {user.coins}
+                              {(user?.coins ?? 0).toLocaleString()}
                             </span>
                           </button>
                         </div>
@@ -21160,11 +21724,11 @@ export default function App() {
                               <span className="text-[9px] uppercase tracking-widest text-purple-400 font-bold font-mono">Host Stream Earnings</span>
                               <div className="flex items-center justify-center space-x-2">
                                 <DollarSign className="w-6 h-6 text-[#66fcf1]" />
-                                <p className="text-2xl font-black text-white font-mono tracking-tight">{user.diamonds ?? 0}</p>
+                                <p className="text-2xl font-black text-white font-mono tracking-tight">{(user?.diamonds ?? 0).toLocaleString()}</p>
                                 <span className="text-xs text-gray-400 font-bold">Diamonds</span>
                               </div>
                               <p className="text-xs text-[#25D366] font-mono font-bold">
-                                Estimated Value: ${(((user.diamonds ?? 0) / 100)).toFixed(2)} USD (~{(((user.diamonds ?? 0) * 2.8)).toFixed(0)} PKR)
+                                Estimated Value: ${(((user?.diamonds ?? 0) / 100)).toFixed(2)} USD (~{(((user?.diamonds ?? 0) * 2.8)).toFixed(0)} PKR)
                               </p>
                             </div>
 
@@ -21234,7 +21798,7 @@ export default function App() {
                                           alert("Minimum custom withdrawal is 100 Diamonds!");
                                           return;
                                         }
-                                        if (amt > user.diamonds) {
+                                        if (amt > (user?.diamonds ?? 0)) {
                                           alert("You don't have enough diamonds!");
                                           return;
                                         }
@@ -21294,7 +21858,7 @@ export default function App() {
                                           alert("Please enter a valid amount of diamonds to exchange!");
                                           return;
                                         }
-                                        if (amt > user.diamonds) {
+                                        if (amt > (user?.diamonds ?? 0)) {
                                           alert("Insufficient Diamonds to exchange!");
                                           return;
                                         }
@@ -21327,7 +21891,7 @@ export default function App() {
                               <span className="text-[9px] uppercase tracking-widest text-yellow-400 font-bold font-mono">Available Gifting Balance</span>
                               <div className="flex items-center justify-center space-x-2">
                                 <Coins className="w-6 h-6 text-yellow-400 animate-spin-slow" />
-                                <p className="text-2xl font-black text-white font-mono tracking-tight">{user.coins}</p>
+                                <p className="text-2xl font-black text-white font-mono tracking-tight">{(user?.coins ?? 0).toLocaleString()}</p>
                                 <span className="text-xs text-gray-300 font-bold">Coins</span>
                               </div>
                               <p className="text-[8px] text-gray-400 max-w-xs mx-auto leading-normal italic">
@@ -21348,13 +21912,13 @@ export default function App() {
                                   </div>
                                 </div>
                                 <div className="bg-yellow-500/10 border border-yellow-500/30 px-2 py-0.5 rounded-lg flex items-center space-x-1">
-                                  <span className="text-xs">{selectedCurrencyCountry.flag}</span>
-                                  <span className="text-[10px] font-mono font-black text-yellow-400">{selectedCurrencyCountry.currencyCode}</span>
+                                  <span className="text-xs">{(selectedCurrencyCountry || COUNTRIES_CURRENCIES[0]).flag}</span>
+                                  <span className="text-[10px] font-mono font-black text-yellow-400">{(selectedCurrencyCountry || COUNTRIES_CURRENCIES[0]).currencyCode}</span>
                                 </div>
                               </div>
 
                               <select
-                                value={selectedCurrencyCountry.code}
+                                value={(selectedCurrencyCountry || COUNTRIES_CURRENCIES[0]).code}
                                 onChange={(e) => {
                                   const found = COUNTRIES_CURRENCIES.find(c => c.code === e.target.value);
                                   if (found) setSelectedCurrencyCountry(found);
@@ -21369,7 +21933,7 @@ export default function App() {
                               </select>
 
                               <div className="flex justify-between items-center text-[8px] font-mono bg-[#12121a] px-2.5 py-1 rounded-lg text-gray-300">
-                                <span>Country: <strong className="text-white">{selectedCurrencyCountry.flag} {selectedCurrencyCountry.name}</strong></span>
+                                <span>Country: <strong className="text-white">{(selectedCurrencyCountry || COUNTRIES_CURRENCIES[0]).flag} {(selectedCurrencyCountry || COUNTRIES_CURRENCIES[0]).name}</strong></span>
                                 <span>Active Rate: <strong className="text-emerald-400 font-bold">{getCoinsCostInCurrency(1000, selectedCurrencyCountry).formattedWithCode} / 1k Coins</strong></span>
                               </div>
                             </div>
@@ -21403,32 +21967,103 @@ export default function App() {
                             {/* Portion 1: Quick Recharge shop - Online mode (Google Pay & Card) */}
                             {coinPurchaseMethod === "online" && (
                               <div className="space-y-4 py-2">
-                                {/* Google Pay & Card Banner */}
-                                <div className="bg-gradient-to-r from-[#1e1e2d] via-[#221c38] to-[#1e1e2d] border border-cyan-500/30 p-3.5 rounded-2xl text-center space-y-2 relative overflow-hidden shadow-lg">
-                                  <div className="flex items-center justify-center space-x-2">
-                                    <div className="flex items-center bg-white/10 px-2 py-0.5 rounded-lg border border-white/10">
-                                      <span className="text-blue-400 font-bold text-xs">G</span>
-                                      <span className="text-red-400 font-bold text-xs">o</span>
-                                      <span className="text-yellow-400 font-bold text-xs">o</span>
-                                      <span className="text-blue-400 font-bold text-xs">g</span>
-                                      <span className="text-green-400 font-bold text-xs">l</span>
-                                      <span className="text-red-400 font-bold text-xs">e</span>
-                                      <span className="text-white font-bold text-xs ml-1">Pay</span>
+                                {/* Google Pay & Card Interactive Options Banner */}
+                                <div className="bg-gradient-to-r from-[#1e1e2d] via-[#221c38] to-[#1e1e2d] border border-cyan-500/30 p-3.5 rounded-2xl space-y-3 relative overflow-hidden shadow-lg text-left">
+                                  <div className="flex items-center justify-between">
+                                    <div className="flex items-center space-x-2">
+                                      <span className="text-sm">💳</span>
+                                      <span className="text-xs font-black text-white font-mono">Select Payment Option / Add Cards</span>
                                     </div>
-                                    <span className="text-xs font-black text-white font-mono">Instant Online Recharge</span>
+                                    <span className="text-[8px] bg-emerald-500/20 text-emerald-300 font-bold px-2 py-0.5 rounded-full border border-emerald-500/30">
+                                      🔒 Instant 256-Bit SSL
+                                    </span>
                                   </div>
 
-                                  <p className="text-[9.5px] text-gray-300 font-medium max-w-xs mx-auto">
-                                    Buy coin packages instantly in <strong className="text-yellow-400">{selectedCurrencyCountry.currencyCode} ({selectedCurrencyCountry.flag})</strong> using <strong className="text-blue-400">Google Pay</strong>, <strong className="text-yellow-400">Visa</strong>, or <strong className="text-pink-400">Mastercard</strong>.
+                                  <p className="text-[9.5px] text-gray-300 font-medium">
+                                    Recharge coin packages in <strong className="text-yellow-400">{(selectedCurrencyCountry || COUNTRIES_CURRENCIES[0]).currencyCode} ({(selectedCurrencyCountry || COUNTRIES_CURRENCIES[0]).flag})</strong> using <strong className="text-cyan-400">Debit/Credit Cards</strong>, <strong className="text-blue-400">Google Pay</strong>, <strong className="text-emerald-400">EasyPaisa</strong>, or <strong className="text-rose-400">JazzCash</strong>.
                                   </p>
 
-                                  <div className="flex justify-center items-center space-x-2 pt-1">
-                                    <span className="text-[7.5px] bg-blue-500/20 text-blue-300 font-bold px-2 py-0.5 rounded-full border border-blue-500/30">
-                                      ⚡ 1-Click Google Pay
-                                    </span>
-                                    <span className="text-[7.5px] bg-emerald-500/20 text-emerald-300 font-bold px-2 py-0.5 rounded-full border border-emerald-500/30">
-                                      🔒 256-Bit SSL Encrypted
-                                    </span>
+                                  {/* Quick Payment Cards Row */}
+                                  <div className="grid grid-cols-2 gap-2 pt-1">
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        if (!selectedPaymentPackage && onlinePackages && onlinePackages.length > 0) {
+                                          setSelectedPaymentPackage(onlinePackages[0]);
+                                        }
+                                        setActivePaymentMethodTab("card");
+                                        setShowCardPaymentModal(true);
+                                      }}
+                                      className="p-2.5 rounded-xl bg-gradient-to-r from-purple-900/50 to-pink-900/50 hover:from-purple-800/80 hover:to-pink-800/80 border border-purple-500/40 text-left transition-all cursor-pointer flex items-center justify-between group shadow-sm"
+                                    >
+                                      <div>
+                                        <p className="text-[10px] font-black text-white group-hover:text-yellow-300 flex items-center">
+                                          <span>💳 Credit / Debit Cards</span>
+                                        </p>
+                                        <p className="text-[8px] text-gray-400">Visa, Mastercard, UnionPay</p>
+                                      </div>
+                                      <span className="text-xs text-pink-400 font-black font-mono">➕ Add</span>
+                                    </button>
+
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        if (!selectedPaymentPackage && onlinePackages && onlinePackages.length > 0) {
+                                          setSelectedPaymentPackage(onlinePackages[0]);
+                                        }
+                                        setActivePaymentMethodTab("gpay");
+                                        setShowCardPaymentModal(true);
+                                      }}
+                                      className="p-2.5 rounded-xl bg-gradient-to-r from-blue-900/50 to-indigo-900/50 hover:from-blue-800/80 hover:to-indigo-800/80 border border-blue-500/40 text-left transition-all cursor-pointer flex items-center justify-between group shadow-sm"
+                                    >
+                                      <div>
+                                        <p className="text-[10px] font-black text-white group-hover:text-yellow-300 flex items-center">
+                                          <span>⚡ Google Pay</span>
+                                        </p>
+                                        <p className="text-[8px] text-gray-400">1-Click Express Checkout</p>
+                                      </div>
+                                      <span className="text-xs text-blue-400 font-black font-mono">⚡ Pay</span>
+                                    </button>
+
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        if (!selectedPaymentPackage && onlinePackages && onlinePackages.length > 0) {
+                                          setSelectedPaymentPackage(onlinePackages[0]);
+                                        }
+                                        setActivePaymentMethodTab("easypaisa");
+                                        setShowCardPaymentModal(true);
+                                      }}
+                                      className="p-2.5 rounded-xl bg-gradient-to-r from-emerald-900/50 to-teal-900/50 hover:from-emerald-800/80 hover:to-teal-800/80 border border-emerald-500/40 text-left transition-all cursor-pointer flex items-center justify-between group shadow-sm"
+                                    >
+                                      <div>
+                                        <p className="text-[10px] font-black text-white group-hover:text-yellow-300 flex items-center">
+                                          <span>📲 EasyPaisa Wallet</span>
+                                        </p>
+                                        <p className="text-[8px] text-gray-400">Instant Mobile Account</p>
+                                      </div>
+                                      <span className="text-xs text-emerald-400 font-black font-mono">📲 Pay</span>
+                                    </button>
+
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        if (!selectedPaymentPackage && onlinePackages && onlinePackages.length > 0) {
+                                          setSelectedPaymentPackage(onlinePackages[0]);
+                                        }
+                                        setActivePaymentMethodTab("jazzcash");
+                                        setShowCardPaymentModal(true);
+                                      }}
+                                      className="p-2.5 rounded-xl bg-gradient-to-r from-red-900/50 to-amber-900/50 hover:from-red-800/80 hover:to-amber-800/80 border border-red-500/40 text-left transition-all cursor-pointer flex items-center justify-between group shadow-sm"
+                                    >
+                                      <div>
+                                        <p className="text-[10px] font-black text-white group-hover:text-yellow-300 flex items-center">
+                                          <span>📱 JazzCash Wallet</span>
+                                        </p>
+                                        <p className="text-[8px] text-gray-400">Direct Mobile Payment</p>
+                                      </div>
+                                      <span className="text-xs text-rose-400 font-black font-mono">📱 Pay</span>
+                                    </button>
                                   </div>
                                 </div>
 
@@ -21442,25 +22077,25 @@ export default function App() {
                                   </div>
 
                                   <div className="grid grid-cols-2 gap-2.5">
-                                    {onlinePackages.map((pkg) => {
-                                      const costInfo = getCoinsCostInCurrency(pkg.coins, selectedCurrencyCountry, pkg.discount);
-                                      const origCostInfo = getCoinsCostInCurrency(pkg.coins, selectedCurrencyCountry, 0);
+                                    {(onlinePackages || []).map((pkg) => {
+                                      const costInfo = getCoinsCostInCurrency(pkg?.coins || 0, selectedCurrencyCountry, pkg?.discount || 0);
+                                      const origCostInfo = getCoinsCostInCurrency(pkg?.coins || 0, selectedCurrencyCountry, 0);
 
                                       return (
                                         <button
                                           key={pkg.id}
                                           onClick={() => {
                                             setSelectedPaymentPackage(pkg);
-                                            setActivePaymentMethodTab("gpay");
+                                            setActivePaymentMethodTab("card");
                                             setShowCardPaymentModal(true);
                                           }}
                                           className="p-3 rounded-xl bg-[#1e1e2d] hover:bg-[#28283d] border border-[#303040] hover:border-cyan-400/60 text-left transition-all flex flex-col justify-between cursor-pointer space-y-1.5 shadow-md hover:shadow-cyan-500/10 group"
                                         >
                                           <div className="flex justify-between items-start w-full bg-transparent">
                                             <p className="text-xs font-black text-white group-hover:text-yellow-300 flex items-center">
-                                              <span className="mr-1">🪙</span> {pkg.coins.toLocaleString()} Coins
+                                              <span className="mr-1">🪙</span> {(pkg?.coins || 0).toLocaleString()} Coins
                                             </p>
-                                            {pkg.discount > 0 && (
+                                            {(pkg?.discount || 0) > 0 && (
                                               <span className="bg-gradient-to-r from-pink-500 to-rose-500 text-white text-[6.5px] font-black px-1.5 py-0.5 rounded uppercase tracking-wide shrink-0">
                                                 {pkg.discount}% OFF
                                               </span>
@@ -21469,7 +22104,7 @@ export default function App() {
 
                                           <div className="flex justify-between items-end w-full pt-1 bg-transparent border-t border-white/5">
                                             <div className="bg-transparent">
-                                              {pkg.discount > 0 && (
+                                              {(pkg?.discount || 0) > 0 && (
                                                 <span className="text-[8px] text-gray-500 line-through block leading-none">
                                                   {origCostInfo.formatted}
                                                 </span>
@@ -21533,7 +22168,7 @@ export default function App() {
                                       </div>
                                       <div className="flex justify-between items-center bg-transparent text-[10px]">
                                         <span className="text-gray-400 font-medium">Country / Currency:</span>
-                                        <span className="text-yellow-400 font-mono font-bold">{selectedCurrencyCountry.flag} {selectedCurrencyCountry.name} ({selectedCurrencyCountry.currencyCode})</span>
+                                        <span className="text-yellow-400 font-mono font-bold">{(selectedCurrencyCountry || COUNTRIES_CURRENCIES[0]).flag} {(selectedCurrencyCountry || COUNTRIES_CURRENCIES[0]).name} ({(selectedCurrencyCountry || COUNTRIES_CURRENCIES[0]).currencyCode})</span>
                                       </div>
                                       <div className="border-t border-white/5 my-1" />
                                       <div className="flex justify-between items-center bg-transparent">
@@ -21581,7 +22216,7 @@ export default function App() {
                                 <div className="bg-gradient-to-r from-emerald-950 to-[#121212] p-3.5 rounded-xl border border-emerald-500/20 space-y-3">
                                   <h5 className="text-[10px] uppercase tracking-wider text-[#25D366] font-bold font-mono">📱 Buy Coins Offline via WhatsApp</h5>
                                   <p className="text-[9px] text-gray-300 leading-relaxed">
-                                    Selected Country: <strong className="text-yellow-400">{selectedCurrencyCountry.flag} {selectedCurrencyCountry.name}</strong>. Rate: <strong className="text-[#25D366] font-mono">{getCoinsCostInCurrency(1000, selectedCurrencyCountry).formattedWithCode} per 1,000 Coins</strong>. Choose a package to contact Pardais Party Admin team directly on WhatsApp.
+                                    Selected Country: <strong className="text-yellow-400">{(selectedCurrencyCountry || COUNTRIES_CURRENCIES[0]).flag} {(selectedCurrencyCountry || COUNTRIES_CURRENCIES[0]).name}</strong>. Rate: <strong className="text-[#25D366] font-mono">{getCoinsCostInCurrency(1000, selectedCurrencyCountry).formattedWithCode} per 1,000 Coins</strong>. Choose a package to contact Pardais Party Admin team directly on WhatsApp.
                                   </p>
 
                                   <div className="space-y-2.5 pt-1">
@@ -21641,11 +22276,11 @@ export default function App() {
                                           method: "POST",
                                           headers: { "Content-Type": "application/json" },
                                           body: JSON.stringify({
-                                            username: user.username,
+                                            username: user?.username || "Pardais_User",
                                             coins: coinsNum,
                                             amountPKR: coinsNum / 10,
-                                            country: selectedCurrencyCountry.name,
-                                            currencyCode: selectedCurrencyCountry.currencyCode,
+                                            country: (selectedCurrencyCountry || COUNTRIES_CURRENCIES[0]).name,
+                                            currencyCode: (selectedCurrencyCountry || COUNTRIES_CURRENCIES[0]).currencyCode,
                                             formattedCost: offlineCostInfo.formattedWithCode,
                                             status: "Pending"
                                           })
@@ -21658,8 +22293,8 @@ export default function App() {
                                         .catch(err => console.error("Error creating purchase request:", err));
 
                                         // Open WhatsApp prefilled message
-                                        const whatsappMsg = `Hello Pardais Party Official Team, I want to purchase ${coinsNum.toLocaleString()} coins for ${offlineCostInfo.formattedWithCode} in ${selectedCurrencyCountry.name} (${selectedCurrencyCountry.flag}). My User ID is: ${user.username}`;
-                                        const targetPhone = whatsappSupportNumber.replace(/[^0-9]/g, "") || "923001234567";
+                                        const whatsappMsg = `Hello Pardais Party Official Team, I want to purchase ${coinsNum.toLocaleString()} coins for ${offlineCostInfo.formattedWithCode} in ${(selectedCurrencyCountry || COUNTRIES_CURRENCIES[0]).name} (${(selectedCurrencyCountry || COUNTRIES_CURRENCIES[0]).flag}). My User ID is: ${user?.username || "Pardais_User"}`;
+                                        const targetPhone = (whatsappSupportNumber || "").replace(/[^0-9]/g, "") || "923001234567";
                                         const waUrl = `https://wa.me/${targetPhone}?text=${encodeURIComponent(whatsappMsg)}`;
                                         window.open(waUrl, "_blank");
                                       }}
@@ -21671,11 +22306,11 @@ export default function App() {
                                 </div>
 
                                 {/* Approved Verified Local Resellers alternative list */}
-                                {offlineAgencies.length > 0 && (
+                                {(offlineAgencies || []).length > 0 && (
                                   <div className="space-y-2">
                                     <h6 className="text-[9px] uppercase tracking-wider text-gray-400 font-bold font-mono">📱 Approved Reseller Agencies</h6>
                                     <div className="space-y-2">
-                                      {offlineAgencies.map((agency) => (
+                                      {(offlineAgencies || []).map((agency) => (
                                         <div key={agency.id} className="p-3 rounded-xl bg-[#1e1e2d] border border-white/5 text-left relative space-y-1.5">
                                           <div className="absolute top-2 right-2 flex items-center space-x-1">
                                             <span className="w-1 h-1 rounded-full bg-[#25D366]" />
@@ -21684,7 +22319,7 @@ export default function App() {
                                           <h6 className="text-[11px] font-black text-white">{agency.name}</h6>
                                           <p className="text-[8.5px] text-gray-400">Rate: <strong className="text-yellow-400 font-mono font-bold">{agency.rateDescription}</strong></p>
                                           <a
-                                            href={`https://wa.me/${agency.whatsapp.replace(/[^0-9]/g, "")}?text=${encodeURIComponent(`Hello ${agency.name}, Pardais Party User *${user.username}* wants to purchase coins. Please share your local PKR rate.`)}`}
+                                            href={`https://wa.me/${(agency?.whatsapp || "").replace(/[^0-9]/g, "")}?text=${encodeURIComponent(`Hello ${agency?.name || ""}, Pardais Party User *${user?.username || "Guest"}* wants to purchase coins. Please share your local PKR rate.`)}`}
                                             target="_blank"
                                             rel="noreferrer"
                                             className="w-full bg-[#25D366]/10 hover:bg-[#25D366]/20 border border-[#25D366]/30 text-[#25D366] py-1 rounded text-center block font-black uppercase text-[8.5px] transition-all"
@@ -21723,8 +22358,8 @@ export default function App() {
                                     className="w-full bg-[#12121a] border border-[#303040] text-xs text-white rounded p-2 focus:outline-none focus:border-pink-500"
                                   >
                                     <optgroup label="Active Streaming Hosts">
-                                      {liveStreamsList.map(h => (
-                                        <option key={h.id} value={h.id}>🎙️ {h.name} (ID: {h.id})</option>
+                                      {(liveStreamsList || []).map(h => (
+                                        <option key={h?.id || Math.random()} value={h?.id || ""}>🎙️ {h?.name || "Host"} (ID: {h?.id || ""})</option>
                                       ))}
                                     </optgroup>
                                     <optgroup label="Custom Supporter / Family User ID">
@@ -21756,7 +22391,7 @@ export default function App() {
                                           alert("Please enter a valid amount of coins to transfer!");
                                           return;
                                         }
-                                        if (amt > user.coins) {
+                                        if (amt > (user?.coins ?? 0)) {
                                           alert("Insufficient Coins in your gifting balance!");
                                           return;
                                         }
@@ -21780,25 +22415,25 @@ export default function App() {
                         <div className="space-y-2">
                           <h5 className="text-[10px] uppercase tracking-wider text-gray-400 font-bold font-mono">Recent Transaction Logs</h5>
                           <div className="space-y-1.5 max-h-[140px] overflow-y-auto pr-1">
-                            {transactions.length === 0 ? (
+                            {(transactions || []).length === 0 ? (
                               <p className="text-[9px] text-gray-500 italic text-center py-2 bg-[#1e1e2d] rounded-lg">No previous transaction logs found.</p>
                             ) : (
-                              transactions.map((tx, idx) => (
+                              (transactions || []).map((tx, idx) => (
                                 <div key={idx} className="bg-[#1e1e2d] p-2.5 rounded-lg text-[9px] border border-[#303040] flex justify-between items-center font-mono">
                                   <div>
                                     <span className={`px-1.5 py-0.2 rounded text-[7.5px] font-bold text-black ${
-                                      tx.type === "recharge" ? "bg-green-400" :
-                                      tx.type === "withdraw" ? "bg-blue-400" :
-                                      tx.type === "gift_sent" ? "bg-pink-400" :
+                                      tx?.type === "recharge" ? "bg-green-400" :
+                                      tx?.type === "withdraw" ? "bg-blue-400" :
+                                      tx?.type === "gift_sent" ? "bg-pink-400" :
                                       "bg-yellow-400"
                                     }`}>
-                                      {tx.type.toUpperCase()}
+                                      {(tx?.type || "TX").toUpperCase()}
                                     </span>
-                                    <p className="text-white mt-1">{tx.details}</p>
+                                    <p className="text-white mt-1">{tx?.details || ""}</p>
                                   </div>
                                   <div className="text-right">
-                                    <p className="text-[#66fcf1] font-bold">{tx.amount} {tx.currency}</p>
-                                    <span className="text-[7.5px] text-gray-400">{tx.timestamp}</span>
+                                    <p className="text-[#66fcf1] font-bold">{tx?.amount ?? 0} {tx?.currency || "Coins"}</p>
+                                    <span className="text-[7.5px] text-gray-400">{tx?.timestamp || ""}</span>
                                   </div>
                                 </div>
                               ))
@@ -26025,31 +26660,83 @@ export default function App() {
                           </div>
 
                           {/* Admin Navigation Tabs */}
-                          <div className="grid grid-cols-2 gap-1.5 bg-[#1a1a26] p-1 rounded-xl border border-white/5">
+                          <div className="grid grid-cols-3 sm:grid-cols-6 gap-1 bg-[#1a1a26] p-1 rounded-xl border border-white/5 font-mono">
                             <button
                               type="button"
                               onClick={() => setAdminModalActiveTab("gpay_ledger")}
-                              className={`py-2 px-2 rounded-lg text-[9px] font-black uppercase transition-all flex items-center justify-center space-x-1 cursor-pointer ${
+                              className={`py-1.5 px-1 rounded-lg text-[7px] sm:text-[7.5px] font-black uppercase transition-all flex items-center justify-center space-x-1 cursor-pointer ${
                                 adminModalActiveTab === "gpay_ledger"
                                   ? "bg-gradient-to-r from-blue-600 to-cyan-600 text-white shadow-md"
                                   : "text-gray-400 hover:text-white hover:bg-white/5"
                               }`}
                             >
                               <span>💳</span>
-                              <span>GPay & Card Revenue ({onlineRechargeLedger.length})</span>
+                              <span>GPay ({onlineRechargeLedger.length})</span>
                             </button>
 
                             <button
                               type="button"
                               onClick={() => setAdminModalActiveTab("whatsapp_config")}
-                              className={`py-2 px-2 rounded-lg text-[9px] font-black uppercase transition-all flex items-center justify-center space-x-1 cursor-pointer ${
+                              className={`py-1.5 px-1 rounded-lg text-[7px] sm:text-[7.5px] font-black uppercase transition-all flex items-center justify-center space-x-1 cursor-pointer ${
                                 adminModalActiveTab === "whatsapp_config"
                                   ? "bg-gradient-to-r from-[#25D366] to-emerald-600 text-black shadow-md"
                                   : "text-gray-400 hover:text-white hover:bg-white/5"
                               }`}
                             >
                               <span>💬</span>
-                              <span>WhatsApp & Resellers</span>
+                              <span>WhatsApp</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => setAdminModalActiveTab("agency_requests")}
+                              className={`py-1.5 px-1 rounded-lg text-[7px] sm:text-[7.5px] font-black uppercase transition-all flex items-center justify-center space-x-1 cursor-pointer ${
+                                adminModalActiveTab === "agency_requests"
+                                  ? "bg-gradient-to-r from-amber-500 to-yellow-600 text-black shadow-md font-black"
+                                  : "text-gray-400 hover:text-white hover:bg-white/5"
+                              }`}
+                            >
+                              <span>📩</span>
+                              <span>Requests ({agencyRequests.length})</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => setAdminModalActiveTab("coin_sellers" as any)}
+                              className={`py-1.5 px-1 rounded-lg text-[7px] sm:text-[7.5px] font-black uppercase transition-all flex items-center justify-center space-x-1 cursor-pointer ${
+                                (adminModalActiveTab as string) === "coin_sellers"
+                                  ? "bg-gradient-to-r from-yellow-500 to-amber-600 text-black shadow-md font-black"
+                                  : "text-gray-400 hover:text-white hover:bg-white/5"
+                              }`}
+                            >
+                              <span>🪙</span>
+                              <span>Reseller Ag ({offlineAgencies.length})</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => setAdminModalActiveTab("host_agencies" as any)}
+                              className={`py-1.5 px-1 rounded-lg text-[7px] sm:text-[7.5px] font-black uppercase transition-all flex items-center justify-center space-x-1 cursor-pointer ${
+                                (adminModalActiveTab as string) === "host_agencies"
+                                  ? "bg-gradient-to-r from-purple-600 to-pink-600 text-white shadow-md font-black"
+                                  : "text-gray-400 hover:text-white hover:bg-white/5"
+                              }`}
+                            >
+                              <span>🎙️</span>
+                              <span>Host Ag ({hostAgencies.length})</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => setAdminModalActiveTab("agency_coin_ledger" as any)}
+                              className={`py-1.5 px-1 rounded-lg text-[7px] sm:text-[7.5px] font-black uppercase transition-all flex items-center justify-center space-x-1 cursor-pointer ${
+                                (adminModalActiveTab as string) === "agency_coin_ledger"
+                                  ? "bg-gradient-to-r from-emerald-500 to-teal-600 text-white shadow-md font-black"
+                                  : "text-gray-400 hover:text-white hover:bg-white/5"
+                              }`}
+                            >
+                              <span>📜</span>
+                              <span>Coin Ledger ({agencyCoinTransactions.length})</span>
                             </button>
                           </div>
 
@@ -26301,12 +26988,1590 @@ export default function App() {
                             </div>
                           )}
 
+                          {/* TAB 3: COIN SELLER AGENCY REQUESTS PANEL */}
+                          {adminModalActiveTab === "agency_requests" && (() => {
+                            const filteredRequests = agencyRequests.filter(req => {
+                              if (!req) return false;
+                              const status = req.status || "Pending Review";
+                              const matchesFilter = 
+                                adminAgencyReqFilter === "ALL" ? true :
+                                status === adminAgencyReqFilter || (adminAgencyReqFilter === "Pending Review" && (status === "Pending" || status === "Pending Review"));
+
+                              const q = adminAgencyReqSearch.toLowerCase();
+                              const matchesSearch = 
+                                !q ||
+                                (req.applicantName && req.applicantName.toLowerCase().includes(q)) ||
+                                (req.applicantUsername && req.applicantUsername.toLowerCase().includes(q)) ||
+                                (req.agencyName && req.agencyName.toLowerCase().includes(q)) ||
+                                (req.email && req.email.toLowerCase().includes(q)) ||
+                                (req.contact && req.contact.toLowerCase().includes(q)) ||
+                                (req.country && req.country.toLowerCase().includes(q));
+
+                              return matchesFilter && matchesSearch;
+                            });
+
+                            return (
+                              <div className="space-y-3 animate-fade-in text-left">
+                                <div className="bg-gradient-to-r from-amber-950/80 to-[#12121e] p-3 rounded-xl border border-amber-500/40 space-y-1">
+                                  <div className="flex justify-between items-center">
+                                    <h5 className="text-[10px] font-black text-amber-400 uppercase font-mono">Coin Seller Agency Requests</h5>
+                                    <span className="text-[8px] bg-amber-500/20 text-amber-300 font-mono px-2 py-0.5 rounded font-bold">
+                                      Total Applications: {agencyRequests.length}
+                                    </span>
+                                  </div>
+                                  <p className="text-[8px] text-gray-300">
+                                    Review and manage applicant requests to become official Pardais Coin Seller Agencies. Approving an agency unlocks agency selling tools and adds them to verified resellers.
+                                  </p>
+                                </div>
+
+                                {/* Filter and Search Bar */}
+                                <div className="space-y-2 bg-[#1e1e2d] p-2.5 rounded-xl border border-white/5">
+                                  <input
+                                    type="text"
+                                    value={adminAgencyReqSearch}
+                                    onChange={(e) => setAdminAgencyReqSearch(e.target.value)}
+                                    placeholder="Search applicant, @username, agency name, country..."
+                                    className="w-full bg-[#12121a] border border-[#303040] rounded-lg px-2.5 py-1 text-[9px] text-white focus:outline-none focus:border-amber-400 font-mono"
+                                  />
+
+                                  <div className="flex space-x-1 overflow-x-auto no-scrollbar">
+                                    {(["ALL", "Pending Review", "Approved", "Rejected"] as const).map(f => (
+                                      <button
+                                        key={f}
+                                        type="button"
+                                        onClick={() => setAdminAgencyReqFilter(f)}
+                                        className={`px-2 py-1 rounded text-[7.5px] uppercase font-bold transition-all cursor-pointer whitespace-nowrap ${
+                                          adminAgencyReqFilter === f
+                                            ? "bg-amber-400 text-black font-black"
+                                            : "bg-white/5 text-gray-400 hover:text-white"
+                                        }`}
+                                      >
+                                        {f} ({
+                                          f === "ALL" ? agencyRequests.length :
+                                          agencyRequests.filter(r => r && ((r.status || "Pending Review") === f || (f === "Pending Review" && r.status === "Pending"))).length
+                                        })
+                                      </button>
+                                    ))}
+                                  </div>
+                                </div>
+
+                                {/* Request Cards List */}
+                                <div className="space-y-2.5 max-h-72 overflow-y-auto pr-1">
+                                  {filteredRequests.length === 0 ? (
+                                    <div className="text-center py-8 bg-[#1e1e2d] rounded-xl border border-white/5">
+                                      <p className="text-xs text-gray-400 font-mono">No agency requests match criteria.</p>
+                                    </div>
+                                  ) : (
+                                    filteredRequests.map(req => {
+                                      const status = req.status || "Pending Review";
+                                      const isApproved = status === "Approved";
+                                      const isRejected = status === "Rejected";
+
+                                      return (
+                                        <div
+                                          key={req.id || req._id}
+                                          className={`p-3 rounded-xl bg-[#1e1e2d] border transition-all space-y-2 text-left ${
+                                            isApproved ? "border-emerald-500/50 bg-emerald-950/20" :
+                                            isRejected ? "border-red-500/50 bg-red-950/20" :
+                                            "border-amber-500/50 bg-amber-950/10"
+                                          }`}
+                                        >
+                                          {/* Header info */}
+                                          <div className="flex justify-between items-start">
+                                            <div>
+                                              <h5 className="text-[10px] font-black text-white font-mono flex items-center space-x-1.5">
+                                                <span>{req.agencyName || req.applicantName}</span>
+                                                <span className="text-amber-400 font-normal">(@{req.applicantUsername})</span>
+                                              </h5>
+                                              <p className="text-[8px] text-gray-300">
+                                                👤 Applicant: <strong className="text-white">{req.applicantName}</strong> | 🌍 Country: <strong className="text-amber-300">{req.country || "Pakistan"}</strong>
+                                              </p>
+                                            </div>
+                                            <span className={`text-[7.5px] font-mono font-black px-2 py-0.5 rounded uppercase ${
+                                              isApproved ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30" :
+                                              isRejected ? "bg-red-500/20 text-red-400 border border-red-500/30" :
+                                              "bg-amber-500/20 text-amber-300 border border-amber-500/30 animate-pulse"
+                                            }`}>
+                                              {status}
+                                            </span>
+                                          </div>
+
+                                          {/* Requirements / Financials grid */}
+                                          <div className="grid grid-cols-2 gap-1.5 bg-[#12121a] p-2 rounded-lg border border-white/5 text-[8px] font-mono">
+                                            <div>
+                                              <span className="text-gray-400 block">Initial Purchase:</span>
+                                              <span className="text-yellow-300 font-bold">{req.expectedMonthlyPurchase || "$3,000 USD"}</span>
+                                            </div>
+                                            <div>
+                                              <span className="text-gray-400 block">Expected Volume:</span>
+                                              <span className="text-white font-bold">{req.expectedMonthlyVolume || "$3,000 - $10,000/mo"}</span>
+                                            </div>
+                                            <div>
+                                              <span className="text-gray-400 block">WhatsApp:</span>
+                                              <span className="text-emerald-400 font-bold">{req.contact || "N/A"}</span>
+                                            </div>
+                                            <div>
+                                              <span className="text-gray-400 block">Email:</span>
+                                              <span className="text-gray-200 truncate block">{req.email || "N/A"}</span>
+                                            </div>
+                                          </div>
+
+                                          {req.description && (
+                                            <p className="text-[8px] text-gray-300 bg-[#12121a] p-1.5 rounded border border-white/5 italic">
+                                              "{req.description}"
+                                            </p>
+                                          )}
+
+                                          {/* Actions */}
+                                          <div className="flex space-x-2 pt-1 border-t border-white/5">
+                                            <button
+                                              type="button"
+                                              disabled={isApproved}
+                                              onClick={() => {
+                                                const targetId = req.id || req._id;
+                                                fetch(`/api/v1/agency-requests/${targetId}`, {
+                                                  method: "PUT",
+                                                  headers: { "Content-Type": "application/json" },
+                                                  body: JSON.stringify({ status: "Approved" })
+                                                })
+                                                .then(res => res.json())
+                                                .then(data => {
+                                                  setAgencyRequests(prev => prev.map(r => ((r.id === targetId || r._id === targetId) ? { ...r, status: "Approved" } : r)));
+
+                                                  // Add to offlineAgencies locally
+                                                  const newAg = {
+                                                    id: "AG-" + Date.now(),
+                                                    name: req.agencyName || req.applicantName,
+                                                    contactPerson: req.applicantName,
+                                                    whatsapp: req.contact,
+                                                    coinsAvailable: "500,000+",
+                                                    rateDescription: "1,000 Coins = Official Wholesale Rate",
+                                                    username: req.applicantUsername
+                                                  };
+                                                  setOfflineAgencies(prev => [newAg, ...prev]);
+
+                                                  if (req.applicantUsername === user.username) {
+                                                    const updatedUser = { ...user, isAgencyApproved: true, isCoinSeller: true };
+                                                    setUser(updatedUser);
+                                                    localStorage.setItem("pardais_user_profile", JSON.stringify(updatedUser));
+                                                  }
+
+                                                  alert(`🟢 Agency Request for "${req.agencyName || req.applicantName}" (@${req.applicantUsername}) has been APPROVED!`);
+                                                })
+                                                .catch(err => console.error("Error approving agency request:", err));
+                                              }}
+                                              className="flex-1 py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white font-black text-[8px] uppercase rounded-lg transition-all cursor-pointer"
+                                            >
+                                              {isApproved ? "✓ Approved" : "🟢 Approve"}
+                                            </button>
+
+                                            <button
+                                              type="button"
+                                              disabled={isRejected}
+                                              onClick={() => {
+                                                const targetId = req.id || req._id;
+                                                fetch(`/api/v1/agency-requests/${targetId}`, {
+                                                  method: "PUT",
+                                                  headers: { "Content-Type": "application/json" },
+                                                  body: JSON.stringify({ status: "Rejected" })
+                                                })
+                                                .then(res => res.json())
+                                                .then(data => {
+                                                  setAgencyRequests(prev => prev.map(r => ((r.id === targetId || r._id === targetId) ? { ...r, status: "Rejected" } : r)));
+                                                  alert(`🔴 Agency Request for "${req.agencyName || req.applicantName}" has been REJECTED.`);
+                                                })
+                                                .catch(err => console.error("Error rejecting agency request:", err));
+                                              }}
+                                              className="flex-1 py-1.5 bg-red-600 hover:bg-red-500 disabled:opacity-40 text-white font-black text-[8px] uppercase rounded-lg transition-all cursor-pointer"
+                                            >
+                                              {isRejected ? "✕ Rejected" : "🔴 Reject"}
+                                            </button>
+
+                                            <button
+                                              type="button"
+                                              onClick={() => setSelectedAgencyDetailsForAdmin(req)}
+                                              className="py-1.5 px-2.5 bg-white/10 hover:bg-white/20 text-gray-200 font-bold text-[8px] uppercase rounded-lg transition-all cursor-pointer"
+                                            >
+                                              🔍 Details
+                                            </button>
+                                          </div>
+                                        </div>
+                                      );
+                                    })
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })()}
+
+                          {/* TAB 4: COIN SELLER AGENCIES MASTER CONSOLE */}
+                          {(adminModalActiveTab as string) === "coin_sellers" && (() => {
+                            return (
+                              <div className="space-y-3 animate-fade-in text-left font-mono">
+                                <div className="bg-gradient-to-r from-amber-950/90 via-[#261d0a] to-[#12121e] p-3 rounded-xl border border-amber-500/40 space-y-1.5">
+                                  <div className="flex justify-between items-center">
+                                    <h5 className="text-[10px] font-black text-amber-300 uppercase">Coin Reseller Agencies Control Panel</h5>
+                                    <span className="text-[8px] bg-amber-500/20 text-amber-300 border border-amber-500/40 px-2 py-0.5 rounded font-bold">
+                                      Total Resellers: {offlineAgencies.length}
+                                    </span>
+                                  </div>
+                                  <p className="text-[8px] text-gray-300">
+                                    Manage verified coin reseller agencies. Top up or deduct coins, freeze transactions, suspend agency access, or edit details (Ta'adulat).
+                                  </p>
+                                </div>
+
+                                <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+                                  {offlineAgencies.length === 0 ? (
+                                    <div className="text-center py-8 bg-[#1e1e2d] rounded-xl border border-white/5">
+                                      <p className="text-[9px] text-gray-400">No coin reseller agencies configured yet.</p>
+                                    </div>
+                                  ) : (
+                                    offlineAgencies.map((agency: any) => {
+                                      const isFrozen = agency.status === "Frozen";
+                                      const isSuspended = agency.status === "Suspended";
+                                      const coinBalance = agency.coinBalance || 500000;
+
+                                      return (
+                                        <div key={agency.id} className="p-3 rounded-xl bg-[#1e1e2d] border border-white/10 space-y-2 text-[8.5px]">
+                                          <div className="flex justify-between items-start">
+                                            <div>
+                                              <div className="flex items-center space-x-1.5">
+                                                <h5 className="text-[10px] font-bold text-white">{agency.name}</h5>
+                                                <span className="text-[7.5px] text-amber-400 font-mono font-normal">(@{agency.ownerUsername || agency.username || "seller"})</span>
+                                              </div>
+                                              <p className="text-[7.5px] text-gray-300">
+                                                📞 {agency.whatsapp || "No Contact"} | 🌍 {agency.country || "Pakistan"}
+                                              </p>
+                                            </div>
+
+                                            <span className={`px-2 py-0.5 rounded text-[7px] font-bold uppercase ${
+                                              isSuspended ? "bg-red-500/20 text-red-300 border border-red-500/30" :
+                                              isFrozen ? "bg-cyan-500/20 text-cyan-300 border border-cyan-500/30" :
+                                              "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
+                                            }`}>
+                                              {isSuspended ? "🛑 Suspended" : isFrozen ? "❄️ Frozen" : "🟢 Active"}
+                                            </span>
+                                          </div>
+
+                                          <div className="grid grid-cols-2 gap-1.5 bg-[#12121a] p-2 rounded-lg border border-white/5 text-[7.5px]">
+                                            <div>
+                                              <span className="text-gray-400 block">Available Balance:</span>
+                                              <span className="text-yellow-300 font-black text-[9px]">{coinBalance.toLocaleString()} Coins</span>
+                                            </div>
+                                            <div>
+                                              <span className="text-gray-400 block">Rate / Pricing:</span>
+                                              <span className="text-emerald-400 font-bold truncate block">{agency.rateDescription || "Standard Reseller Rate"}</span>
+                                            </div>
+                                          </div>
+
+                                          {/* Actions bar */}
+                                          <div className="grid grid-cols-4 gap-1 pt-1 border-t border-white/5">
+                                            <button
+                                              type="button"
+                                              onClick={() => {
+                                                setSelectedAgencyForCoins({
+                                                  ...agency,
+                                                  agencyType: "coin_seller",
+                                                  coinBalance
+                                                });
+                                                setAdminAgencyCoinAmount("");
+                                                setAdminAgencyCoinReason("");
+                                                setAdminAgencyCoinType("ADD");
+                                              }}
+                                              className="py-1 bg-yellow-500 hover:bg-yellow-400 text-black font-black text-[7.5px] uppercase rounded-lg transition-all cursor-pointer shadow"
+                                            >
+                                              🪙 Coins (+/-)
+                                            </button>
+
+                                            <button
+                                              type="button"
+                                              onClick={() => {
+                                                const nextStatus = isFrozen ? "Active" : "Frozen";
+                                                fetch(`/api/v1/coin-sellers/${agency.id}`, {
+                                                  method: "PUT",
+                                                  headers: { "Content-Type": "application/json" },
+                                                  body: JSON.stringify({ status: nextStatus })
+                                                })
+                                                .then(res => res.json())
+                                                .then(updated => {
+                                                  setOfflineAgencies(prev => prev.map(a => a.id === agency.id ? { ...a, status: nextStatus } : a));
+                                                  alert(`Agency "${agency.name}" status updated to ${nextStatus}.`);
+                                                })
+                                                .catch(err => console.error(err));
+                                              }}
+                                              className={`py-1 text-[7.5px] uppercase font-bold rounded-lg cursor-pointer ${
+                                                isFrozen ? "bg-emerald-600 hover:bg-emerald-500 text-white" : "bg-cyan-600 hover:bg-cyan-500 text-white"
+                                              }`}
+                                            >
+                                              {isFrozen ? "🟢 Unfreeze" : "❄️ Freeze"}
+                                            </button>
+
+                                            <button
+                                              type="button"
+                                              onClick={() => {
+                                                const nextStatus = isSuspended ? "Active" : "Suspended";
+                                                fetch(`/api/v1/coin-sellers/${agency.id}`, {
+                                                  method: "PUT",
+                                                  headers: { "Content-Type": "application/json" },
+                                                  body: JSON.stringify({ status: nextStatus })
+                                                })
+                                                .then(res => res.json())
+                                                .then(updated => {
+                                                  setOfflineAgencies(prev => prev.map(a => a.id === agency.id ? { ...a, status: nextStatus } : a));
+                                                  alert(`Agency "${agency.name}" status updated to ${nextStatus}.`);
+                                                })
+                                                .catch(err => console.error(err));
+                                              }}
+                                              className={`py-1 text-[7.5px] uppercase font-bold rounded-lg cursor-pointer ${
+                                                isSuspended ? "bg-emerald-600 hover:bg-emerald-500 text-white" : "bg-red-600 hover:bg-red-500 text-white"
+                                              }`}
+                                            >
+                                              {isSuspended ? "🟢 Activate" : "🛑 Suspend"}
+                                            </button>
+
+                                            <button
+                                              type="button"
+                                              onClick={() => {
+                                                setSelectedAgencyForEdit({ ...agency, agencyType: "coin_seller" });
+                                                setEditAgencyForm({
+                                                  id: agency.id,
+                                                  name: agency.name || "",
+                                                  ownerUsername: agency.ownerUsername || agency.username || "",
+                                                  whatsapp: agency.whatsapp || "",
+                                                  rate: agency.rateDescription || agency.rate || "",
+                                                  country: agency.country || "Pakistan",
+                                                  status: agency.status || "Active",
+                                                  coinBalance: coinBalance,
+                                                  description: agency.description || "",
+                                                  agencyType: "coin_seller"
+                                                });
+                                              }}
+                                              className="py-1 bg-white/10 hover:bg-white/20 text-gray-200 text-[7.5px] uppercase font-bold rounded-lg cursor-pointer"
+                                            >
+                                              ✏️ Edit
+                                            </button>
+                                          </div>
+                                        </div>
+                                      );
+                                    })
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })()}
+
+                          {/* TAB 5: OFFICIAL HOST AGENCIES MASTER MANAGEMENT PANEL */}
+                          {(adminModalActiveTab as string) === "host_agencies" && (() => {
+                            return (
+                              <div className="space-y-3 animate-fade-in text-left font-mono">
+                                <div className="bg-gradient-to-r from-purple-950/90 via-[#1d1133] to-[#12121e] p-3 rounded-xl border border-purple-500/40 space-y-1.5">
+                                  <div className="flex justify-between items-center">
+                                    <h5 className="text-[10px] font-black text-purple-300 uppercase">Official Host Agencies Console</h5>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setAdminNewAgencyId("AG-" + Math.floor(100 + Math.random() * 900));
+                                        setShowCreateHostAgencyModal(true);
+                                      }}
+                                      className="px-2.5 py-1 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white font-black text-[8px] uppercase rounded-lg shadow-md transition-all cursor-pointer"
+                                    >
+                                      + CREATE HOST AGENCY
+                                    </button>
+                                  </div>
+                                  <p className="text-[8px] text-gray-300">
+                                    Manage official host agencies, inspect hosts, edit commission rates, top up coins, or freeze/suspend agencies.
+                                  </p>
+                                </div>
+
+                                {/* List of Official Host Agencies */}
+                                <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+                                  {(hostAgencies || []).length === 0 ? (
+                                    <div className="text-center py-8 bg-[#1e1e2d] rounded-xl border border-white/5 space-y-2">
+                                      <p className="text-[9px] text-gray-400">No official host agencies currently registered.</p>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setAdminNewAgencyId("AG-" + Math.floor(100 + Math.random() * 900));
+                                          setShowCreateHostAgencyModal(true);
+                                        }}
+                                        className="px-3 py-1.5 bg-purple-600 hover:bg-purple-500 text-white font-bold text-[8.5px] uppercase rounded-lg"
+                                      >
+                                        + Create First Agency
+                                      </button>
+                                    </div>
+                                  ) : (
+                                    (hostAgencies || []).map((ag: any) => {
+                                      const isFrozen = ag.status === "Frozen";
+                                      const isSuspended = ag.status === "Suspended";
+                                      const agencyHostsCount = (users || []).filter((u: any) => u.agencyId === ag.id || u.agencyName === ag.name).length;
+                                      const coinBalance = ag.coinBalance || 100000;
+
+                                      return (
+                                        <div key={ag.id} className="p-3 rounded-xl bg-[#1e1e2d] border border-white/10 space-y-2 text-[8.5px]">
+                                          <div className="flex justify-between items-start">
+                                            <div className="flex items-center space-x-2.5">
+                                              <img
+                                                src={ag.logo || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=120&q=80"}
+                                                alt="Agency Logo"
+                                                className="w-9 h-9 rounded-xl border border-purple-400/40 object-cover"
+                                              />
+                                              <div>
+                                                <div className="flex items-center space-x-1.5">
+                                                  <h5 className="text-[10px] font-bold text-white">{ag.name}</h5>
+                                                  <span className="text-[7px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 px-1.5 py-0.2 rounded font-black">
+                                                    ✓ VERIFIED
+                                                  </span>
+                                                </div>
+                                                <p className="text-[7.5px] text-purple-200">
+                                                  🆔 {ag.id} | Admin: <strong className="text-yellow-300">@{ag.ownerUsername || ag.adminUserId || "admin"}</strong> | 🌍 {ag.country || "Global"}
+                                                </p>
+                                              </div>
+                                            </div>
+
+                                            <span className={`px-2 py-0.5 rounded text-[7px] font-bold uppercase ${
+                                              isSuspended ? "bg-red-500/20 text-red-300 border border-red-500/30" :
+                                              isFrozen ? "bg-cyan-500/20 text-cyan-300 border border-cyan-500/30" :
+                                              "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
+                                            }`}>
+                                              {isSuspended ? "🛑 Suspended" : isFrozen ? "❄️ Frozen" : "🟢 Active"}
+                                            </span>
+                                          </div>
+
+                                          <div className="grid grid-cols-3 gap-1 bg-[#12121a] p-2 rounded-lg border border-white/5 text-[7.5px]">
+                                            <div>
+                                              <span className="text-gray-400 block">Registered Hosts:</span>
+                                              <span className="text-amber-300 font-bold">{agencyHostsCount} Hosts</span>
+                                            </div>
+                                            <div>
+                                              <span className="text-gray-400 block">Coin Balance:</span>
+                                              <span className="text-yellow-300 font-bold">{coinBalance.toLocaleString()}</span>
+                                            </div>
+                                            <div>
+                                              <span className="text-gray-400 block">Commission Rate:</span>
+                                              <span className="text-emerald-400 font-bold truncate block">{ag.salaryRate || "40% Commission"}</span>
+                                            </div>
+                                          </div>
+
+                                          <div className="grid grid-cols-5 gap-1 pt-1">
+                                            <button
+                                              type="button"
+                                              onClick={() => {
+                                                setSelectedAgencyForCoins({
+                                                  ...ag,
+                                                  agencyType: "host_agency",
+                                                  coinBalance
+                                                });
+                                                setAdminAgencyCoinAmount("");
+                                                setAdminAgencyCoinReason("");
+                                                setAdminAgencyCoinType("ADD");
+                                              }}
+                                              className="py-1 bg-yellow-500 hover:bg-yellow-400 text-black font-black text-[7.5px] uppercase rounded-lg transition-all cursor-pointer shadow"
+                                            >
+                                              🪙 Coins
+                                            </button>
+
+                                            <button
+                                              type="button"
+                                              onClick={() => {
+                                                const nextStatus = isFrozen ? "Active" : "Frozen";
+                                                fetch(`/api/v1/agencies/${ag.id}`, {
+                                                  method: "PUT",
+                                                  headers: { "Content-Type": "application/json" },
+                                                  body: JSON.stringify({ status: nextStatus })
+                                                })
+                                                  .then(res => res.json())
+                                                  .then(() => {
+                                                    setHostAgencies(prev => prev.map(a => a.id === ag.id ? { ...a, status: nextStatus } : a));
+                                                    alert(`Agency "${ag.name}" is now ${nextStatus}.`);
+                                                  })
+                                                  .catch(err => console.error(err));
+                                              }}
+                                              className={`py-1 text-[7.5px] uppercase font-bold rounded-lg cursor-pointer ${
+                                                isFrozen ? "bg-emerald-600 hover:bg-emerald-500 text-white" : "bg-cyan-600 hover:bg-cyan-500 text-white"
+                                              }`}
+                                            >
+                                              {isFrozen ? "🟢 Unfreeze" : "❄️ Freeze"}
+                                            </button>
+
+                                            <button
+                                              type="button"
+                                              onClick={() => {
+                                                const newStatus = isSuspended ? "Active" : "Suspended";
+                                                fetch(`/api/v1/agencies/${ag.id}`, {
+                                                  method: "PUT",
+                                                  headers: { "Content-Type": "application/json" },
+                                                  body: JSON.stringify({ status: newStatus })
+                                                })
+                                                  .then(res => res.json())
+                                                  .then(() => {
+                                                    setHostAgencies(prev => prev.map(a => a.id === ag.id ? { ...a, status: newStatus } : a));
+                                                    alert(`Agency "${ag.name}" is now ${newStatus}.`);
+                                                  })
+                                                  .catch(err => console.error(err));
+                                              }}
+                                              className={`py-1 text-[7.5px] uppercase font-bold rounded-lg cursor-pointer ${
+                                                isSuspended ? "bg-emerald-600 hover:bg-emerald-500 text-white" : "bg-amber-600 hover:bg-amber-500 text-white"
+                                              }`}
+                                            >
+                                              {isSuspended ? "🟢 Reactivate" : "🛑 Suspend"}
+                                            </button>
+
+                                            <button
+                                              type="button"
+                                              onClick={() => {
+                                                setSelectedAgencyForEdit({ ...ag, agencyType: "host_agency" });
+                                                setEditAgencyForm({
+                                                  id: ag.id,
+                                                  name: ag.name || "",
+                                                  ownerUsername: ag.ownerUsername || ag.adminUserId || "",
+                                                  whatsapp: ag.whatsapp || "",
+                                                  rate: ag.salaryRate || "",
+                                                  country: ag.country || "Global",
+                                                  status: ag.status || "Active",
+                                                  coinBalance: coinBalance,
+                                                  description: ag.description || "",
+                                                  agencyType: "host_agency"
+                                                });
+                                              }}
+                                              className="py-1 bg-white/10 hover:bg-white/20 text-gray-200 text-[7.5px] uppercase font-bold rounded-lg cursor-pointer"
+                                            >
+                                              ✏️ Edit
+                                            </button>
+
+                                            <button
+                                              type="button"
+                                              onClick={() => {
+                                                if (confirm(`Delete host agency "${ag.name}"? This action cannot be undone.`)) {
+                                                  fetch(`/api/v1/agencies/${ag.id}`, { method: "DELETE" })
+                                                    .then(res => res.json())
+                                                    .then(() => {
+                                                      setHostAgencies(prev => prev.filter(a => a.id !== ag.id));
+                                                      alert(`Agency "${ag.name}" deleted successfully.`);
+                                                    })
+                                                    .catch(err => console.error(err));
+                                                }
+                                              }}
+                                              className="py-1 bg-red-600/30 hover:bg-red-600/50 text-red-300 border border-red-500/40 text-[7.5px] uppercase font-bold rounded-lg cursor-pointer"
+                                            >
+                                              🗑️ Delete
+                                            </button>
+                                          </div>
+                                        </div>
+                                      );
+                                    })
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })()}
+
+                          {/* TAB 6: AGENCY COIN LEDGER & HISTORY PANEL */}
+                          {(adminModalActiveTab as string) === "agency_coin_ledger" && (() => {
+                            const totalGranted = agencyCoinTransactions
+                              .filter(t => t.type === "ADD")
+                              .reduce((sum, t) => sum + (t.amount || 0), 0);
+                            const totalDeducted = agencyCoinTransactions
+                              .filter(t => t.type === "DEDUCT")
+                              .reduce((sum, t) => sum + (t.amount || 0), 0);
+                            const netCoins = totalGranted - totalDeducted;
+
+                            return (
+                              <div className="space-y-3 animate-fade-in text-left font-mono">
+                                <div className="bg-gradient-to-r from-emerald-950/90 via-[#0a2618] to-[#12121e] p-3 rounded-xl border border-emerald-500/40 space-y-1.5">
+                                  <div className="flex justify-between items-center">
+                                    <h5 className="text-[10px] font-black text-emerald-300 uppercase">Agency Coin Audit Ledger & History</h5>
+                                    <span className="text-[8px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 px-2 py-0.5 rounded font-bold">
+                                      Total Records: {agencyCoinTransactions.length}
+                                    </span>
+                                  </div>
+                                  <p className="text-[8px] text-gray-300">
+                                    Complete audit trail of all coin allocations and deductions across Coin Reseller Agencies and Host Agencies.
+                                  </p>
+                                </div>
+
+                                {/* Summary Stats Banner */}
+                                <div className="grid grid-cols-3 gap-2 bg-[#1e1e2d] p-2.5 rounded-xl border border-white/5 text-[8px]">
+                                  <div className="bg-[#12121a] p-2 rounded-lg border border-emerald-500/20">
+                                    <span className="text-gray-400 block">Total Granted (+):</span>
+                                    <span className="text-emerald-400 font-black text-[10px]">+{totalGranted.toLocaleString()}</span>
+                                  </div>
+                                  <div className="bg-[#12121a] p-2 rounded-lg border border-red-500/20">
+                                    <span className="text-gray-400 block">Total Deducted (-):</span>
+                                    <span className="text-red-400 font-black text-[10px]">-{totalDeducted.toLocaleString()}</span>
+                                  </div>
+                                  <div className="bg-[#12121a] p-2 rounded-lg border border-yellow-500/20">
+                                    <span className="text-gray-400 block">Net Distribution:</span>
+                                    <span className="text-yellow-300 font-black text-[10px]">{netCoins.toLocaleString()}</span>
+                                  </div>
+                                </div>
+
+                                {/* Transactions Table / List */}
+                                <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+                                  {agencyCoinTransactions.length === 0 ? (
+                                    <div className="text-center py-8 bg-[#1e1e2d] rounded-xl border border-white/5">
+                                      <p className="text-[9px] text-gray-400">No agency coin transactions recorded yet.</p>
+                                    </div>
+                                  ) : (
+                                    agencyCoinTransactions.map((tx: any) => {
+                                      const isAdd = tx.type === "ADD";
+                                      return (
+                                        <div key={tx.id} className="p-2.5 rounded-xl bg-[#1e1e2d] border border-white/5 space-y-1 text-[8px]">
+                                          <div className="flex justify-between items-center">
+                                            <div className="flex items-center space-x-2">
+                                              <span className={`px-2 py-0.5 rounded font-black uppercase text-[7px] ${
+                                                isAdd ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30" : "bg-red-500/20 text-red-400 border border-red-500/30"
+                                              }`}>
+                                                {isAdd ? "➕ ADD" : "➖ DEDUCT"}
+                                              </span>
+                                              <h5 className="font-bold text-white text-[9px]">{tx.agencyName || tx.agencyId}</h5>
+                                              <span className="text-gray-400 text-[7px]">({tx.agencyType === "host_agency" ? "Host Agency" : "Reseller Agency"})</span>
+                                            </div>
+
+                                            <span className={`font-black text-[9.5px] ${isAdd ? "text-emerald-400" : "text-red-400"}`}>
+                                              {isAdd ? "+" : "-"}{tx.amount?.toLocaleString()} Coins
+                                            </span>
+                                          </div>
+
+                                          <div className="flex justify-between items-center text-[7.5px] text-gray-400 bg-[#12121a] px-2 py-1 rounded">
+                                            <span>Previous: <strong className="text-gray-200">{tx.previousBalance?.toLocaleString()}</strong> ➔ New: <strong className="text-yellow-300">{tx.newBalance?.toLocaleString()}</strong></span>
+                                            <span>Admin: <strong className="text-cyan-300">@{tx.adminUsername || "admin"}</strong></span>
+                                          </div>
+
+                                          <div className="flex justify-between items-center text-[7px] text-gray-400">
+                                            <span className="italic">Note: "{tx.reason || "No reason specified"}"</span>
+                                            <span>{new Date(tx.timestamp).toLocaleString()}</span>
+                                          </div>
+                                        </div>
+                                      );
+                                    })
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })()}
+
                         </div>
                       </div>
                     )}
 
                     {/* ===================================================================== */}
-                    {/* 📖 FULLSCREEN IMMERSIVE STORY VIEWER */}
+                    {/* ➕ SUPER ADMIN CREATE OFFICIAL HOST AGENCY MODAL */}
+                    {/* ===================================================================== */}
+                    {showCreateHostAgencyModal && (
+                      <div className="fixed inset-0 bg-black/90 backdrop-blur-md z-[10000] flex items-center justify-center p-4 animate-fade-in text-left font-mono">
+                        <div className="w-full max-w-md bg-[#12121a] border-2 border-purple-500/60 rounded-2xl p-4 shadow-2xl space-y-3 max-h-[90vh] overflow-y-auto">
+                          <div className="flex justify-between items-center border-b border-purple-500/30 pb-2">
+                            <h4 className="text-xs font-black text-purple-300 uppercase tracking-wider flex items-center space-x-1.5">
+                              <span>🎙️ Create Official Host Agency</span>
+                            </h4>
+                            <button
+                              onClick={() => setShowCreateHostAgencyModal(false)}
+                              className="w-7 h-7 rounded-full bg-white/10 hover:bg-white/20 text-gray-300 flex items-center justify-center text-xs font-bold transition-all cursor-pointer"
+                            >
+                              ✕
+                            </button>
+                          </div>
+
+                          <div className="space-y-2 text-[8.5px]">
+                            <div>
+                              <label className="text-gray-400 text-[7.5px] block">Agency Name *</label>
+                              <input
+                                type="text"
+                                placeholder="e.g. Pardais Official Talent Agency"
+                                value={adminNewAgencyName}
+                                onChange={(e) => setAdminNewAgencyName(e.target.value)}
+                                className="w-full bg-[#1e1e2d] border border-[#303040] rounded-lg px-2.5 py-1.5 text-white focus:outline-none focus:border-purple-500"
+                              />
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-2">
+                              <div>
+                                <label className="text-gray-400 text-[7.5px] block">Agency ID</label>
+                                <input
+                                  type="text"
+                                  value={adminNewAgencyId}
+                                  onChange={(e) => setAdminNewAgencyId(e.target.value)}
+                                  className="w-full bg-[#1e1e2d] border border-[#303040] rounded-lg px-2.5 py-1.5 text-yellow-300 font-bold focus:outline-none"
+                                />
+                              </div>
+                              <div>
+                                <label className="text-gray-400 text-[7.5px] block">Country</label>
+                                <input
+                                  type="text"
+                                  value={adminNewAgencyCountry}
+                                  onChange={(e) => setAdminNewAgencyCountry(e.target.value)}
+                                  className="w-full bg-[#1e1e2d] border border-[#303040] rounded-lg px-2.5 py-1.5 text-white focus:outline-none"
+                                />
+                              </div>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-2">
+                              <div>
+                                <label className="text-gray-400 text-[7.5px] block">Agency Admin Username *</label>
+                                <input
+                                  type="text"
+                                  placeholder="e.g. malik_saad"
+                                  value={adminNewAgencyAdminUserId}
+                                  onChange={(e) => setAdminNewAgencyAdminUserId(e.target.value)}
+                                  className="w-full bg-[#1e1e2d] border border-[#303040] rounded-lg px-2.5 py-1.5 text-amber-300 font-bold focus:outline-none"
+                                />
+                              </div>
+                              <div>
+                                <label className="text-gray-400 text-[7.5px] block">Admin Full Name</label>
+                                <input
+                                  type="text"
+                                  placeholder="e.g. Malik Saad"
+                                  value={adminNewAgencyAdminName}
+                                  onChange={(e) => setAdminNewAgencyAdminName(e.target.value)}
+                                  className="w-full bg-[#1e1e2d] border border-[#303040] rounded-lg px-2.5 py-1.5 text-white focus:outline-none"
+                                />
+                              </div>
+                            </div>
+
+                            <div>
+                              <label className="text-gray-400 text-[7.5px] block">Contact Email</label>
+                              <input
+                                type="email"
+                                placeholder="agency@pardais.party"
+                                value={adminNewAgencyEmail}
+                                onChange={(e) => setAdminNewAgencyEmail(e.target.value)}
+                                className="w-full bg-[#1e1e2d] border border-[#303040] rounded-lg px-2.5 py-1.5 text-white focus:outline-none"
+                              />
+                            </div>
+
+                            <div>
+                              <label className="text-gray-400 text-[7.5px] block">Commission & Salary Contract Rate</label>
+                              <input
+                                type="text"
+                                value={adminNewAgencyRate}
+                                onChange={(e) => setAdminNewAgencyRate(e.target.value)}
+                                className="w-full bg-[#1e1e2d] border border-[#303040] rounded-lg px-2.5 py-1.5 text-emerald-400 font-bold focus:outline-none"
+                              />
+                            </div>
+
+                            <button
+                              type="button"
+                              disabled={!adminNewAgencyName.trim() || !adminNewAgencyAdminUserId.trim() || adminNewAgencySubmitting}
+                              onClick={() => {
+                                setAdminNewAgencySubmitting(true);
+                                const cleanUsername = adminNewAgencyAdminUserId.replace("@", "").trim();
+                                const newAgencyData = {
+                                  id: adminNewAgencyId || ("AG-" + Date.now()),
+                                  name: adminNewAgencyName.trim(),
+                                  logo: adminNewAgencyLogo.trim() || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=300&q=80",
+                                  description: adminNewAgencyDesc.trim() || "Official Pardais Host Agency",
+                                  country: adminNewAgencyCountry,
+                                  ownerName: adminNewAgencyAdminName.trim() || cleanUsername,
+                                  ownerUsername: cleanUsername,
+                                  adminUserId: cleanUsername,
+                                  ownerEmail: adminNewAgencyEmail.trim() || `${cleanUsername}@pardais.party`,
+                                  status: adminNewAgencyStatus,
+                                  salaryRate: adminNewAgencyRate
+                                };
+
+                                fetch("/api/v1/agencies", {
+                                  method: "POST",
+                                  headers: { "Content-Type": "application/json" },
+                                  body: JSON.stringify(newAgencyData)
+                                })
+                                  .then(res => res.json())
+                                  .then(data => {
+                                    setAdminNewAgencySubmitting(false);
+                                    setShowCreateHostAgencyModal(false);
+                                    setHostAgencies(prev => [data, ...prev]);
+                                    alert(`🟢 Official Host Agency "${data.name}" created! User @${cleanUsername} is now an Official Host Agency Admin.`);
+                                  })
+                                  .catch(err => {
+                                    setAdminNewAgencySubmitting(false);
+                                    console.error(err);
+                                    alert("Failed to create agency.");
+                                  });
+                              }}
+                              className="w-full py-2.5 bg-gradient-to-r from-purple-600 via-indigo-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white font-black text-[9px] uppercase tracking-wider rounded-xl transition-all cursor-pointer shadow-lg shadow-purple-500/20 mt-2"
+                            >
+                              {adminNewAgencySubmitting ? "Creating Agency..." : "CREATE OFFICIAL HOST AGENCY"}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* ===================================================================== */}
+                    {/* 👥 SUB-ADMIN ADD HOST MODAL */}
+                    {/* ===================================================================== */}
+                    {addHostModalOpen && (
+                      <div className="fixed inset-0 bg-black/90 backdrop-blur-md z-[10000] flex items-center justify-center p-4 animate-fade-in text-left font-mono">
+                        <div className="w-full max-w-sm bg-[#12121a] border-2 border-purple-500/60 rounded-2xl p-4 shadow-2xl space-y-3">
+                          <div className="flex justify-between items-center border-b border-purple-500/30 pb-2">
+                            <h4 className="text-xs font-black text-purple-300 uppercase tracking-wider">👥 Add Host to Agency</h4>
+                            <button
+                              onClick={() => setAddHostModalOpen(false)}
+                              className="w-7 h-7 rounded-full bg-white/10 hover:bg-white/20 text-gray-300 flex items-center justify-center text-xs font-bold cursor-pointer"
+                            >
+                              ✕
+                            </button>
+                          </div>
+
+                          <div className="space-y-2 text-[8.5px]">
+                            <p className="text-gray-300">Enter the Pardais username of the creator you wish to add as a host under your agency:</p>
+                            <input
+                              type="text"
+                              placeholder="e.g. malik_saad or @malik_saad"
+                              value={newHostUsernameToAdd}
+                              onChange={(e) => setNewHostUsernameToAdd(e.target.value)}
+                              className="w-full bg-[#1e1e2d] border border-[#303040] rounded-lg px-2.5 py-1.5 text-amber-300 font-bold focus:outline-none"
+                            />
+
+                            <button
+                              type="button"
+                              disabled={!newHostUsernameToAdd.trim()}
+                              onClick={() => {
+                                const cleanUser = newHostUsernameToAdd.replace("@", "").trim();
+                                const myApprovedAgency = (hostAgencies || []).find((a: any) => a.ownerUsername === user?.username || a.adminUserId === user?.username || (user?.agencyId && a.id === user?.agencyId));
+                                const targetAgencyId = myApprovedAgency?.id || user?.agencyId || "AG-101";
+
+                                fetch(`/api/v1/agencies/${targetAgencyId}/hosts`, {
+                                  method: "POST",
+                                  headers: { "Content-Type": "application/json" },
+                                  body: JSON.stringify({ username: cleanUser })
+                                })
+                                  .then(res => res.json())
+                                  .then(data => {
+                                    setAddHostModalOpen(false);
+                                    setNewHostUsernameToAdd("");
+                                    setUsers(prev => prev.map(u => u.username === cleanUser ? { ...u, agencyId: targetAgencyId, isAgencyHost: true } : u));
+                                    alert(`🟢 Creator @${cleanUser} successfully assigned as a Host to your agency!`);
+                                  })
+                                  .catch(err => {
+                                    console.error(err);
+                                    alert("Failed to add host. Make sure the username exists.");
+                                  });
+                              }}
+                              className="w-full py-2 bg-purple-600 hover:bg-purple-500 text-white font-black text-[8.5px] uppercase rounded-xl transition-all cursor-pointer shadow-md"
+                            >
+                              + Assign Host to Agency
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* ===================================================================== */}
+                    {/* 🪙 SUPER ADMIN AGENCY COIN TOP-UP & DEDUCTION MODAL */}
+                    {/* ===================================================================== */}
+                    {selectedAgencyForCoins && (
+                      <div className="fixed inset-0 bg-black/90 backdrop-blur-md z-[10000] flex items-center justify-center p-4 animate-fade-in text-left font-mono">
+                        <div className="w-full max-w-sm bg-[#12121a] border-2 border-yellow-500/60 rounded-2xl p-4 shadow-2xl space-y-3.5">
+                          <div className="flex justify-between items-center border-b border-yellow-500/30 pb-2">
+                            <h4 className="text-xs font-black text-yellow-300 uppercase tracking-wider flex items-center space-x-1.5">
+                              <span>🪙 Manage Agency Coins</span>
+                            </h4>
+                            <button
+                              onClick={() => setSelectedAgencyForCoins(null)}
+                              className="w-7 h-7 rounded-full bg-white/10 hover:bg-white/20 text-gray-300 flex items-center justify-center text-xs font-bold cursor-pointer"
+                            >
+                              ✕
+                            </button>
+                          </div>
+
+                          <div className="bg-[#1e1e2d] p-2.5 rounded-xl border border-white/5 space-y-1 text-[8.5px]">
+                            <div className="flex justify-between items-center">
+                              <span className="text-gray-400">Target Agency:</span>
+                              <span className="text-white font-black">{selectedAgencyForCoins.name}</span>
+                            </div>
+                            <div className="flex justify-between items-center">
+                              <span className="text-gray-400">Agency Type:</span>
+                              <span className="text-amber-300 font-bold uppercase">{selectedAgencyForCoins.agencyType === "host_agency" ? "Host Agency" : "Reseller Agency"}</span>
+                            </div>
+                            <div className="flex justify-between items-center">
+                              <span className="text-gray-400">Current Balance:</span>
+                              <span className="text-yellow-300 font-black text-[10px]">{(selectedAgencyForCoins.coinBalance || 0).toLocaleString()} Coins</span>
+                            </div>
+                          </div>
+
+                          {/* Action Selector: ADD vs DEDUCT */}
+                          <div className="grid grid-cols-2 gap-1.5 bg-[#1e1e2d] p-1 rounded-xl border border-white/5 text-[8.5px]">
+                            <button
+                              type="button"
+                              onClick={() => setAdminAgencyCoinType("ADD")}
+                              className={`py-1.5 rounded-lg font-black uppercase transition-all cursor-pointer flex items-center justify-center space-x-1 ${
+                                adminAgencyCoinType === "ADD"
+                                  ? "bg-emerald-600 text-white shadow-md"
+                                  : "text-gray-400 hover:text-white"
+                              }`}
+                            >
+                              <span>🟢 Add Coins (+)</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => setAdminAgencyCoinType("DEDUCT")}
+                              className={`py-1.5 rounded-lg font-black uppercase transition-all cursor-pointer flex items-center justify-center space-x-1 ${
+                                adminAgencyCoinType === "DEDUCT"
+                                  ? "bg-red-600 text-white shadow-md"
+                                  : "text-gray-400 hover:text-white"
+                              }`}
+                            >
+                              <span>🔴 Deduct Coins (-)</span>
+                            </button>
+                          </div>
+
+                          {/* Quick Preset Buttons */}
+                          <div className="space-y-1">
+                            <label className="text-gray-400 text-[7.5px] uppercase block">Quick Presets:</label>
+                            <div className="grid grid-cols-5 gap-1 text-[8px]">
+                              {[10000, 50000, 100000, 500000, 1000000].map(val => (
+                                <button
+                                  key={val}
+                                  type="button"
+                                  onClick={() => setAdminAgencyCoinAmount(val.toString())}
+                                  className="py-1 bg-white/5 hover:bg-white/15 text-amber-300 border border-white/10 rounded font-bold cursor-pointer transition-all"
+                                >
+                                  +{val >= 1000000 ? `${val/1000000}M` : `${val/1000}k`}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+
+                          {/* Inputs */}
+                          <div className="space-y-2 text-[8.5px]">
+                            <div>
+                              <label className="text-gray-300 text-[7.5px] uppercase block">Coin Amount *</label>
+                              <input
+                                type="number"
+                                placeholder="Enter amount (e.g. 100000)"
+                                value={adminAgencyCoinAmount}
+                                onChange={(e) => setAdminAgencyCoinAmount(e.target.value)}
+                                className="w-full bg-[#1e1e2d] border border-[#303040] rounded-lg px-2.5 py-1.5 text-yellow-300 font-bold text-[10px] focus:outline-none focus:border-yellow-400"
+                              />
+                            </div>
+
+                            <div>
+                              <label className="text-gray-300 text-[7.5px] uppercase block">Reason / Audit Remark *</label>
+                              <input
+                                type="text"
+                                placeholder="e.g. Monthly wholesale purchase allocation"
+                                value={adminAgencyCoinReason}
+                                onChange={(e) => setAdminAgencyCoinReason(e.target.value)}
+                                className="w-full bg-[#1e1e2d] border border-[#303040] rounded-lg px-2.5 py-1.5 text-white focus:outline-none focus:border-yellow-400"
+                              />
+                            </div>
+                          </div>
+
+                          {/* Submit */}
+                          <button
+                            type="button"
+                            disabled={!adminAgencyCoinAmount || parseInt(adminAgencyCoinAmount, 10) <= 0 || adminAgencyCoinSubmitting}
+                            onClick={() => {
+                              const amt = parseInt(adminAgencyCoinAmount, 10);
+                              if (!amt || amt <= 0) return;
+                              setAdminAgencyCoinSubmitting(true);
+
+                              fetch("/api/v1/agency-coin-transactions", {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({
+                                  agencyId: selectedAgencyForCoins.id,
+                                  agencyType: selectedAgencyForCoins.agencyType || "coin_seller",
+                                  type: adminAgencyCoinType,
+                                  amount: amt,
+                                  reason: adminAgencyCoinReason || (adminAgencyCoinType === "ADD" ? "Admin Coin Topup" : "Admin Coin Adjustment"),
+                                  adminUsername: user?.username || "Super Admin"
+                                })
+                              })
+                              .then(res => res.json())
+                              .then(data => {
+                                setAdminAgencyCoinSubmitting(false);
+                                if (data.success) {
+                                  alert(`🟢 Successfully ${adminAgencyCoinType === "ADD" ? "added" : "deducted"} ${amt.toLocaleString()} coins for "${selectedAgencyForCoins.name}"!`);
+                                  
+                                  const newBal = data.updatedAgency.coinBalance;
+                                  if (selectedAgencyForCoins.agencyType === "coin_seller") {
+                                    setOfflineAgencies(prev => prev.map(a => a.id === selectedAgencyForCoins.id ? { ...a, coinBalance: newBal, coinsAvailable: `${newBal.toLocaleString()} Coins` } : a));
+                                  } else {
+                                    setHostAgencies(prev => prev.map(a => a.id === selectedAgencyForCoins.id ? { ...a, coinBalance: newBal } : a));
+                                  }
+
+                                  if (data.transaction) {
+                                    setAgencyCoinTransactions(prev => [data.transaction, ...prev]);
+                                  }
+
+                                  setSelectedAgencyForCoins(null);
+                                  setAdminAgencyCoinAmount("");
+                                  setAdminAgencyCoinReason("");
+                                } else {
+                                  alert(data.error || "Failed to update agency coins");
+                                }
+                              })
+                              .catch(err => {
+                                setAdminAgencyCoinSubmitting(false);
+                                console.error(err);
+                                alert("Failed to execute transaction.");
+                              });
+                            }}
+                            className={`w-full py-2.5 font-black text-[9px] uppercase rounded-xl transition-all cursor-pointer shadow-md text-white ${
+                              adminAgencyCoinType === "ADD" ? "bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-500 hover:to-green-500" : "bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500"
+                            } disabled:opacity-40`}
+                          >
+                            {adminAgencyCoinSubmitting ? "Processing Transaction..." : adminAgencyCoinType === "ADD" ? `Confirm Topup (+${parseInt(adminAgencyCoinAmount || "0").toLocaleString()} Coins)` : `Confirm Deduction (-${parseInt(adminAgencyCoinAmount || "0").toLocaleString()} Coins)`}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* ===================================================================== */}
+                    {/* ✏️ SUPER ADMIN EDIT AGENCY DETAILS MODAL (TA'ADULAT) */}
+                    {/* ===================================================================== */}
+                    {selectedAgencyForEdit && (
+                      <div className="fixed inset-0 bg-black/90 backdrop-blur-md z-[10000] flex items-center justify-center p-4 animate-fade-in text-left font-mono">
+                        <div className="w-full max-w-md bg-[#12121a] border-2 border-cyan-500/60 rounded-2xl p-4 shadow-2xl space-y-3 max-h-[90vh] overflow-y-auto">
+                          <div className="flex justify-between items-center border-b border-cyan-500/30 pb-2">
+                            <h4 className="text-xs font-black text-cyan-300 uppercase tracking-wider flex items-center space-x-1.5">
+                              <span>✏️ Edit Agency Settings (Ta'adulat)</span>
+                            </h4>
+                            <button
+                              onClick={() => setSelectedAgencyForEdit(null)}
+                              className="w-7 h-7 rounded-full bg-white/10 hover:bg-white/20 text-gray-300 flex items-center justify-center text-xs font-bold cursor-pointer"
+                            >
+                              ✕
+                            </button>
+                          </div>
+
+                          <div className="space-y-2 text-[8.5px]">
+                            <div>
+                              <label className="text-gray-400 text-[7.5px] block">Agency Name *</label>
+                              <input
+                                type="text"
+                                value={editAgencyForm.name}
+                                onChange={(e) => setEditAgencyForm({ ...editAgencyForm, name: e.target.value })}
+                                className="w-full bg-[#1e1e2d] border border-[#303040] rounded-lg px-2.5 py-1.5 text-white focus:outline-none focus:border-cyan-400"
+                              />
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-2">
+                              <div>
+                                <label className="text-gray-400 text-[7.5px] block">Owner Username (@owner)</label>
+                                <input
+                                  type="text"
+                                  value={editAgencyForm.ownerUsername}
+                                  onChange={(e) => setEditAgencyForm({ ...editAgencyForm, ownerUsername: e.target.value })}
+                                  className="w-full bg-[#1e1e2d] border border-[#303040] rounded-lg px-2.5 py-1.5 text-yellow-300 font-bold focus:outline-none focus:border-cyan-400"
+                                />
+                              </div>
+
+                              <div>
+                                <label className="text-gray-400 text-[7.5px] block">WhatsApp / Phone</label>
+                                <input
+                                  type="text"
+                                  value={editAgencyForm.whatsapp}
+                                  onChange={(e) => setEditAgencyForm({ ...editAgencyForm, whatsapp: e.target.value })}
+                                  className="w-full bg-[#1e1e2d] border border-[#303040] rounded-lg px-2.5 py-1.5 text-emerald-400 font-bold focus:outline-none focus:border-cyan-400"
+                                />
+                              </div>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-2">
+                              <div>
+                                <label className="text-gray-400 text-[7.5px] block">Rate / Commission Description</label>
+                                <input
+                                  type="text"
+                                  value={editAgencyForm.rate}
+                                  onChange={(e) => setEditAgencyForm({ ...editAgencyForm, rate: e.target.value })}
+                                  className="w-full bg-[#1e1e2d] border border-[#303040] rounded-lg px-2.5 py-1.5 text-white focus:outline-none focus:border-cyan-400"
+                                />
+                              </div>
+
+                              <div>
+                                <label className="text-gray-400 text-[7.5px] block">Country</label>
+                                <input
+                                  type="text"
+                                  value={editAgencyForm.country}
+                                  onChange={(e) => setEditAgencyForm({ ...editAgencyForm, country: e.target.value })}
+                                  className="w-full bg-[#1e1e2d] border border-[#303040] rounded-lg px-2.5 py-1.5 text-white focus:outline-none focus:border-cyan-400"
+                                />
+                              </div>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-2">
+                              <div>
+                                <label className="text-gray-400 text-[7.5px] block">Status (Freez / Suspend / Active)</label>
+                                <select
+                                  value={editAgencyForm.status}
+                                  onChange={(e) => setEditAgencyForm({ ...editAgencyForm, status: e.target.value })}
+                                  className="w-full bg-[#1e1e2d] border border-[#303040] rounded-lg px-2.5 py-1.5 text-white focus:outline-none focus:border-cyan-400"
+                                >
+                                  <option value="Active">🟢 Active (Verified)</option>
+                                  <option value="Frozen">❄️ Frozen (Restricted)</option>
+                                  <option value="Suspended">🛑 Suspended (Deactivated)</option>
+                                </select>
+                              </div>
+
+                              <div>
+                                <label className="text-gray-400 text-[7.5px] block">Coin Balance</label>
+                                <input
+                                  type="number"
+                                  value={editAgencyForm.coinBalance}
+                                  onChange={(e) => setEditAgencyForm({ ...editAgencyForm, coinBalance: e.target.value })}
+                                  className="w-full bg-[#1e1e2d] border border-[#303040] rounded-lg px-2.5 py-1.5 text-yellow-300 font-bold focus:outline-none focus:border-cyan-400"
+                                />
+                              </div>
+                            </div>
+
+                            <div>
+                              <label className="text-gray-400 text-[7.5px] block">Description / Notes</label>
+                              <textarea
+                                rows={2}
+                                value={editAgencyForm.description}
+                                onChange={(e) => setEditAgencyForm({ ...editAgencyForm, description: e.target.value })}
+                                className="w-full bg-[#1e1e2d] border border-[#303040] rounded-lg px-2.5 py-1.5 text-white focus:outline-none focus:border-cyan-400"
+                              />
+                            </div>
+
+                            <button
+                              type="button"
+                              disabled={editAgencySubmitting}
+                              onClick={() => {
+                                setEditAgencySubmitting(true);
+                                const isCoinSeller = editAgencyForm.agencyType === "coin_seller";
+                                const endpoint = isCoinSeller ? `/api/v1/coin-sellers/${editAgencyForm.id}` : `/api/v1/agencies/${editAgencyForm.id}`;
+
+                                fetch(endpoint, {
+                                  method: "PUT",
+                                  headers: { "Content-Type": "application/json" },
+                                  body: JSON.stringify({
+                                    name: editAgencyForm.name,
+                                    contactPerson: editAgencyForm.name,
+                                    ownerUsername: editAgencyForm.ownerUsername,
+                                    whatsapp: editAgencyForm.whatsapp,
+                                    rate: editAgencyForm.rate,
+                                    rateDescription: editAgencyForm.rate,
+                                    salaryRate: editAgencyForm.rate,
+                                    country: editAgencyForm.country,
+                                    status: editAgencyForm.status,
+                                    coinBalance: parseInt(String(editAgencyForm.coinBalance), 10) || 0,
+                                    coinsAvailable: `${(parseInt(String(editAgencyForm.coinBalance), 10) || 0).toLocaleString()} Coins`,
+                                    description: editAgencyForm.description
+                                  })
+                                })
+                                .then(res => res.json())
+                                .then(updated => {
+                                  setEditAgencySubmitting(false);
+                                  if (isCoinSeller) {
+                                    setOfflineAgencies(prev => prev.map(a => a.id === editAgencyForm.id ? { ...a, ...updated, coinBalance: updated.coinBalance || parseInt(String(editAgencyForm.coinBalance), 10) } : a));
+                                  } else {
+                                    setHostAgencies(prev => prev.map(a => a.id === editAgencyForm.id ? { ...a, ...updated, coinBalance: updated.coinBalance || parseInt(String(editAgencyForm.coinBalance), 10) } : a));
+                                  }
+                                  alert(`🟢 Agency "${editAgencyForm.name}" updated successfully!`);
+                                  setSelectedAgencyForEdit(null);
+                                })
+                                .catch(err => {
+                                  setEditAgencySubmitting(false);
+                                  console.error(err);
+                                  alert("Failed to update agency settings.");
+                                });
+                              }}
+                              className="w-full py-2 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-black text-[9px] uppercase rounded-xl transition-all cursor-pointer shadow-md disabled:opacity-40"
+                            >
+                              {editAgencySubmitting ? "Saving Changes..." : "💾 Save Agency Changes (Ta'adulat)"}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* ===================================================================== */}
+                    {/* 🎙️ USER JOIN / LEAVE HOST AGENCY APPLICATION MODAL */}
+                    {/* ===================================================================== */}
+                    {showJoinAgencyModal && (
+                      <div className="fixed inset-0 bg-black/90 backdrop-blur-md z-[10000] flex items-center justify-center p-4 animate-fade-in text-left font-mono">
+                        <div className="w-full max-w-md bg-[#12121a] border-2 border-purple-500/60 rounded-2xl p-4 shadow-2xl space-y-3.5 max-h-[90vh] flex flex-col">
+                          <div className="flex justify-between items-center border-b border-purple-500/30 pb-2.5 shrink-0">
+                            <div className="flex items-center space-x-2">
+                              <Building2 className="w-4 h-4 text-purple-400" />
+                              <h4 className="text-xs font-black text-purple-300 uppercase tracking-wider">
+                                {targetAgencyToJoin ? `Apply to ${targetAgencyToJoin.name}` : user?.agencyId ? "My Agency Membership" : "Join Host Agency"}
+                              </h4>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setShowJoinAgencyModal(false);
+                                setTargetAgencyToJoin(null);
+                                setShowLeaveForm(false);
+                              }}
+                              className="w-7 h-7 rounded-full bg-white/10 hover:bg-white/20 text-gray-300 flex items-center justify-center text-xs font-bold cursor-pointer transition-all"
+                            >
+                              ✕
+                            </button>
+                          </div>
+
+                          <div className="overflow-y-auto space-y-3 pr-1 text-[8.5px]">
+                            {/* CASE 1: SPECIFIC AGENCY APPLICATION FORM */}
+                            {targetAgencyToJoin ? (
+                              <div className="space-y-3 animate-fade-in">
+                                <button
+                                  type="button"
+                                  onClick={() => setTargetAgencyToJoin(null)}
+                                  className="text-[8px] text-purple-300 hover:text-white flex items-center space-x-1 cursor-pointer"
+                                >
+                                  <span>← Back to Agencies List</span>
+                                </button>
+
+                                <div className="p-3 bg-[#1e1e2d] rounded-xl border border-purple-500/30 space-y-1.5">
+                                  <div className="flex items-center space-x-2.5">
+                                    <img 
+                                      src={targetAgencyToJoin.logo || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=300&q=80"} 
+                                      alt="Agency Logo" 
+                                      className="w-10 h-10 rounded-lg object-cover border border-purple-400/40"
+                                    />
+                                    <div>
+                                      <h5 className="text-[11px] font-black text-white">{targetAgencyToJoin.name}</h5>
+                                      <p className="text-[7.5px] text-gray-400">ID: <span className="text-yellow-300">{targetAgencyToJoin.id}</span> | {targetAgencyToJoin.country || "Global"}</p>
+                                    </div>
+                                  </div>
+                                </div>
+
+                                <p className="text-gray-300">Submit your application to join <strong>{targetAgencyToJoin.name}</strong> as an official live broadcasting host:</p>
+                                
+                                <textarea
+                                  placeholder="Brief message to agency admin (e.g. streaming hours, previous hosting experience)..."
+                                  value={joinAgencyExperienceNote}
+                                  onChange={(e) => setJoinAgencyExperienceNote(e.target.value)}
+                                  className="w-full bg-[#1e1e2d] border border-[#303040] rounded-lg p-2.5 text-white h-20 resize-none focus:outline-none focus:border-purple-500"
+                                />
+
+                                <div className="flex space-x-2 pt-1">
+                                  <button
+                                    type="button"
+                                    onClick={() => setTargetAgencyToJoin(null)}
+                                    className="px-3 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 font-bold text-[8.5px] rounded-xl cursor-pointer"
+                                  >
+                                    Cancel
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={joinAgencySubmitting}
+                                    onClick={() => {
+                                      setJoinAgencySubmitting(true);
+                                      const payload = {
+                                        type: "JOIN",
+                                        agencyId: targetAgencyToJoin.id,
+                                        agencyName: targetAgencyToJoin.name,
+                                        applicantUsername: user?.username,
+                                        applicantName: user?.fullName || user?.username,
+                                        email: user?.email || `${user?.username}@pardais.party`,
+                                        notes: joinAgencyExperienceNote
+                                      };
+
+                                      fetch("/api/v1/host-join-requests", {
+                                        method: "POST",
+                                        headers: { "Content-Type": "application/json" },
+                                        body: JSON.stringify(payload)
+                                      })
+                                        .then(res => res.json())
+                                        .then(data => {
+                                          setJoinAgencySubmitting(false);
+                                          setTargetAgencyToJoin(null);
+                                          setShowJoinAgencyModal(false);
+                                          setJoinAgencyExperienceNote("");
+                                          setHostJoinRequestsList(prev => [data, ...prev]);
+                                          alert(`🟢 Application submitted to "${targetAgencyToJoin.name}". The agency sub-admin will review your request.`);
+                                        })
+                                        .catch(err => {
+                                          setJoinAgencySubmitting(false);
+                                          console.error(err);
+                                          alert("Submission failed. Try again.");
+                                        });
+                                    }}
+                                    className="flex-1 py-2 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white font-black text-[8.5px] uppercase rounded-xl transition-all cursor-pointer shadow-md disabled:opacity-40"
+                                  >
+                                    {joinAgencySubmitting ? "Submitting Application..." : "SUBMIT MEMBERSHIP APPLICATION"}
+                                  </button>
+                                </div>
+                              </div>
+                            ) : user?.agencyId ? (
+                              /* CASE 2: USER IS ALREADY IN AN AGENCY */
+                              (() => {
+                                const currentAgency = (hostAgencies || []).find((a: any) => a && (a.id === user?.agencyId || a.name === user?.agencyName));
+                                const pendingLeaveReq = (hostJoinRequestsList || []).find((r: any) => r && r.applicantUsername === user?.username && r.type === "LEAVE" && (r.status === "PENDING" || r.status === "Pending"));
+
+                                return (
+                                  <div className="space-y-3 animate-fade-in">
+                                    <div className="bg-gradient-to-r from-purple-950/80 via-[#1e1035] to-[#12121a] p-3.5 rounded-xl border-2 border-purple-500/50 shadow-lg space-y-2">
+                                      <div className="flex items-center justify-between">
+                                        <div className="flex items-center space-x-2.5">
+                                          <img 
+                                            src={currentAgency?.logo || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=300&q=80"} 
+                                            alt="Agency Logo" 
+                                            className="w-10 h-10 rounded-xl object-cover border border-purple-400/40"
+                                          />
+                                          <div>
+                                            <h5 className="text-[11px] font-black text-white">{user?.agencyName || currentAgency?.name || user?.agencyId}</h5>
+                                            <p className="text-[7.5px] text-purple-200">
+                                              Agency ID: <span className="text-yellow-300 font-mono font-bold">{user?.agencyId}</span>
+                                            </p>
+                                          </div>
+                                        </div>
+                                        <span className="text-[7px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 px-2 py-0.5 rounded-full font-black uppercase tracking-wider">
+                                          ✓ ACTIVE HOST
+                                        </span>
+                                      </div>
+                                    </div>
+
+                                    <div className="bg-[#12121a] p-3 rounded-xl border border-white/10 space-y-1.5 text-gray-300">
+                                      <p className="font-bold text-amber-400 flex items-center">
+                                        <span className="mr-1">⚠️</span> Single-Agency Policy
+                                      </p>
+                                      <p className="text-[8px] text-gray-300 leading-relaxed">
+                                        You are currently registered as a live host under <strong>{user?.agencyName || user?.agencyId}</strong>. 
+                                        You cannot apply to or join any other agency while active in your current agency. To switch agencies, you must request release from your agency sub-admin.
+                                      </p>
+                                    </div>
+
+                                    {/* Leave Request Status or Leave Request Form */}
+                                    {pendingLeaveReq ? (
+                                      <div className="bg-amber-500/10 border-2 border-amber-500/40 p-3 rounded-xl space-y-1.5">
+                                        <div className="flex items-center justify-between">
+                                          <span className="text-[9px] font-black text-amber-300 uppercase tracking-wider flex items-center space-x-1">
+                                            <span className="animate-pulse">⏳</span>
+                                            <span>LEAVE REQUEST PENDING</span>
+                                          </span>
+                                          <span className="text-[7px] text-amber-200/80 font-mono">
+                                            {new Date(pendingLeaveReq.timestamp).toLocaleDateString()}
+                                          </span>
+                                        </div>
+                                        <p className="text-[8px] text-gray-300">
+                                          Your request to leave <strong>{user?.agencyName || user?.agencyId}</strong> has been submitted. The agency sub-admin will review your release request.
+                                        </p>
+                                      </div>
+                                    ) : showLeaveForm ? (
+                                      <div className="bg-[#1e1e2d] border border-red-500/40 p-3 rounded-xl space-y-2 animate-fade-in">
+                                        <h5 className="text-[9px] font-black text-red-400 uppercase tracking-wider">Request Release / Leave Agency</h5>
+                                        <p className="text-[7.5px] text-gray-400">Please enter a brief reason for requesting leave from your agency:</p>
+                                        <textarea
+                                          placeholder="Reason for requesting leave (e.g. changing region, personal break)..."
+                                          value={leaveAgencyReasonNote}
+                                          onChange={(e) => setLeaveAgencyReasonNote(e.target.value)}
+                                          className="w-full bg-[#12121a] border border-[#303040] rounded-lg p-2 text-white h-16 resize-none focus:outline-none focus:border-red-500 text-[8px]"
+                                        />
+                                        <div className="flex space-x-2 pt-1">
+                                          <button
+                                            type="button"
+                                            onClick={() => setShowLeaveForm(false)}
+                                            className="px-3 py-1.5 bg-gray-800 text-gray-300 font-bold text-[8px] rounded-lg cursor-pointer"
+                                          >
+                                            Cancel
+                                          </button>
+                                          <button
+                                            type="button"
+                                            disabled={leaveAgencySubmitting}
+                                            onClick={() => {
+                                              setLeaveAgencySubmitting(true);
+                                              const payload = {
+                                                type: "LEAVE",
+                                                agencyId: user?.agencyId,
+                                                agencyName: user?.agencyName || currentAgency?.name || "Official Host Agency",
+                                                applicantUsername: user?.username,
+                                                applicantName: user?.fullName || user?.username,
+                                                email: user?.email || `${user?.username}@pardais.party`,
+                                                notes: leaveAgencyReasonNote || "Host requested leave"
+                                              };
+
+                                              fetch("/api/v1/host-join-requests", {
+                                                method: "POST",
+                                                headers: { "Content-Type": "application/json" },
+                                                body: JSON.stringify(payload)
+                                              })
+                                                .then(res => res.json())
+                                                .then(data => {
+                                                  setLeaveAgencySubmitting(false);
+                                                  setShowLeaveForm(false);
+                                                  setLeaveAgencyReasonNote("");
+                                                  setHostJoinRequestsList(prev => [data, ...prev]);
+                                                  alert(`🟢 Leave request submitted to "${user?.agencyName || user?.agencyId}". The agency sub-admin will review your release.`);
+                                                })
+                                                .catch(err => {
+                                                  setLeaveAgencySubmitting(false);
+                                                  console.error(err);
+                                                  alert("Leave request submission failed. Please try again.");
+                                                });
+                                            }}
+                                            className="flex-1 py-1.5 bg-red-600 hover:bg-red-500 text-white font-black text-[8px] uppercase rounded-lg cursor-pointer transition-all shadow-md disabled:opacity-40"
+                                          >
+                                            {leaveAgencySubmitting ? "Submitting Request..." : "SUBMIT LEAVE REQUEST"}
+                                          </button>
+                                        </div>
+                                      </div>
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        onClick={() => setShowLeaveForm(true)}
+                                        className="w-full py-2.5 bg-red-600/20 hover:bg-red-600/30 border border-red-500/50 hover:border-red-500 text-red-300 hover:text-white font-black text-[8.5px] uppercase rounded-xl transition-all cursor-pointer flex items-center justify-center space-x-1.5 shadow-md"
+                                      >
+                                        <span>🚪 Request Leave / Release from Agency</span>
+                                      </button>
+                                    )}
+                                  </div>
+                                );
+                              })()
+                            ) : (
+                              /* CASE 3: USER IS FREE & CAN BROWSE / APPLY TO AGENCIES */
+                              (() => {
+                                const pendingJoinReq = (hostJoinRequestsList || []).find((r: any) => r && r.applicantUsername === user?.username && r.type !== "LEAVE" && (r.status === "PENDING" || r.status === "Pending"));
+
+                                return (
+                                  <div className="space-y-3 animate-fade-in">
+                                    {pendingJoinReq && (
+                                      <div className="bg-amber-500/10 border-2 border-amber-500/40 p-3 rounded-xl space-y-1">
+                                        <div className="flex items-center justify-between">
+                                          <span className="text-[8.5px] font-black text-amber-300 uppercase tracking-wider flex items-center space-x-1">
+                                            <span className="animate-pulse">⏳</span>
+                                            <span>APPLICATION PENDING</span>
+                                          </span>
+                                          <span className="text-[7px] text-amber-200/80 font-mono">
+                                            {new Date(pendingJoinReq.timestamp).toLocaleDateString()}
+                                          </span>
+                                        </div>
+                                        <p className="text-[8px] text-gray-300">
+                                          Your request to join <strong>{pendingJoinReq.agencyName}</strong> is awaiting agency review. You cannot apply to other agencies while an application is pending.
+                                        </p>
+                                      </div>
+                                    )}
+
+                                    <div className="bg-[#12121a] p-2.5 rounded-xl border border-white/5">
+                                      <h5 className="text-[9px] font-black text-purple-300 uppercase tracking-wider">Available Host Agencies</h5>
+                                      <p className="text-[7.5px] text-gray-400">Select an agency below to view details and apply for host membership.</p>
+                                    </div>
+
+                                    <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+                                      {(!hostAgencies || hostAgencies.length === 0) ? (
+                                        <div className="text-center py-6 bg-[#1e1e2d] rounded-xl border border-white/5">
+                                          <p className="text-[8.5px] text-gray-400">No official host agencies available yet.</p>
+                                        </div>
+                                      ) : (
+                                        hostAgencies.map((ag: any) => {
+                                          const isPendingThisAgency = pendingJoinReq && pendingJoinReq.agencyId === ag.id;
+
+                                          return (
+                                            <div key={ag.id} className="p-3 bg-[#1e1e2d] hover:bg-[#252538] border border-purple-500/30 rounded-xl flex items-center justify-between transition-all space-x-2">
+                                              <div className="flex items-center space-x-2.5 min-w-0">
+                                                <img 
+                                                  src={ag.logo || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=300&q=80"} 
+                                                  alt="Agency Logo" 
+                                                  className="w-9 h-9 rounded-lg object-cover border border-purple-400/40 shrink-0"
+                                                />
+                                                <div className="min-w-0">
+                                                  <div className="flex items-center space-x-1.5">
+                                                    <h5 className="text-[9.5px] font-black text-white truncate">{ag.name}</h5>
+                                                    <span className="text-[6.5px] bg-emerald-500/20 text-emerald-300 px-1 py-0.2 rounded font-bold uppercase shrink-0">
+                                                      ✓ Official
+                                                    </span>
+                                                  </div>
+                                                  <p className="text-[7.5px] text-gray-400 truncate">
+                                                    ID: <strong className="text-yellow-300">{ag.id}</strong> | 👥 {ag.registeredHosts || 0} Hosts | 🌍 {ag.country || "Global"}
+                                                  </p>
+                                                  <p className="text-[7px] text-purple-300 font-mono truncate">
+                                                    💰 {ag.salaryRate || "40% Commission + Bonuses"}
+                                                  </p>
+                                                </div>
+                                              </div>
+
+                                              <div className="shrink-0">
+                                                {isPendingThisAgency ? (
+                                                  <span className="text-[7.5px] font-bold text-amber-300 bg-amber-500/20 px-2 py-1 rounded border border-amber-500/40 animate-pulse">
+                                                    ⏳ Pending
+                                                  </span>
+                                                ) : pendingJoinReq ? (
+                                                  <button 
+                                                    disabled 
+                                                    className="px-2.5 py-1 bg-gray-800 text-gray-500 font-bold text-[7.5px] rounded-lg opacity-50 cursor-not-allowed"
+                                                  >
+                                                    Locked
+                                                  </button>
+                                                ) : (
+                                                  <button
+                                                    type="button"
+                                                    onClick={() => setTargetAgencyToJoin(ag)}
+                                                    className="px-2.5 py-1 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-black text-[7.5px] uppercase rounded-lg shadow-md cursor-pointer transition-all active:scale-95"
+                                                  >
+                                                    + Apply
+                                                  </button>
+                                                )}
+                                              </div>
+                                            </div>
+                                          );
+                                        })
+                                      )}
+                                    </div>
+                                  </div>
+                                );
+                              })()
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* ===================================================================== */}
+                    {/* 🔍 ADMIN AGENCY DETAILS INSPECTION MODAL */}
+                    {/* ===================================================================== */}
+                    {selectedAgencyDetailsForAdmin && (
+                      <div className="fixed inset-0 bg-black/90 backdrop-blur-md z-[10000] flex items-center justify-center p-4 animate-fade-in text-left">
+                        <div className="w-full max-w-md bg-[#12121a] border-2 border-amber-500/60 rounded-2xl p-4 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
+                          <div className="flex justify-between items-center border-b border-amber-500/30 pb-2.5">
+                            <h4 className="text-xs font-black text-amber-400 font-mono uppercase tracking-wider flex items-center space-x-1.5">
+                              <span>🏢 Coin Seller Agency Details</span>
+                            </h4>
+                            <button
+                              onClick={() => setSelectedAgencyDetailsForAdmin(null)}
+                              className="w-7 h-7 rounded-full bg-white/10 hover:bg-white/20 text-gray-300 flex items-center justify-center text-xs font-bold transition-all cursor-pointer"
+                            >
+                              ✕
+                            </button>
+                          </div>
+
+                          <div className="space-y-2.5 text-[9px] font-mono text-gray-200">
+                            <div className="bg-[#1e1e2d] p-3 rounded-xl border border-white/10 space-y-1">
+                              <p className="text-amber-300 font-bold text-[10px]">{selectedAgencyDetailsForAdmin.agencyName || selectedAgencyDetailsForAdmin.applicantName}</p>
+                              <p>👤 Legal Full Name: <span className="text-white font-bold">{selectedAgencyDetailsForAdmin.applicantName}</span></p>
+                              <p>🆔 Pardais User ID: <span className="text-yellow-300 font-bold">@{selectedAgencyDetailsForAdmin.applicantUsername}</span></p>
+                              <p>🌍 Country: <span className="text-white font-bold">{selectedAgencyDetailsForAdmin.country || "Pakistan"}</span></p>
+                            </div>
+
+                            <div className="bg-[#1e1e2d] p-3 rounded-xl border border-white/10 space-y-1">
+                              <p className="text-gray-400 font-bold">Contact Information:</p>
+                              <p>💬 WhatsApp: <span className="text-emerald-400 font-bold">{selectedAgencyDetailsForAdmin.contact || "N/A"}</span></p>
+                              <p>📧 Email: <span className="text-cyan-300 font-bold">{selectedAgencyDetailsForAdmin.email || "N/A"}</span></p>
+                              <p>📊 Account Details: <span className="text-gray-300">{selectedAgencyDetailsForAdmin.accountInfo || "Standard Account"}</span></p>
+                            </div>
+
+                            <div className="bg-[#1e1e2d] p-3 rounded-xl border border-white/10 space-y-1">
+                              <p className="text-amber-400 font-bold">Agency Requirements & Commitments:</p>
+                              <p>💰 Initial Collateral Purchase: <span className="text-yellow-300 font-bold">{selectedAgencyDetailsForAdmin.expectedMonthlyPurchase || "$3,000 USD"}</span></p>
+                              <p>📈 Expected Monthly Volume: <span className="text-white font-bold">{selectedAgencyDetailsForAdmin.expectedMonthlyVolume || "$3,000 - $10,000 / month"}</span></p>
+                              <p>☑️ Terms & Conditions Agreed: <span className="text-emerald-400 font-bold">YES ($3,000 Minimum Deposit Accepted)</span></p>
+                            </div>
+
+                            {selectedAgencyDetailsForAdmin.description && (
+                              <div className="bg-[#1e1e2d] p-3 rounded-xl border border-white/10 space-y-1">
+                                <p className="text-gray-400 font-bold">Business Notes / Background:</p>
+                                <p className="text-gray-300 italic">"{selectedAgencyDetailsForAdmin.description}"</p>
+                              </div>
+                            )}
+
+                            <div className="pt-2">
+                              <button
+                                type="button"
+                                onClick={() => setSelectedAgencyDetailsForAdmin(null)}
+                                className="w-full py-2 bg-gradient-to-r from-purple-600 to-indigo-600 text-white font-black uppercase rounded-xl transition-all cursor-pointer text-[9px]"
+                              >
+                                Close Details Inspection
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
                     {/* ===================================================================== */}
                     {showStoryViewerModal && activeStoryIndex < stories.length && (() => {
                       const currentStory = stories[activeStoryIndex];
@@ -27415,7 +29680,7 @@ export default function App() {
             <div className="flex items-center space-x-3 pb-3 border-b border-white/10">
               <VipAnimatedFrame vipLevel={viewerMenuUser.vipLevel} showLevelBadge={true}>
                 <div className="w-12 h-12 rounded-full bg-gradient-to-tr from-[#ff007f] to-purple-600 flex items-center justify-center text-lg font-black text-white shadow-md">
-                  {viewerMenuUser.username.charAt(0).toUpperCase()}
+                  {(viewerMenuUser?.username || "U").charAt(0).toUpperCase()}
                 </div>
               </VipAnimatedFrame>
               <div>
@@ -27811,7 +30076,7 @@ export default function App() {
 
       {/* GIFT HISTORY MODAL */}
       {showGiftHistoryModal && (
-        <GiftHistoryModal onClose={() => setShowGiftHistoryModal(false)} />
+        <GiftHistoryModal onClose={() => setShowGiftHistoryModal(false)} user={user} />
       )}
 
       {/* 🔴 STREAM ENDED BROADCAST CARD OVERLAY */}
@@ -28337,40 +30602,419 @@ export default function App() {
         </div>
       )}
 
-      {/* 🎡 LUCKY WHEEL & PARTY GAMES MODAL */}
-      {showPartyGamesModal && (
-        <PartyGamesModal
-          user={user}
-          setUser={setUser}
-          onClose={() => setShowPartyGamesModal(false)}
-          onSendRoomMessage={(msg) => broadcastRoomMessage(msg)}
-          setTransactions={setTransactions}
-        />
-      )}
+      {/* 💳 Online Payment Checkout Modal (Google Pay, Cards, EasyPaisa, JazzCash, Bank) */}
+      {showCardPaymentModal && (
+        (() => {
+          const currentPkg = selectedPaymentPackage || (onlinePackages && onlinePackages.length > 0 ? onlinePackages[0] : { id: "pkg-1", coins: 1000, originalPrice: 100, discount: 0 });
+          const safeCountry = selectedCurrencyCountry || COUNTRIES_CURRENCIES[0];
+          const costObj = getCoinsCostInCurrency(currentPkg.coins, safeCountry, currentPkg.discount);
 
-      {/* 🏎️ VIP ENTRY RIDE ANIMATION OVERLAY (FULL SCREEN CROSSING) */}
-      {activeVipRideOverlay && (
-        <VipRideAnimationOverlay
-          vipLevel={activeVipRideOverlay.vipLevel}
-          username={activeVipRideOverlay.username}
-          onClose={() => setActiveVipRideOverlay(null)}
-        />
-      )}
+          return (
+            <div className="fixed inset-0 bg-black/85 backdrop-blur-md z-[9999] flex flex-col justify-center items-center p-4 overflow-y-auto text-left animate-fade-in">
+              <div className="bg-[#1e1e2d] border border-cyan-500/30 rounded-2xl p-4 space-y-3.5 shadow-2xl max-w-sm mx-auto w-full animate-pop-gift">
+                
+                {/* Modal Header */}
+                <div className="flex justify-between items-center border-b border-white/10 pb-2.5">
+                  <div className="flex items-center space-x-2">
+                    <div className="flex items-center bg-white/10 px-2 py-0.5 rounded-lg border border-white/10">
+                      <span className="text-yellow-400 font-bold text-xs">🪙</span>
+                      <span className="text-white font-bold text-xs ml-1">Pardais Pay</span>
+                    </div>
+                    <span className="text-[10px] text-cyan-400 font-mono font-bold">Checkout & Recharge</span>
+                  </div>
+                  <button 
+                    type="button" 
+                    onClick={() => {
+                      setShowCardPaymentModal(false);
+                      setSelectedPaymentPackage(null);
+                      setIsProcessingGPay(false);
+                      setIsProcessingCard(false);
+                      setIsProcessingEasyPaisa(false);
+                      setIsProcessingJazzCash(false);
+                    }}
+                    className="text-gray-400 hover:text-white font-black text-xs px-2 py-0.5 rounded hover:bg-white/5"
+                  >
+                    ✕
+                  </button>
+                </div>
 
-      {/* 👑 VIP ENTRANCE EFFECTS & MOUNTS STORE MODAL */}
-      {showVipEntranceStore && (
-        <VipEntranceStoreModal
-          userVipLevel={user?.vipLevel || 1}
-          username={user?.username || "Pardais User"}
-          onClose={() => setShowVipEntranceStore(false)}
-        />
-      )}
+                {/* Purchase Summary Box */}
+                <div className="bg-[#12121a] p-3 rounded-xl border border-white/5 space-y-2 text-left">
+                  {/* Country Currency Switcher inside Modal */}
+                  <div className="flex items-center justify-between bg-[#1e1e2d] px-2.5 py-1 rounded-lg border border-white/10 text-[9px]">
+                    <span className="text-gray-300 font-bold flex items-center">
+                      <span className="mr-1">🌐</span> Country / Currency:
+                    </span>
+                    <select
+                      value={safeCountry.code}
+                      onChange={(e) => {
+                        const found = COUNTRIES_CURRENCIES.find(c => c.code === e.target.value);
+                        if (found) setSelectedCurrencyCountry(found);
+                      }}
+                      className="bg-[#12121a] text-yellow-300 font-mono font-bold border border-white/20 rounded px-2 py-0.5 focus:outline-none cursor-pointer"
+                    >
+                      {COUNTRIES_CURRENCIES.map(c => (
+                        <option key={c.code} value={c.code}>
+                          {c.flag} {c.name} ({c.currencyCode})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
 
-      {/* FOOTER */}
-      <footer className="hidden sm:block border-t border-[#1f2833] bg-[#0b0c10] py-6 text-center text-xs text-gray-500 space-y-1 w-full max-w-[430px] mt-4">
-        <p>© 2026 Pardais Party Inc. All rights reserved.</p>
-        <p>Built with Google Gemini 3.5 Flash and full-stack Express + Vite architecture.</p>
-      </footer>
-    </div>
-  );
-}
+                  <div className="flex justify-between items-center">
+                    <p className="text-[9px] uppercase tracking-wider text-gray-400 font-mono font-bold">Item Selected</p>
+                    <span className="text-[8px] text-gray-400 font-mono">
+                      Base Rate: <strong className="text-yellow-400 font-bold">1 PKR = 10 Coins</strong>
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs font-bold text-white flex items-center">
+                      <span className="mr-1">🪙</span>
+                      <span>{currentPkg.coins.toLocaleString()} Coins Package</span>
+                    </span>
+                    <span className="text-xs font-mono font-black text-emerald-400">
+                      {costObj.formattedWithCode}
+                    </span>
+                  </div>
+                  {currentPkg.discount > 0 && (
+                    <p className="text-[8px] text-[#25D366] font-bold font-mono">
+                      🎉 Special Discount: {currentPkg.discount}% OFF Applied!
+                    </p>
+                  )}
+                </div>
+
+                {/* Payment Method Switcher Tabs */}
+                <div className="grid grid-cols-3 gap-1 p-1 bg-[#12121a] rounded-xl border border-white/10 text-[8.5px]">
+                  <button
+                    type="button"
+                    onClick={() => setActivePaymentMethodTab("card")}
+                    className={`py-1.5 px-1 rounded-lg font-bold flex items-center justify-center space-x-1 transition-all ${
+                      activePaymentMethodTab === "card"
+                        ? "bg-gradient-to-r from-purple-600 to-pink-600 text-white shadow-md font-black"
+                        : "text-gray-400 hover:text-white hover:bg-white/5"
+                    }`}
+                  >
+                    <span>💳 Card</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setActivePaymentMethodTab("gpay")}
+                    className={`py-1.5 px-1 rounded-lg font-bold flex items-center justify-center space-x-1 transition-all ${
+                      activePaymentMethodTab === "gpay"
+                        ? "bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-md font-black"
+                        : "text-gray-400 hover:text-white hover:bg-white/5"
+                    }`}
+                  >
+                    <span>⚡ GPay</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setActivePaymentMethodTab("easypaisa")}
+                    className={`py-1.5 px-1 rounded-lg font-bold flex items-center justify-center space-x-1 transition-all ${
+                      activePaymentMethodTab === "easypaisa"
+                        ? "bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-md font-black"
+                        : "text-gray-400 hover:text-white hover:bg-white/5"
+                    }`}
+                  >
+                    <span>📲 EasyPaisa</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setActivePaymentMethodTab("jazzcash")}
+                    className={`py-1.5 px-1 rounded-lg font-bold flex items-center justify-center space-x-1 transition-all ${
+                      activePaymentMethodTab === "jazzcash"
+                        ? "bg-gradient-to-r from-red-600 to-amber-600 text-white shadow-md font-black"
+                        : "text-gray-400 hover:text-white hover:bg-white/5"
+                    }`}
+                  >
+                    <span>📱 JazzCash</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setActivePaymentMethodTab("bank")}
+                    className={`py-1.5 px-1 rounded-lg font-bold flex items-center justify-center space-x-1 transition-all col-span-2 ${
+                      activePaymentMethodTab === "bank"
+                        ? "bg-gradient-to-r from-cyan-600 to-blue-600 text-white shadow-md font-black"
+                        : "text-gray-400 hover:text-white hover:bg-white/5"
+                    }`}
+                  >
+                    <span>🏦 Bank Transfer / Direct Debit</span>
+                  </button>
+                </div>
+
+                {/* 💳 TAB 1: CREDIT / DEBIT CARD DIRECT FORM */}
+                {activePaymentMethodTab === "card" && (
+                  <div className="space-y-3 animate-fadeIn">
+                    {/* Interactive Card Preview */}
+                    <div className="bg-gradient-to-tr from-purple-800 to-[#ff007f] p-3.5 rounded-xl shadow-lg relative text-white space-y-3 overflow-hidden border border-white/10">
+                      <div className="flex justify-between items-center">
+                        <span className="text-[10px] font-black tracking-widest font-mono uppercase text-yellow-300">Pardais Pay Card</span>
+                        <div className="flex space-x-1">
+                          <div className="w-4 h-2.5 rounded bg-yellow-400/60" />
+                          <div className="w-4 h-2.5 rounded bg-red-400/60" />
+                        </div>
+                      </div>
+                      <p className="text-xs font-mono font-black tracking-widest text-center py-1">
+                        {cardFormNumber || "•••• •••• •••• ••••"}
+                      </p>
+                      <div className="flex justify-between text-[7.5px] font-mono">
+                        <div>
+                          <span className="block text-[6px] uppercase text-white/60">Cardholder Name</span>
+                          <span className="font-bold tracking-wider uppercase">{cardFormHolder || user.username || "CARD HOLDER"}</span>
+                        </div>
+                        <div>
+                          <span className="block text-[6px] uppercase text-white/60">Expires</span>
+                          <span className="font-bold">{cardFormExpiry || "MM/YY"}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Form Inputs */}
+                    <div className="space-y-2.5 text-[10px]">
+                      <div className="space-y-1">
+                        <label className="text-[8px] uppercase tracking-widest text-gray-400 font-mono font-bold block">Cardholder Name</label>
+                        <input
+                          type="text"
+                          placeholder="Name on card"
+                          value={cardFormHolder}
+                          onChange={(e) => setCardFormHolder(e.target.value)}
+                          className="w-full bg-[#12121a] border border-[#303040] rounded-lg p-2 text-white focus:outline-none focus:border-[#ff007f]"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="text-[8px] uppercase tracking-widest text-gray-400 font-mono font-bold block">Card Number (Visa / Mastercard / UnionPay)</label>
+                        <input
+                          type="text"
+                          placeholder="4000 1234 5678 9010"
+                          maxLength={19}
+                          value={cardFormNumber}
+                          onChange={(e) => {
+                            const val = e.target.value.replace(/\D/g, "");
+                            const formatted = val.match(/.{1,4}/g)?.join(" ") || val;
+                            setCardFormNumber(formatted);
+                          }}
+                          className="w-full bg-[#12121a] border border-[#303040] rounded-lg p-2 text-white font-mono tracking-widest focus:outline-none focus:border-[#ff007f]"
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="space-y-1">
+                          <label className="text-[8px] uppercase tracking-widest text-gray-400 font-mono font-bold block">Expiry Date</label>
+                          <input
+                            type="text"
+                            placeholder="MM/YY"
+                            maxLength={5}
+                            value={cardFormExpiry}
+                            onChange={(e) => {
+                              const val = e.target.value.replace(/\D/g, "");
+                              if (val.length >= 3) {
+                                setCardFormExpiry(val.slice(0, 2) + "/" + val.slice(2, 4));
+                              } else {
+                                setCardFormExpiry(val);
+                              }
+                            }}
+                            className="w-full bg-[#12121a] border border-[#303040] rounded-lg p-2 text-white font-mono tracking-widest focus:outline-none focus:border-[#ff007f]"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[8px] uppercase tracking-widest text-gray-400 font-mono font-bold block">CVV Code</label>
+                          <input
+                            type="password"
+                            placeholder="•••"
+                            maxLength={3}
+                            value={cardFormCvv}
+                            onChange={(e) => setCardFormCvv(e.target.value.replace(/\D/g, ""))}
+                            className="w-full bg-[#12121a] border border-[#303040] rounded-lg p-2 text-white font-mono tracking-widest focus:outline-none focus:border-[#ff007f]"
+                          />
+                        </div>
+                      </div>
+
+                      {isProcessingCard ? (
+                        <div className="py-3 text-center space-y-1.5 bg-[#12121a] rounded-xl border border-yellow-500/30">
+                          <div className="w-6 h-6 border-2 border-yellow-400 border-t-transparent rounded-full animate-spin mx-auto" />
+                          <p className="text-[10px] font-mono font-bold text-yellow-400">Verifying Card Authorization Server-Side...</p>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            if (!cardFormHolder.trim() || cardFormNumber.replace(/\D/g, "").length < 15 || !cardFormExpiry || cardFormCvv.length < 3) {
+                              alert("Please enter full card details correctly (Holder Name, 16-Digit Card Number, Expiry, and CVV)!");
+                              return;
+                            }
+                            setIsProcessingCard(true);
+                            setPaymentErrorModalMsg(null);
+
+                            const orderId = `CARD-${Math.floor(100000 + Math.random() * 900000)}`;
+                            const cardMethod = `Credit/Debit Card (Visa/MC **** ${cardFormNumber.slice(-4)})`;
+
+                            try {
+                              const token = localStorage.getItem("pardais_user_token");
+                              const endpoint = typeof window !== "undefined" ? `${window.location.origin}/api/v1/payments/process` : "/api/v1/payments/process";
+                              const res = await fetch(endpoint, {
+                                method: "POST",
+                                headers: {
+                                  "Content-Type": "application/json",
+                                  ...(token ? { "Authorization": `Bearer ${token}` } : {})
+                                },
+                                body: JSON.stringify({
+                                  orderId,
+                                  username: user?.username || "Pardais_User",
+                                  userId: user?.uid || user?.username || "guest",
+                                  paymentMethod: cardMethod,
+                                  coins: currentPkg.coins,
+                                  amountLocal: costObj.localAmount,
+                                  currencyCode: safeCountry.currencyCode,
+                                  formattedAmount: costObj.formattedWithCode,
+                                  amountPKR: costObj.pkrBase,
+                                  country: safeCountry.name,
+                                  cardHolder: cardFormHolder,
+                                  cardNumber: cardFormNumber,
+                                  cardExpiry: cardFormExpiry,
+                                  cardCvv: cardFormCvv
+                                })
+                              });
+
+                              const data = await res.json();
+                              setIsProcessingCard(false);
+
+                              if (res.ok && data.success && data.verified) {
+                                if (data.user) {
+                                  setUser(data.user);
+                                } else if (data.newCoinBalance !== undefined) {
+                                  setUser(prev => ({ ...prev, coins: data.newCoinBalance }));
+                                }
+
+                                setPaymentReceiptData({
+                                  orderId: data.orderId || orderId,
+                                  method: cardMethod,
+                                  amount: costObj.localAmount,
+                                  coins: currentPkg.coins,
+                                  date: new Date().toLocaleString()
+                                });
+
+                                if (data.transaction) {
+                                  setOnlineRechargeLedger(prev => [data.transaction, ...(prev || [])]);
+                                }
+
+                                setShowCardPaymentModal(false);
+                                setSelectedPaymentPackage(null);
+                                setCardFormHolder("");
+                                setCardFormNumber("");
+                                setCardFormExpiry("");
+                                setCardFormCvv("");
+                                setShowPaymentReceiptModal(true);
+                              } else {
+                                setPaymentErrorModalMsg(data.message || data.error || "Card payment verification failed.");
+                              }
+                            } catch (err: any) {
+                              setIsProcessingCard(false);
+                              console.error("Card verification error:", err);
+                              setPaymentErrorModalMsg(err?.message ? `Gateway Error: ${err.message}` : "Network Error: Payment gateway authorization failed.");
+                            }
+                          }}
+                          className="w-full py-2.5 rounded-xl bg-gradient-to-r from-yellow-500 to-amber-500 text-black font-black uppercase text-[10px] hover:opacity-90 transition-all text-center cursor-pointer shadow-lg shadow-yellow-500/10"
+                        >
+                          Authorize Card Payment ({costObj.formattedWithCode}) & Recharge
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* 🔵 TAB 2: GOOGLE PAY EXPRESS CHECKOUT */}
+                {activePaymentMethodTab === "gpay" && (
+                  <div className="space-y-3 pt-1 animate-fadeIn text-left">
+                    <div className="bg-[#12121a] border border-blue-500/20 p-3 rounded-xl space-y-2.5">
+                      <div className="flex justify-between items-center text-[10px]">
+                        <span className="text-gray-400 font-medium">Google Account:</span>
+                        <span className="text-white font-mono font-bold">{user.email || gpayEmail}</span>
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="text-[8px] uppercase tracking-wider text-gray-400 font-mono font-bold block">Select Google Pay Linked Card</label>
+                        <select
+                          value={gpayCardSelected}
+                          onChange={(e) => setGpayCardSelected(e.target.value)}
+                          className="w-full bg-[#1e1e2d] border border-[#303040] rounded-lg p-2 text-xs text-white font-mono focus:outline-none focus:border-blue-500"
+                        >
+                          <option value="Google Pay • Visa ending in 4242">Google Pay • Visa ending in 4242</option>
+                          <option value="Google Pay • Mastercard ending in 8812">Google Pay • Mastercard ending in 8812</option>
+                          <option value="Google Pay • UnionPay ending in 9010">Google Pay • UnionPay ending in 9010</option>
+                          <option value="Google Pay • Local Bank Debit Card">Google Pay • Local Bank Debit Card</option>
+                        </select>
+                      </div>
+
+                      <div className="flex items-center justify-between pt-1">
+                        <label className="flex items-center space-x-2 text-[9px] text-gray-300 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={gpayBiometricAuth}
+                            onChange={(e) => setGpayBiometricAuth(e.target.checked)}
+                            className="rounded text-blue-500 accent-blue-500"
+                          />
+                          <span>Require Biometric TouchID / FaceID Authentication</span>
+                        </label>
+                      </div>
+                    </div>
+
+                    {isProcessingGPay ? (
+                      <div className="py-4 text-center space-y-2 bg-[#12121a] rounded-xl border border-blue-500/30">
+                        <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto" />
+                        <p className="text-xs font-mono font-bold text-blue-400">Verifying Payment...</p>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          setIsProcessingGPay(true);
+                          setPaymentErrorModalMsg(null);
+                          try {
+                            const orderId = `GPAY-${Math.floor(100000 + Math.random() * 900000)}`;
+                            const res = await fetch("/api/v1/payments/process", {
+                              method: "POST",
+                              headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({
+                                orderId,
+                                username: user?.username || "Pardais_User",
+                                userId: user?.uid || user?.username || "guest",
+                                paymentMethod: "Google Pay",
+                                coins: currentPkg.coins,
+                                amountLocal: costObj.localAmount,
+                                currencyCode: safeCountry.currencyCode,
+                                formattedAmount: costObj.formattedWithCode,
+                                amountPKR: costObj.pkrBase,
+                                country: safeCountry.name,
+                                gpayToken: "gpay_token_verified"
+                              })
+                            });
+                            const data = await res.json();
+                            setIsProcessingGPay(false);
+                            if (res.ok && data.success) {
+                              if (data.user) setUser(data.user);
+                              else if (data.newCoinBalance !== undefined) setUser((prev: any) => ({ ...prev, coins: data.newCoinBalance }));
+                              setPaymentReceiptData({ orderId, method: "Google Pay", amount: costObj.localAmount, coins: currentPkg.coins, date: new Date().toLocaleString() });
+                              setShowCardPaymentModal(false);
+                              setSelectedPaymentPackage(null);
+                              setShowPaymentReceiptModal(true);
+                            } else {
+                              setPaymentErrorModalMsg(data.error || "Google Pay failed.");
+                            }
+                          } catch (err: any) {
+                            setIsProcessingGPay(false);
+                            setPaymentErrorModalMsg("Network error.");
+                          }
+                        }}
+                        className="w-full py-3 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-black text-xs uppercase rounded-xl shadow-lg transition-all cursor-pointer"
+                      >
+                        <span>Pay {costObj.formattedWithCode} with Google Pay</span>
+                      </button>
+                    )}
+
+                    {paymentErrorModalMsg && (
+                      <div className="p-2.5 bg-red-500/20 border border-red-500/40 rounded-xl text-center">
+                        <p className="text-red-300 font-medium text-[8px]">{paymentErrorModalMsg}</p>
+                      </div>
+                    )}
+                  </di

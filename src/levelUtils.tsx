@@ -545,7 +545,7 @@ export const LevelBadgeSvg: React.FC<{
             fontFamily="monospace"
             letterSpacing="1"
           >
-            {tier.name.toUpperCase()}
+            {(tier.name || "").toUpperCase()}
           </text>
         )}
 

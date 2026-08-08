@@ -8,6 +8,7 @@ export interface Gift {
   id: string;
   name: string;
   cost: number;
+  coins?: number;
   type: GiftType;
   icon: string; // Lucide icon name or emoji
   color: string; // Tailwind bg color class
@@ -33,11 +34,13 @@ export interface Gift {
 }
 
 export interface UserProfile {
+  id?: string;
   uid?: string;
   email?: string;
   username: string;
   uniqueId: string;
   avatar: string;
+  avatarUrl?: string;
   coverPhoto: string;
   bio: string;
   gender: string;
@@ -47,6 +50,7 @@ export interface UserProfile {
   diamonds: number;
   vipLevel: number;
   userLevel: number;
+  level?: number;
   hostLevel: number;
   wealthLevel: number;
   xp: number;
@@ -56,6 +60,8 @@ export interface UserProfile {
   isBanned: boolean;
   twoFactorEnabled: boolean;
   fullName?: string;
+  name?: string;
+  displayName?: string;
   dob?: string;
   phoneNumber?: string;
   followersCount?: number;
@@ -72,6 +78,14 @@ export interface UserProfile {
   deviceModel?: string;
   deviceLocation?: string;
   lastIp?: string;
+  fans?: number;
+  agencyName?: string;
+  isAgencyApproved?: boolean;
+  isCoinSeller?: boolean;
+  role?: string;
+  isHostAgencyAdmin?: boolean;
+  reels?: any[];
+  videos?: any[];
 }
 
 export interface DeviceRecord {
@@ -107,12 +121,14 @@ export interface HostProfile {
   username?: string;
   uniqueId?: string;
   channelName?: string;
+  userLivePkChannelName?: string;
+  pkChannelName?: string;
   role: string;
   avatar: string;
   hostAvatar?: string;
   viewers: number;
   likes: number;
-  category: "video" | "audio" | "pk";
+  category: "video" | "audio" | "pk" | "1v1";
   subCategory?: string;
   status?: string;
   isLive: boolean;
@@ -121,6 +137,10 @@ export interface HostProfile {
   agencyId: string;
   level?: number;
   hostLevel?: number;
+  vipLevel?: number;
+  vip?: number;
+  rank?: number;
+  ranking?: number;
   inPk?: boolean;
   pkActive?: boolean;
   pkScoreHost?: number;
@@ -137,6 +157,16 @@ export interface HostProfile {
   coHostCamOff?: boolean;
   coverPhoto?: string;
   showCoverPhoto?: boolean;
+  connectedViewers?: any[];
+  musicPlaying?: boolean;
+  activeTrack?: any;
+  hostUid?: string;
+  comments?: any[];
+  realViewerCount?: number;
+  micEnabled?: boolean;
+  lastSeen?: any;
+  updatedAt?: any;
+  userLevel?: number;
 }
 
 export interface PKBattle {
@@ -167,6 +197,9 @@ export interface Agency {
   monthlyCommission: number;
   salaryRate: string;
   ownerEmail: string;
+  logo?: string;
+  status?: string;
+  country?: string;
 }
 
 export interface Transaction {

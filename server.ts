@@ -3864,17 +3864,53 @@ app.delete("/api/v1/families/:id", (req, res) => {
 
 // Agencies endpoints
 app.get("/api/v1/agencies", (req, res) => {
+  if (!dbData.agencies) dbData.agencies = [];
   res.json(dbData.agencies);
 });
 
 app.post("/api/v1/agencies", (req, res) => {
+  const agencyId = req.body.id || `agency-${Math.floor(1000 + Math.random() * 9000)}`;
   const newAgency = {
-    id: `agency-${Date.now()}`,
-    registeredHosts: 0,
-    monthlyCommission: 0,
+    id: agencyId,
+    name: req.body.name || "Pardais Official Agency",
+    ownerEmail: req.body.ownerEmail || req.body.email || "",
+    ownerUsername: req.body.ownerUsername || req.body.adminUserId || "",
+    adminName: req.body.adminName || req.body.ownerName || "",
+    logo: req.body.logo || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=300&q=80",
+    description: req.body.description || "Official Verified Pardais Host Agency",
+    country: req.body.country || "Global",
+    salaryRate: req.body.salaryRate || "40% Host Commission + Base Bonus",
+    registeredHosts: req.body.registeredHosts || 0,
+    monthlyCommission: req.body.monthlyCommission || 0,
+    status: req.body.status || "Active",
+    isOfficial: true,
+    createdAt: new Date().toISOString(),
     ...req.body
   };
-  dbData.agencies.push(newAgency);
+
+  if (!dbData.agencies) dbData.agencies = [];
+  dbData.agencies.unshift(newAgency);
+
+  // Grant agency admin access to assigned user
+  const targetUsername = newAgency.ownerUsername || newAgency.adminUserId;
+  if (targetUsername) {
+    const userIndex = dbData.users.findIndex((u: any) => u.username === targetUsername);
+    if (userIndex !== -1) {
+      dbData.users[userIndex].isAgencyApproved = true;
+      dbData.users[userIndex].isHostAgencyAdmin = true;
+      dbData.users[userIndex].agencyId = newAgency.id;
+      dbData.users[userIndex].agencyName = newAgency.name;
+      syncDocument("users", targetUsername, dbData.users[userIndex]);
+    }
+    if (targetUsername === dbData.user?.username) {
+      dbData.user.isAgencyApproved = true;
+      dbData.user.isHostAgencyAdmin = true;
+      dbData.user.agencyId = newAgency.id;
+      dbData.user.agencyName = newAgency.name;
+      writeMetadata("user_profile", dbData.user);
+    }
+  }
+
   saveDatabase();
   syncDocument("agencies", newAgency.id, newAgency);
   res.status(201).json(newAgency);
@@ -3882,6 +3918,7 @@ app.post("/api/v1/agencies", (req, res) => {
 
 app.put("/api/v1/agencies/:id", (req, res) => {
   const { id } = req.params;
+  if (!dbData.agencies) dbData.agencies = [];
   const index = dbData.agencies.findIndex((a: any) => a.id === id);
   if (index !== -1) {
     dbData.agencies[index] = { ...dbData.agencies[index], ...req.body };
@@ -3895,10 +3932,155 @@ app.put("/api/v1/agencies/:id", (req, res) => {
 
 app.delete("/api/v1/agencies/:id", (req, res) => {
   const { id } = req.params;
+  if (!dbData.agencies) dbData.agencies = [];
   dbData.agencies = dbData.agencies.filter((a: any) => a.id !== id);
   saveDatabase();
   deleteDocument("agencies", id);
   res.json({ message: "Agency deleted successfully" });
+});
+
+// Agency Hosts Endpoints
+app.get("/api/v1/agencies/:id/hosts", (req, res) => {
+  const { id } = req.params;
+  const agencyHosts = (dbData.users || []).filter((u: any) => u.agencyId === id || (u.agencyName && dbData.agencies?.find((a: any) => a.id === id && a.name === u.agencyName)));
+  res.json(agencyHosts);
+});
+
+app.post("/api/v1/agencies/:id/hosts", (req, res) => {
+  const { id } = req.params;
+  const { username } = req.body;
+  if (!username) return res.status(400).json({ error: "Username required" });
+
+  const agency = (dbData.agencies || []).find((a: any) => a.id === id);
+  const userIndex = (dbData.users || []).findIndex((u: any) => u.username === username);
+
+  if (userIndex !== -1) {
+    dbData.users[userIndex].agencyId = id;
+    dbData.users[userIndex].agencyName = agency ? agency.name : "Pardais Agency";
+    dbData.users[userIndex].isAgencyHost = true;
+    
+    // Update registered hosts count
+    if (agency) {
+      agency.registeredHosts = (dbData.users || []).filter((u: any) => u.agencyId === id).length;
+      syncDocument("agencies", id, agency);
+    }
+
+    saveDatabase();
+    syncDocument("users", username, dbData.users[userIndex]);
+    res.json({ message: "Host assigned successfully", user: dbData.users[userIndex] });
+  } else {
+    res.status(404).json({ error: "User not found" });
+  }
+});
+
+app.delete("/api/v1/agencies/:id/hosts/:username", (req, res) => {
+  const { id, username } = req.params;
+  const userIndex = (dbData.users || []).findIndex((u: any) => u.username === username && u.agencyId === id);
+
+  if (userIndex !== -1) {
+    dbData.users[userIndex].agencyId = "";
+    dbData.users[userIndex].agencyName = "";
+    dbData.users[userIndex].isAgencyHost = false;
+
+    const agency = (dbData.agencies || []).find((a: any) => a.id === id);
+    if (agency) {
+      agency.registeredHosts = Math.max(0, (agency.registeredHosts || 1) - 1);
+      syncDocument("agencies", id, agency);
+    }
+
+    saveDatabase();
+    syncDocument("users", username, dbData.users[userIndex]);
+    res.json({ message: "Host removed from agency" });
+  } else {
+    res.status(404).json({ error: "Host not found in this agency" });
+  }
+});
+
+// Host Join Agency Requests Endpoints
+app.get("/api/v1/host-join-requests", (req, res) => {
+  if (!dbData.hostJoinRequests) dbData.hostJoinRequests = [];
+  res.json(dbData.hostJoinRequests);
+});
+
+app.post("/api/v1/host-join-requests", (req, res) => {
+  const newReq = {
+    id: `HJR-${Date.now()}`,
+    status: "PENDING",
+    timestamp: new Date().toISOString(),
+    ...req.body
+  };
+  if (!dbData.hostJoinRequests) dbData.hostJoinRequests = [];
+  dbData.hostJoinRequests.unshift(newReq);
+
+  saveDatabase();
+  syncDocument("hostJoinRequests", newReq.id, newReq);
+  res.status(201).json(newReq);
+});
+
+app.put("/api/v1/host-join-requests/:id", (req, res) => {
+  const { id } = req.params;
+  const { status } = req.body;
+  if (!dbData.hostJoinRequests) dbData.hostJoinRequests = [];
+  const index = dbData.hostJoinRequests.findIndex((r: any) => r.id === id);
+
+  if (index !== -1) {
+    const r = dbData.hostJoinRequests[index];
+    r.status = status;
+
+    if (status === "APPROVED" || status === "Approved") {
+      if (r.type === "LEAVE") {
+        // Remove user from agency
+        const userIndex = (dbData.users || []).findIndex((u: any) => u.username === r.applicantUsername);
+        if (userIndex !== -1) {
+          dbData.users[userIndex].agencyId = "";
+          dbData.users[userIndex].agencyName = "";
+          dbData.users[userIndex].isAgencyHost = false;
+          syncDocument("users", r.applicantUsername, dbData.users[userIndex]);
+        }
+        if (r.applicantUsername === dbData.user?.username) {
+          dbData.user.agencyId = "";
+          dbData.user.agencyName = "";
+          dbData.user.isAgencyHost = false;
+          writeMetadata("user_profile", dbData.user);
+        }
+
+        // Decrement agency host count
+        const agency = (dbData.agencies || []).find((a: any) => a.id === r.agencyId);
+        if (agency && agency.registeredHosts > 0) {
+          agency.registeredHosts -= 1;
+          syncDocument("agencies", agency.id, agency);
+        }
+      } else {
+        // Assign user to agency
+        const userIndex = (dbData.users || []).findIndex((u: any) => u.username === r.applicantUsername);
+        if (userIndex !== -1) {
+          dbData.users[userIndex].agencyId = r.agencyId;
+          dbData.users[userIndex].agencyName = r.agencyName;
+          dbData.users[userIndex].isAgencyHost = true;
+          syncDocument("users", r.applicantUsername, dbData.users[userIndex]);
+        }
+        if (r.applicantUsername === dbData.user?.username) {
+          dbData.user.agencyId = r.agencyId;
+          dbData.user.agencyName = r.agencyName;
+          dbData.user.isAgencyHost = true;
+          writeMetadata("user_profile", dbData.user);
+        }
+
+        // Increment agency host count
+        const agency = (dbData.agencies || []).find((a: any) => a.id === r.agencyId);
+        if (agency) {
+          agency.registeredHosts = (agency.registeredHosts || 0) + 1;
+          syncDocument("agencies", agency.id, agency);
+        }
+      }
+    }
+
+    saveDatabase();
+    syncDocument("hostJoinRequests", id, r);
+    res.json(r);
+  } else {
+    res.status(404).json({ error: "Host join request not found" });
+  }
 });
 
 // Coin Sellers list (Approved Resellers)
@@ -3909,7 +4091,8 @@ app.get("/api/v1/coin-sellers", (req, res) => {
 app.post("/api/v1/coin-sellers", (req, res) => {
   const newSeller = {
     id: `seller-${Date.now()}`,
-    status: "Verified Seller",
+    status: "Active",
+    coinBalance: req.body.coinBalance || 100000,
     ...req.body
   };
   if (!dbData.coinSellers) dbData.coinSellers = [];
@@ -3917,6 +4100,20 @@ app.post("/api/v1/coin-sellers", (req, res) => {
   saveDatabase();
   syncDocument("coinSellers", newSeller.id, newSeller);
   res.status(201).json(newSeller);
+});
+
+app.put("/api/v1/coin-sellers/:id", (req, res) => {
+  const { id } = req.params;
+  if (!dbData.coinSellers) dbData.coinSellers = [];
+  const index = dbData.coinSellers.findIndex((s: any) => s.id === id);
+  if (index !== -1) {
+    dbData.coinSellers[index] = { ...dbData.coinSellers[index], ...req.body };
+    saveDatabase();
+    syncDocument("coinSellers", id, dbData.coinSellers[index]);
+    res.json(dbData.coinSellers[index]);
+  } else {
+    res.status(404).json({ error: "Coin seller agency not found" });
+  }
 });
 
 app.delete("/api/v1/coin-sellers/:id", (req, res) => {
@@ -3928,6 +4125,94 @@ app.delete("/api/v1/coin-sellers/:id", (req, res) => {
   res.json({ message: "Reseller deleted successfully" });
 });
 
+// Agency Coin Management & Transactions
+app.get("/api/v1/agency-coin-transactions", (req, res) => {
+  if (!dbData.agencyCoinTransactions) dbData.agencyCoinTransactions = [];
+  res.json(dbData.agencyCoinTransactions);
+});
+
+app.post("/api/v1/agency-coin-transactions", (req, res) => {
+  const { agencyId, agencyType, type, amount, reason, adminUsername } = req.body;
+  
+  if (!agencyId || !amount || amount <= 0) {
+    return res.status(400).json({ error: "Invalid agencyId or coin amount" });
+  }
+
+  const numAmount = parseInt(String(amount), 10);
+  let targetAgency: any = null;
+  let isCoinSeller = agencyType === "coin_seller";
+
+  if (!dbData.coinSellers) dbData.coinSellers = [];
+  if (!dbData.agencies) dbData.agencies = [];
+
+  // Find agency
+  let sellerIndex = dbData.coinSellers.findIndex((s: any) => s.id === agencyId);
+  let hostIndex = dbData.agencies.findIndex((a: any) => a.id === agencyId);
+
+  if (sellerIndex !== -1) {
+    targetAgency = dbData.coinSellers[sellerIndex];
+    isCoinSeller = true;
+  } else if (hostIndex !== -1) {
+    targetAgency = dbData.agencies[hostIndex];
+    isCoinSeller = false;
+  } else {
+    return res.status(404).json({ error: "Agency not found" });
+  }
+
+  const currentBal = typeof targetAgency.coinBalance === "number" ? targetAgency.coinBalance : 
+                     (parseInt(String(targetAgency.coinsAvailable || targetAgency.coinBalance || 0).replace(/[^0-9]/g, ""), 10) || 0);
+
+  const previousBalance = currentBal;
+  let newBalance = currentBal;
+
+  if (type === "ADD") {
+    newBalance = currentBal + numAmount;
+  } else if (type === "DEDUCT") {
+    newBalance = Math.max(0, currentBal - numAmount);
+  } else {
+    return res.status(400).json({ error: "Invalid transaction type" });
+  }
+
+  // Update target agency
+  targetAgency.coinBalance = newBalance;
+  targetAgency.coinsAvailable = `${newBalance.toLocaleString()} Coins`;
+
+  if (isCoinSeller && sellerIndex !== -1) {
+    dbData.coinSellers[sellerIndex] = targetAgency;
+    syncDocument("coinSellers", targetAgency.id, targetAgency);
+  } else if (hostIndex !== -1) {
+    dbData.agencies[hostIndex] = targetAgency;
+    syncDocument("agencies", targetAgency.id, targetAgency);
+  }
+
+  // Create transaction log
+  const transaction = {
+    id: `ACT-${Date.now()}`,
+    agencyId: targetAgency.id,
+    agencyName: targetAgency.name || targetAgency.agencyName || "Official Agency",
+    agencyType: isCoinSeller ? "Coin Seller Agency" : "Host Agency",
+    type, // "ADD" | "DEDUCT"
+    amount: numAmount,
+    previousBalance,
+    newBalance,
+    reason: reason || (type === "ADD" ? "Admin Top-up" : "Admin Deduction"),
+    adminUsername: adminUsername || "Super Admin",
+    timestamp: new Date().toISOString()
+  };
+
+  if (!dbData.agencyCoinTransactions) dbData.agencyCoinTransactions = [];
+  dbData.agencyCoinTransactions.unshift(transaction);
+
+  saveDatabase();
+  syncDocument("agencyCoinTransactions", transaction.id, transaction);
+
+  res.status(201).json({
+    success: true,
+    transaction,
+    updatedAgency: targetAgency
+  });
+});
+
 // Agency Requests Endpoints
 app.get("/api/v1/agency-requests", (req, res) => {
   res.json(dbData.agencyRequests || []);
@@ -3936,7 +4221,7 @@ app.get("/api/v1/agency-requests", (req, res) => {
 app.post("/api/v1/agency-requests", (req, res) => {
   const newReq = {
     id: `ARQ-${Date.now()}`,
-    status: "Pending",
+    status: req.body.status || "Pending Review",
     timestamp: new Date().toISOString(),
     ...req.body
   };
@@ -3946,8 +4231,8 @@ app.post("/api/v1/agency-requests", (req, res) => {
   // Create system notification for Admin
   const adminNotification = {
     id: Date.now(),
-    title: "New Agency Request Submitted",
-    message: `${newReq.applicantName} requested to register ${newReq.type === "official_agency" ? "Official Reseller" : "Host Agency"}.`,
+    title: "New Coin Seller Agency Request Submitted",
+    message: `${newReq.applicantName || newReq.applicantUsername} requested to register Coin Seller Agency: ${newReq.agencyName || newReq.applicantName}.`,
     timestamp: new Date().toISOString(),
     unread: true,
     category: "system"
@@ -3976,6 +4261,25 @@ app.put("/api/v1/agency-requests/:id", (req, res) => {
     if (status === "Approved") {
       const agencyId = `agency-${Math.floor(1000 + Math.random() * 9000)}`;
       
+      // Update applicant's user profile agency status
+      if (r.applicantUsername) {
+        const userIndex = dbData.users.findIndex((u: any) => u.username === r.applicantUsername);
+        if (userIndex !== -1) {
+          dbData.users[userIndex].isAgencyApproved = true;
+          dbData.users[userIndex].isCoinSeller = true;
+          dbData.users[userIndex].agencyName = r.agencyName || r.applicantName;
+          if (r.type === "host_agency") dbData.users[userIndex].agencyId = agencyId;
+          syncDocument("users", r.applicantUsername, dbData.users[userIndex]);
+        }
+        if (r.applicantUsername === dbData.user.username) {
+          dbData.user.isAgencyApproved = true;
+          dbData.user.isCoinSeller = true;
+          dbData.user.agencyName = r.agencyName || r.applicantName;
+          if (r.type === "host_agency") dbData.user.agencyId = agencyId;
+          writeMetadata("user_profile", dbData.user);
+        }
+      }
+
       if (r.type === "host_agency") {
         const newAgency = {
           id: agencyId,
@@ -3986,34 +4290,37 @@ app.put("/api/v1/agency-requests/:id", (req, res) => {
           monthlyCommission: 0,
           status: "Active"
         };
+        if (!dbData.agencies) dbData.agencies = [];
         dbData.agencies.push(newAgency);
         syncDocument("agencies", agencyId, newAgency);
-        
-        // Also update applicant's user profile agency ID
-        if (r.applicantUsername) {
-          const userIndex = dbData.users.findIndex((u: any) => u.username === r.applicantUsername);
-          if (userIndex !== -1) {
-            dbData.users[userIndex].agencyId = agencyId;
-            syncDocument("users", r.applicantUsername, dbData.users[userIndex]);
-          }
-          if (r.applicantUsername === dbData.user.username) {
-            dbData.user.agencyId = agencyId;
-            writeMetadata("user_profile", dbData.user);
-          }
-        }
-      } else if (r.type === "official_agency") {
+      } else {
+        // official_agency or coin_seller
         const reseller = {
           id: agencyId,
-          name: r.applicantName,
+          name: r.agencyName || r.applicantName,
+          applicantName: r.applicantName,
+          username: r.applicantUsername,
           whatsapp: r.contact,
-          city: r.city || "Pakistan",
-          rate: r.rate || "1000 Coins = 1500 PKR",
+          city: r.country || r.city || "Pakistan",
+          rate: r.rate || "1000 Coins = $1.50 USD",
           status: "Verified Seller",
-          description: r.description || "Official Coin Reseller licensed by Sahr Live Admin."
+          description: r.description || "Official Coin Reseller licensed by Pardais Admin."
         };
         if (!dbData.coinSellers) dbData.coinSellers = [];
         dbData.coinSellers.push(reseller);
         syncDocument("coinSellers", agencyId, reseller);
+      }
+    } else if (status === "Rejected") {
+      if (r.applicantUsername) {
+        const userIndex = dbData.users.findIndex((u: any) => u.username === r.applicantUsername);
+        if (userIndex !== -1) {
+          dbData.users[userIndex].isAgencyApproved = false;
+          syncDocument("users", r.applicantUsername, dbData.users[userIndex]);
+        }
+        if (r.applicantUsername === dbData.user.username) {
+          dbData.user.isAgencyApproved = false;
+          writeMetadata("user_profile", dbData.user);
+        }
       }
     }
     

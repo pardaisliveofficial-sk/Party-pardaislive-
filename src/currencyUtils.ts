@@ -30,26 +30,34 @@ export const COUNTRIES_CURRENCIES: CountryCurrency[] = [
  */
 export function getCoinsCostInCurrency(
   coins: number,
-  country: CountryCurrency,
+  country?: CountryCurrency | null,
   discountPercent: number = 0
 ): { pkrBase: number; localAmount: number; formatted: string; formattedWithCode: string } {
-  const basePkrCost = coins / 10;
-  const pkrCost = basePkrCost * (1 - discountPercent / 100);
-  const localAmount = pkrCost / country.pkrRate;
+  const safeCountry = (country && country.pkrRate && country.currencyCode) ? country : COUNTRIES_CURRENCIES[0];
+  const safeCoins = typeof coins === "number" && !isNaN(coins) ? coins : 0;
+  const safeDiscount = typeof discountPercent === "number" && !isNaN(discountPercent) ? discountPercent : 0;
+
+  const basePkrCost = safeCoins / 10;
+  const pkrCost = basePkrCost * (1 - safeDiscount / 100);
+  const pkrRate = safeCountry.pkrRate || 1;
+  const localAmount = pkrCost / pkrRate;
 
   let formattedNumber = "";
-  if (country.currencyCode === "PKR" || country.currencyCode === "INR" || country.currencyCode === "BDT") {
+  if (safeCountry.currencyCode === "PKR" || safeCountry.currencyCode === "INR" || safeCountry.currencyCode === "BDT") {
     formattedNumber = localAmount >= 10 ? Math.round(localAmount).toLocaleString() : localAmount.toFixed(1);
-  } else if (country.currencyCode === "OMR" || country.currencyCode === "KWD") {
+  } else if (safeCountry.currencyCode === "OMR" || safeCountry.currencyCode === "KWD") {
     formattedNumber = localAmount.toFixed(3);
   } else {
     formattedNumber = localAmount >= 100 ? Math.round(localAmount).toLocaleString() : localAmount.toFixed(2);
   }
 
+  const symbol = safeCountry.symbol || "";
+  const currencyCode = safeCountry.currencyCode || "PKR";
+
   return {
     pkrBase: pkrCost,
     localAmount,
-    formatted: `${country.symbol}${formattedNumber}`,
-    formattedWithCode: `${country.symbol}${formattedNumber} ${country.currencyCode}`
+    formatted: `${symbol}${formattedNumber}`,
+    formattedWithCode: `${symbol}${formattedNumber} ${currencyCode}`
   };
 }

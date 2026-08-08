@@ -687,9 +687,19 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
         {audioBlocked && (
           <button
             onClick={() => {
-              remoteUsersList.forEach(u => u.audioTrack?.play().catch(() => {}));
+              remoteUsersList.forEach(u => {
+                try {
+                  const p: any = u.audioTrack?.play();
+                  if (p && typeof p.catch === 'function') p.catch(() => {});
+                } catch (e) {}
+              });
               if (client) {
-                client.remoteUsers.forEach(u => u.audioTrack?.play().catch(() => {}));
+                client.remoteUsers.forEach(u => {
+                  try {
+                    const p: any = u.audioTrack?.play();
+                    if (p && typeof p.catch === 'function') p.catch(() => {});
+                  } catch (e) {}
+                });
               }
               setAudioBlocked(false);
             }}
@@ -783,9 +793,19 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
       {audioBlocked && (
         <button
           onClick={() => {
-            remoteUsersList.forEach(u => u.audioTrack?.play().catch(() => {}));
+            remoteUsersList.forEach(u => {
+              try {
+                const p: any = u.audioTrack?.play();
+                if (p && typeof p.catch === 'function') p.catch(() => {});
+              } catch (e) {}
+            });
             if (client) {
-              client.remoteUsers.forEach(u => u.audioTrack?.play().catch(() => {}));
+              client.remoteUsers.forEach(u => {
+                try {
+                  const p: any = u.audioTrack?.play();
+                  if (p && typeof p.catch === 'function') p.catch(() => {});
+                } catch (e) {}
+              });
             }
             setAudioBlocked(false);
           }}
