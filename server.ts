@@ -3479,6 +3479,25 @@ app.get("/api/v1/parties", (req, res) => {
   res.json(activeParties);
 });
 
+app.get("/api/v1/parties/:id", (req, res) => {
+  const { id } = req.params;
+  if (!Array.isArray(dbData.parties)) {
+    dbData.parties = [];
+  }
+  const party = dbData.parties.find((p: any) => p && p.id === id);
+  if (party) {
+    return res.json(party);
+  }
+  // Check demo parties fallback
+  const demoParty = DEFAULT_DEMO_PARTIES.find((dp: any) => dp.id === id);
+  if (demoParty) {
+    dbData.parties.push({ ...demoParty });
+    saveDatabase();
+    return res.json(demoParty);
+  }
+  return res.status(404).json({ error: "Party Room not found" });
+});
+
 app.post("/api/v1/parties", (req, res) => {
   const { title, hostUsername, hostAvatar, category, isPublic, password, language, description } = req.body;
   
@@ -3486,14 +3505,16 @@ app.post("/api/v1/parties", (req, res) => {
     dbData.parties = [];
   }
 
+  const validHost = hostUsername || "Host";
+
   // Check if an active party already exists for this host
-  const existingIdx = dbData.parties.findIndex((p: any) => p.hostUsername === hostUsername && p.status !== "ended");
+  const existingIdx = dbData.parties.findIndex((p: any) => p && p.hostUsername === validHost && p.status !== "ended");
   
   const id = existingIdx !== -1 ? dbData.parties[existingIdx].id : `party-${Date.now()}`;
   const newParty = {
     id,
-    title: title || "Pardais Party Audio Lounge",
-    hostUsername: hostUsername || "Host",
+    title: title || `${validHost}'s Audio Lounge 🎙️`,
+    hostUsername: validHost,
     hostAvatar: hostAvatar || "",
     category: category || "Music",
     participantCount: 1,
@@ -3501,11 +3522,11 @@ app.post("/api/v1/parties", (req, res) => {
     isPublic: isPublic !== false,
     password: password || "",
     language: language || "English",
-    description: description || "",
+    description: description || "Welcome to our 12-seat audio lounge!",
     status: "active",
-    connectedViewers: [{ userId: hostUsername, username: hostUsername, avatar: hostAvatar || "", level: 1, vipLevel: 0 }],
-    seats: existingIdx !== -1 ? dbData.parties[existingIdx].seats : [
-      { id: 1, name: hostUsername, avatar: hostAvatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80", isMuted: false, isLocked: false },
+    connectedViewers: [{ userId: validHost, username: validHost, avatar: hostAvatar || "", level: 1, vipLevel: 0 }],
+    seats: (existingIdx !== -1 && dbData.parties[existingIdx].seats) ? dbData.parties[existingIdx].seats : [
+      { id: 1, name: validHost, avatar: hostAvatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80", isMuted: false, isLocked: false },
       { id: 2, name: null, avatar: null, isMuted: false, isLocked: false },
       { id: 3, name: null, avatar: null, isMuted: false, isLocked: false },
       { id: 4, name: null, avatar: null, isMuted: false, isLocked: false },
@@ -3522,7 +3543,7 @@ app.post("/api/v1/parties", (req, res) => {
       {
         id: `sys-${Date.now()}`,
         username: "System",
-        message: `🎙️ Room created successfully by ${hostUsername}. Welcome everyone!`,
+        message: `🎙️ Room created successfully by ${validHost}. Welcome everyone!`,
         isSystem: true,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       }
@@ -3533,13 +3554,13 @@ app.post("/api/v1/parties", (req, res) => {
     dbData.parties[existingIdx] = { ...dbData.parties[existingIdx], ...newParty, status: "active" };
     saveDatabase();
     syncDocument("parties", id, dbData.parties[existingIdx]);
-    console.log(`[PARDAIS-PARTY PARTY] Updated existing party room: ${id} by @${hostUsername}`);
+    console.log(`[PARDAIS-PARTY PARTY] Updated existing party room: ${id} by @${validHost}`);
     return res.status(200).json(dbData.parties[existingIdx]);
   } else {
     dbData.parties.push(newParty);
     saveDatabase();
     syncDocument("parties", id, newParty);
-    console.log(`[PARDAIS-PARTY PARTY] Created new party room: ${id} by @${hostUsername}`);
+    console.log(`[PARDAIS-PARTY PARTY] Created new party room: ${id} by @${validHost}`);
     return res.status(201).json(newParty);
   }
 });

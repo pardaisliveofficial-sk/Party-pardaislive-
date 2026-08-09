@@ -508,7 +508,10 @@ export const LevelBadgeSvg: React.FC<{
         )}
 
         {/* Fallback Reference to GradientId dynamically replacing fill */}
-        <path d="M50,10" fill={`url(#${gradientId})`} id="GradientRef" />
+        <linearGradient id="GradientRef" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stopColor="#e53e3e" />
+          <stop offset="100%" stopColor="#feb2b2" />
+        </linearGradient>
 
         {/* Glow enhancement on main shield outline */}
         <path 

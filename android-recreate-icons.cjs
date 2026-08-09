@@ -1,11 +1,12 @@
-// This script dynamically generates all Android launcher icons and splash screen resources from SVG definitions at build time.
-// This prevents Git binary/text transfer corruption and ensures valid 32-bit RGBA PNG files.
+// This script dynamically generates all Android launcher icons and splash screen resources from public/icon.svg at build time.
+// This ensures the Android app icon matches the web app icon exactly and fits fully inside device launchers.
 
 const fs = require('fs');
 const path = require('path');
 const sharp = require('sharp');
 
 const RES_DIR = path.join(__dirname, 'android', 'app', 'src', 'main', 'res');
+const WEB_ICON_PATH = path.join(__dirname, 'public', 'icon.svg');
 
 // Configurations for Launcher Icons
 const ICON_CONFIGS = [
@@ -31,308 +32,40 @@ const SPLASH_CONFIGS = [
   { dir: 'drawable-port-xxxhdpi', width: 1440, height: 2560 }
 ];
 
-// SVG Definitions
-const getLegacyIconSVG = () => `
-<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
-  <defs>
-    <linearGradient id="sehrGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#ff007f" />
-      <stop offset="60%" stop-color="#7b2cbf" />
-      <stop offset="100%" stop-color="#00f5ff" />
-    </linearGradient>
-    <linearGradient id="sehrBorderGrad" x1="100%" y1="0%" x2="0%" y2="100%">
-      <stop offset="0%" stop-color="#00f5ff" />
-      <stop offset="50%" stop-color="#7b2cbf" />
-      <stop offset="100%" stop-color="#ff007f" />
-    </linearGradient>
-    <filter id="logoGlow" x="-20%" y="-20%" width="140%" height="140%">
-      <feGaussianBlur stdDeviation="3" result="blur" />
-      <feMerge>
-        <feMergeNode in="blur" />
-        <feMergeNode in="SourceGraphic" />
-      </feMerge>
-    </filter>
-  </defs>
-  {/* Outer rounded-squircle backplate */}
-  <rect x="16" y="16" width="480" height="480" rx="140" fill="#09090e" stroke="url(#sehrBorderGrad)" stroke-width="12"/>
-  
-  {/* Nested brand symbol with exact centering and premium scaling */}
-  <g transform="translate(112, 112) scale(2.88)">
-    <circle
-      cx="50"
-      cy="50"
-      r="41"
-      stroke="url(#sehrGrad)"
-      stroke-width="1.2"
-      stroke-dasharray="6, 12"
-      opacity="0.5"
-    />
-    <path
-      d="M 68 28 C 68 22, 32 20, 28 32 C 24 44, 48 46, 48 52 C 48 58, 32 60, 32 54"
-      stroke="url(#sehrGrad)"
-      stroke-width="7"
-      stroke-linecap="round"
-      fill="none"
-      opacity="0.15"
-    />
-    <path
-      d="M 70 30 C 70 20, 30 20, 30 32 C 30 42, 50 42, 50 48 C 50 54, 40 56, 32 54"
-      stroke="url(#sehrGrad)"
-      stroke-width="8.5"
-      stroke-linecap="round"
-      fill="none"
-    />
-    <path
-      d="M 30 70 C 30 80, 70 80, 70 68 C 70 58, 50 58, 50 52 C 50 46, 60 44, 68 46"
-      stroke="url(#sehrGrad)"
-      stroke-width="8.5"
-      stroke-linecap="round"
-      fill="none"
-    />
-    <g filter="url(#logoGlow)">
-      <polygon points="44,38 64,50 44,62" fill="#09090e" />
-      <polygon points="45,40 61,50 45,60" fill="url(#sehrGrad)" />
-    </g>
-    <path
-      d="M 68,43 C 71,46 71,54 68,57"
-      stroke="#00f5ff"
-      stroke-width="2.5"
-      stroke-linecap="round"
-      fill="none"
-    />
-  </g>
-</svg>
-`;
+// Helper to generate a splash SVG with dark luxury background and centered logo
+const getSplashSVG = (width, height, rawIconSvg) => {
+  const iconSize = Math.min(width, height) * 0.45;
+  const tx = (width - iconSize) / 2;
+  const ty = (height - iconSize) / 2;
 
-const getLegacyRoundIconSVG = () => `
-<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
-  <defs>
-    <linearGradient id="sehrGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#ff007f" />
-      <stop offset="60%" stop-color="#7b2cbf" />
-      <stop offset="100%" stop-color="#00f5ff" />
-    </linearGradient>
-    <linearGradient id="sehrBorderGrad" x1="100%" y1="0%" x2="0%" y2="100%">
-      <stop offset="0%" stop-color="#00f5ff" />
-      <stop offset="50%" stop-color="#7b2cbf" />
-      <stop offset="100%" stop-color="#ff007f" />
-    </linearGradient>
-    <filter id="logoGlow" x="-20%" y="-20%" width="140%" height="140%">
-      <feGaussianBlur stdDeviation="3" result="blur" />
-      <feMerge>
-        <feMergeNode in="blur" />
-        <feMergeNode in="SourceGraphic" />
-      </feMerge>
-    </filter>
-  </defs>
-  {/* Circle backplate for round icons */}
-  <circle cx="256" cy="256" r="240" fill="#09090e" stroke="url(#sehrBorderGrad)" stroke-width="12"/>
-  
-  <g transform="translate(112, 112) scale(2.88)">
-    <circle
-      cx="50"
-      cy="50"
-      r="41"
-      stroke="url(#sehrGrad)"
-      stroke-width="1.2"
-      stroke-dasharray="6, 12"
-      opacity="0.5"
-    />
-    <path
-      d="M 68 28 C 68 22, 32 20, 28 32 C 24 44, 48 46, 48 52 C 48 58, 32 60, 32 54"
-      stroke="url(#sehrGrad)"
-      stroke-width="7"
-      stroke-linecap="round"
-      fill="none"
-      opacity="0.15"
-    />
-    <path
-      d="M 70 30 C 70 20, 30 20, 30 32 C 30 42, 50 42, 50 48 C 50 54, 40 56, 32 54"
-      stroke="url(#sehrGrad)"
-      stroke-width="8.5"
-      stroke-linecap="round"
-      fill="none"
-    />
-    <path
-      d="M 30 70 C 30 80, 70 80, 70 68 C 70 58, 50 58, 50 52 C 50 46, 60 44, 68 46"
-      stroke="url(#sehrGrad)"
-      stroke-width="8.5"
-      stroke-linecap="round"
-      fill="none"
-    />
-    <g filter="url(#logoGlow)">
-      <polygon points="44,38 64,50 44,62" fill="#09090e" />
-      <polygon points="45,40 61,50 45,60" fill="url(#sehrGrad)" />
-    </g>
-    <path
-      d="M 68,43 C 71,46 71,54 68,57"
-      stroke="#00f5ff"
-      stroke-width="2.5"
-      stroke-linecap="round"
-      fill="none"
-    />
-  </g>
-</svg>
-`;
-
-const getAdaptiveForegroundSVG = () => `
-<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
-  <defs>
-    <linearGradient id="sehrGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#ff007f" />
-      <stop offset="60%" stop-color="#7b2cbf" />
-      <stop offset="100%" stop-color="#00f5ff" />
-    </linearGradient>
-    <filter id="logoGlow" x="-20%" y="-20%" width="140%" height="140%">
-      <feGaussianBlur stdDeviation="3" result="blur" />
-      <feMerge>
-        <feMergeNode in="blur" />
-        <feMergeNode in="SourceGraphic" />
-      </feMerge>
-    </filter>
-  </defs>
-  {/* Foreground element without hard backplate for adaptive styling */}
-  <g transform="translate(112, 112) scale(2.88)">
-    <circle
-      cx="50"
-      cy="50"
-      r="41"
-      stroke="url(#sehrGrad)"
-      stroke-width="1.2"
-      stroke-dasharray="6, 12"
-      opacity="0.5"
-    />
-    <path
-      d="M 68 28 C 68 22, 32 20, 28 32 C 24 44, 48 46, 48 52 C 48 58, 32 60, 32 54"
-      stroke="url(#sehrGrad)"
-      stroke-width="7"
-      stroke-linecap="round"
-      fill="none"
-      opacity="0.15"
-    />
-    <path
-      d="M 70 30 C 70 20, 30 20, 30 32 C 30 42, 50 42, 50 48 C 50 54, 40 56, 32 54"
-      stroke="url(#sehrGrad)"
-      stroke-width="8.5"
-      stroke-linecap="round"
-      fill="none"
-    />
-    <path
-      d="M 30 70 C 30 80, 70 80, 70 68 C 70 58, 50 58, 50 52 C 50 46, 60 44, 68 46"
-      stroke="url(#sehrGrad)"
-      stroke-width="8.5"
-      stroke-linecap="round"
-      fill="none"
-    />
-    <g filter="url(#logoGlow)">
-      <polygon points="44,38 64,50 44,62" fill="#09090e" />
-      <polygon points="45,40 61,50 45,60" fill="url(#sehrGrad)" />
-    </g>
-    <path
-      d="M 68,43 C 71,46 71,54 68,57"
-      stroke="#00f5ff"
-      stroke-width="2.5"
-      stroke-linecap="round"
-      fill="none"
-    />
-  </g>
-</svg>
-`;
-
-const getSplashSVG = (width, height) => {
-  const scale = 0.55;
-  const tx = width / 2 - 256 * scale;
-  const ty = height / 2 - 256 * scale;
+  let innerIconContent = rawIconSvg;
+  const svgMatch = rawIconSvg.match(/<svg[^>]*>([\s\S]*)<\/svg>/i);
+  if (svgMatch && svgMatch[1]) {
+    innerIconContent = svgMatch[1];
+  }
 
   return `
 <svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg">
   <defs>
-    {/* Premium deep dark gradient */}
-    <linearGradient id="bg-grad" x1="0%" y1="0%" x2="0%" y2="100%">
-      <stop offset="0%" stop-color="#050508"/>
-      <stop offset="50%" stop-color="#110724"/>
-      <stop offset="100%" stop-color="#09090e"/>
+    <!-- Deep Midnight Dark Gradient -->
+    <linearGradient id="splash-bg-grad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#030008"/>
+      <stop offset="50%" stop-color="#0d041e"/>
+      <stop offset="100%" stop-color="#020005"/>
     </linearGradient>
-    <linearGradient id="sehrGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#ff007f" />
-      <stop offset="60%" stop-color="#7b2cbf" />
-      <stop offset="100%" stop-color="#00f5ff" />
-    </linearGradient>
-    <linearGradient id="sehrBorderGrad" x1="100%" y1="0%" x2="0%" y2="100%">
-      <stop offset="0%" stop-color="#00f5ff" />
-      <stop offset="50%" stop-color="#7b2cbf" />
-      <stop offset="100%" stop-color="#ff007f" />
-    </linearGradient>
-    <filter id="logoGlow" x="-20%" y="-20%" width="140%" height="140%">
-      <feGaussianBlur stdDeviation="3" result="blur" />
-      <feMerge>
-        <feMergeNode in="blur" />
-        <feMergeNode in="SourceGraphic" />
-      </feMerge>
-    </filter>
-    {/* Glow Filter for lights background */}
-    <filter id="neonBlur" x="-50%" y="-50%" width="200%" height="200%">
-      <feGaussianBlur stdDeviation="50" />
+    <filter id="splashGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="60" />
     </filter>
   </defs>
-  
-  {/* Dark gradient background */}
-  <rect x="0" y="0" width="${width}" height="${height}" fill="url(#bg-grad)"/>
 
-  {/* Ambient glowing circles (subtle neon light-wave effect) */}
-  <circle cx="${width * 0.2}" cy="${height * 0.3}" r="150" fill="#ff007f" opacity="0.08" filter="url(#neonBlur)"/>
-  <circle cx="${width * 0.8}" cy="${height * 0.7}" r="180" fill="#7b2cbf" opacity="0.10" filter="url(#neonBlur)"/>
-  <circle cx="${width * 0.5}" cy="${height * 0.5}" r="100" fill="#00f5ff" opacity="0.05" filter="url(#neonBlur)"/>
+  <rect x="0" y="0" width="${width}" height="${height}" fill="url(#splash-bg-grad)"/>
 
-  {/* Center brand logo box */}
-  <g transform="translate(${tx}, ${ty}) scale(${scale})">
-    {/* Premium rounded-squircle plate inside splash */}
-    <rect x="16" y="16" width="480" height="480" rx="140" fill="#09090e" stroke="url(#sehrBorderGrad)" stroke-width="10"/>
+  <circle cx="${width * 0.2}" cy="${height * 0.3}" r="160" fill="#ff007f" opacity="0.2" filter="url(#splashGlow)"/>
+  <circle cx="${width * 0.8}" cy="${height * 0.7}" r="200" fill="#bf00ff" opacity="0.2" filter="url(#splashGlow)"/>
+  <circle cx="${width * 0.5}" cy="${height * 0.5}" r="120" fill="#00f2fe" opacity="0.15" filter="url(#splashGlow)"/>
 
-    <g transform="translate(112, 112) scale(2.88)">
-      <circle
-        cx="50"
-        cy="50"
-        r="41"
-        stroke="url(#sehrGrad)"
-        stroke-width="1.2"
-        stroke-dasharray="6, 12"
-        opacity="0.5"
-      />
-      <path
-        d="M 68 28 C 68 22, 32 20, 28 32 C 24 44, 48 46, 48 52 C 48 58, 32 60, 32 54"
-        stroke="url(#sehrGrad)"
-        stroke-width="7"
-        stroke-linecap="round"
-        fill="none"
-        opacity="0.15"
-      />
-      <path
-        d="M 70 30 C 70 20, 30 20, 30 32 C 30 42, 50 42, 50 48 C 50 54, 40 56, 32 54"
-        stroke="url(#sehrGrad)"
-        stroke-width="8.5"
-        stroke-linecap="round"
-        fill="none"
-      />
-      <path
-        d="M 30 70 C 30 80, 70 80, 70 68 C 70 58, 50 58, 50 52 C 50 46, 60 44, 68 46"
-        stroke="url(#sehrGrad)"
-        stroke-width="8.5"
-        stroke-linecap="round"
-        fill="none"
-      />
-      <g filter="url(#logoGlow)">
-        <polygon points="44,38 64,50 44,62" fill="#09090e" />
-        <polygon points="45,40 61,50 45,60" fill="url(#sehrGrad)" />
-      </g>
-      <path
-        d="M 68,43 C 71,46 71,54 68,57"
-        stroke="#00f5ff"
-        stroke-width="2.5"
-        stroke-linecap="round"
-        fill="none"
-      />
-    </g>
+  <g transform="translate(${tx}, ${ty}) scale(${iconSize / 512})">
+    ${innerIconContent}
   </g>
 </svg>
 `;
@@ -343,41 +76,62 @@ async function execute() {
   console.log('🎨 Starting Android Resource Generation Process... 🎨');
   console.log('------------------------------------------------------------');
 
-  const legacySVG = Buffer.from(getLegacyIconSVG());
-  const roundSVG = Buffer.from(getLegacyRoundIconSVG());
-  const foregroundSVG = Buffer.from(getAdaptiveForegroundSVG());
+  if (!fs.existsSync(WEB_ICON_PATH)) {
+    throw new Error(`Web icon file missing at: ${WEB_ICON_PATH}`);
+  }
 
-  // 1. Generate Launcher Icons
-  console.log('\nGenerating Android Launcher Icons (mipmap):');
+  const rawIconSvg = fs.readFileSync(WEB_ICON_PATH, 'utf8');
+  const iconBuffer = Buffer.from(rawIconSvg);
+
+  // 1. Generate Launcher Icons (mipmap)
+  console.log('\nGenerating Android Launcher Icons (mipmap) from public/icon.svg:');
   for (const config of ICON_CONFIGS) {
     const dirPath = path.join(RES_DIR, config.dir);
     if (!fs.existsSync(dirPath)) {
       fs.mkdirSync(dirPath, { recursive: true });
     }
 
+    // Standard Legacy Icon (Full 1:1)
     const launcherPath = path.join(dirPath, 'ic_launcher.png');
-    await sharp(legacySVG)
+    await sharp(iconBuffer)
       .resize(config.iconSize, config.iconSize)
       .png({ palette: false, quality: 100 })
       .toFile(launcherPath);
     console.log(` ✅ Saved 32-bit: ${launcherPath} (${config.iconSize}x${config.iconSize})`);
 
+    // Round Legacy Icon
     const roundPath = path.join(dirPath, 'ic_launcher_round.png');
-    await sharp(roundSVG)
+    await sharp(iconBuffer)
       .resize(config.iconSize, config.iconSize)
       .png({ palette: false, quality: 100 })
       .toFile(roundPath);
     console.log(` ✅ Saved 32-bit: ${roundPath} (${config.iconSize}x${config.iconSize})`);
 
+    // Foreground Adaptive Icon (Scaled to 70% safe inner area so full logo and text fit cleanly on device screen)
+    const fgInnerSize = Math.round(config.foregroundSize * 0.72);
+    const fgPadding = Math.round((config.foregroundSize - fgInnerSize) / 2);
     const foregroundPath = path.join(dirPath, 'ic_launcher_foreground.png');
-    await sharp(foregroundSVG)
-      .resize(config.foregroundSize, config.foregroundSize)
-      .png({ palette: false, quality: 100 })
-      .toFile(foregroundPath);
-    console.log(` ✅ Saved 32-bit: ${foregroundPath} (${config.foregroundSize}x${config.foregroundSize})`);
+
+    const resizedInner = await sharp(iconBuffer)
+      .resize(fgInnerSize, fgInnerSize)
+      .toBuffer();
+
+    await sharp({
+      create: {
+        width: config.foregroundSize,
+        height: config.foregroundSize,
+        channels: 4,
+        background: { r: 0, g: 0, b: 0, alpha: 0 }
+      }
+    })
+    .composite([{ input: resizedInner, top: fgPadding, left: fgPadding }])
+    .png({ palette: false, quality: 100 })
+    .toFile(foregroundPath);
+
+    console.log(` ✅ Saved Adaptive Foreground: ${foregroundPath} (${config.foregroundSize}x${config.foregroundSize}, inner ${fgInnerSize}px)`);
   }
 
-  // 2. Generate Splash Screens
+  // 2. Generate Splash Screens (drawable)
   console.log('\nGenerating Android Splash Screens (drawable):');
   for (const config of SPLASH_CONFIGS) {
     const dirPath = path.join(RES_DIR, config.dir);
@@ -385,7 +139,7 @@ async function execute() {
       fs.mkdirSync(dirPath, { recursive: true });
     }
 
-    const svgString = getSplashSVG(config.width, config.height);
+    const svgString = getSplashSVG(config.width, config.height, rawIconSvg);
     const svgBuffer = Buffer.from(svgString);
 
     const splashPath = path.join(dirPath, 'splash.png');
@@ -397,11 +151,11 @@ async function execute() {
   }
 
   console.log('\n------------------------------------------------------------');
-  console.log('🎉 All Android Resources Generated Successfully! 🎉');
+  console.log('🎉 All Android Resources Generated Successfully from public/icon.svg! 🎉');
   console.log('------------------------------------------------------------');
 }
 
 execute().catch(err => {
-  console.error('❌ Error during generation:', err);
+  console.error('❌ Error during resource generation:', err);
   process.exit(1);
 });

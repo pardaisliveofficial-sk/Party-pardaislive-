@@ -13,14 +13,9 @@ export const resolveApiUrl = (path: string): string => {
     return `${base}${path.startsWith("/") ? path : `/${path}`}`;
   }
 
-  const isAndroidAPK = typeof window !== "undefined" && (
-    (window as any).Capacitor || 
-    window.location.protocol === "file:" ||
-    window.location.protocol.includes("capacitor")
-  );
-
-  if (isAndroidAPK) {
-    return `https://api.pardaisparty.soulverseapps.com${path.startsWith("/") ? path : `/${path}`}`;
+  if (typeof window !== "undefined" && window.location.origin && window.location.origin !== "null" && !window.location.origin.startsWith("file:") && !window.location.origin.startsWith("capacitor:")) {
+    const base = window.location.origin;
+    return `${base}${path.startsWith("/") ? path : `/${path}`}`;
   }
 
   return path;
