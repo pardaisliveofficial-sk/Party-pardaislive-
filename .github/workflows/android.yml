@@ -113,7 +113,7 @@ jobs:
               -keyalg RSA \
               -keysize 2048 \
               -validity 10000 \
-              -dname "CN=Sehr Live, OU=Mobile, O=Sehr Live, L=City, ST=State, C=PK"
+              -dname "CN=Pardais Party, OU=Mobile, O=Pardais Party, L=City, ST=State, C=PK"
 
             echo "RELEASE_STORE_FILE=release-key.jks" >> $GITHUB_ENV
             echo "RELEASE_STORE_PASSWORD=android123" >> $GITHUB_ENV
@@ -153,17 +153,17 @@ jobs:
       - name: Upload Release APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: sehr-live-release-apk
+          name: pardais-party-release-apk
           path: android/app/build/outputs/apk/release/*.apk
 
       - name: Upload Release AAB Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: sehr-live-release-aab
+          name: pardais-party-release-aab
           path: android/app/build/outputs/bundle/release/*.aab
 
       - name: Upload Debug APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: sehr-live-debug-apk
+          name: pardais-party-debug-apk
           path: android/app/build/outputs/apk/debug/*.apk
