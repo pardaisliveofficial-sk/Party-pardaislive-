@@ -102,17 +102,26 @@ export const authenticatedFetch = async (
     }
   }
 
-  const response = await window.fetch(targetUrl, { ...init, headers });
+  try {
+    const response = await window.fetch(targetUrl, { ...init, headers });
 
-  // Handle 401 Session Expired -> Try single session refresh if retryCount === 0
-  if (response.status === 401 && retryCount === 0) {
-    console.warn("[PARDAIS-PARTY API CLIENT] 401 Unauthorized received. Attempting session refresh...");
-    const newToken = await refreshSession(userInfoForRefresh);
-    if (newToken) {
-      // Retry once with refreshed token
-      return authenticatedFetch(input, init, userInfoForRefresh, 1);
+    // Handle 401 Session Expired -> Try single session refresh if retryCount === 0
+    if (response.status === 401 && retryCount === 0) {
+      console.warn("[PARDAIS-PARTY API CLIENT] 401 Unauthorized received. Attempting session refresh...");
+      const newToken = await refreshSession(userInfoForRefresh);
+      if (newToken) {
+        // Retry once with refreshed token
+        return authenticatedFetch(input, init, userInfoForRefresh, 1);
+      }
     }
-  }
 
-  return response;
+    return response;
+  } catch (err) {
+    // Return a synthetic offline/error response instead of letting fetch throw unhandled network exception
+    return new Response(JSON.stringify({ error: "Network fetch failed", details: String(err) }), {
+      status: 503,
+      statusText: "Service Unavailable",
+      headers: { "Content-Type": "application/json" }
+    });
+  }
 };

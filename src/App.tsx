@@ -4014,7 +4014,7 @@ export default function App() {
           if (Array.isArray(data.hostBSupporters)) setPkHostBSupporters(data.hostBSupporters);
         }
       } catch (err) {
-        console.error("Error fetching supporters:", err);
+        // Silent catch for background polling
       }
     };
 
@@ -5004,7 +5004,7 @@ export default function App() {
             }
           }
         })
-        .catch(err => console.error("Error syncing host live state:", err));
+        .catch(() => {});
     };
 
     syncHostState();
@@ -5228,7 +5228,7 @@ export default function App() {
             };
           });
         })
-        .catch(err => console.error("Error polling host live state:", err));
+        .catch(() => {});
     };
 
     pollHostState();
@@ -5268,20 +5268,17 @@ export default function App() {
     const fetchInitial = () => {
       // 0. Fetch global config banners
       fetch("/api/v1/config")
-        .then(res => res.json())
+        .then(res => res.ok ? res.json() : null)
         .then(data => {
           if (data && Array.isArray(data.banners)) {
             setPromotionBanners(data.banners.filter((b: any) => b.active !== false));
           }
         })
-        .catch(err => console.error("Error loading configs:", err));
+        .catch(() => {});
 
       // 1. Fetch user profile
       authenticatedFetch("/api/v1/user")
-        .then(res => {
-          if (!res.ok) throw new Error("Failed to fetch user");
-          return res.json();
-        })
+        .then(res => res.ok ? res.json() : null)
         .then(data => {
           if (data && data.username) {
             setUser(data);
@@ -5298,14 +5295,11 @@ export default function App() {
             setEditTotalLikesCount(data.totalLikesCount || 125400);
           }
         })
-        .catch(err => console.error("Error loading user profile from backend:", err));
+        .catch(() => {});
 
       // 2. Fetch live hosts/streams
       fetch("/api/v1/hosts")
-        .then(res => {
-          if (!res.ok) throw new Error("Failed to fetch hosts");
-          return res.json();
-        })
+        .then(res => res.ok ? res.json() : null)
         .then(data => {
           if (Array.isArray(data)) {
             setLiveStreamsList(data);
@@ -5316,25 +5310,22 @@ export default function App() {
             });
           }
         })
-        .catch(err => console.error("Error loading hosts from backend:", err));
+        .catch(() => {});
 
       // 3. Fetch gifts list
       fetch("/api/v1/gifts")
-        .then(res => {
-          if (!res.ok) throw new Error("Failed to fetch gifts");
-          return res.json();
-        })
+        .then(res => res.ok ? res.json() : null)
         .then(data => {
           if (Array.isArray(data) && data.length > 0) {
             setGiftsList(data);
             saveGiftsToStorage(data);
           }
         })
-        .catch(err => console.error("Error loading gifts from backend:", err));
+        .catch(() => {});
 
       // 4. Fetch reels list
       fetch("/api/v1/reels")
-        .then(res => res.json())
+        .then(res => res.ok ? res.json() : null)
         .then(data => {
           if (Array.isArray(data)) {
             const seen = new Set();
@@ -5346,40 +5337,40 @@ export default function App() {
             }));
           }
         })
-        .catch(err => console.error("Error loading reels:", err));
+        .catch(() => {});
 
       // 5. Fetch stories list
       fetch("/api/v1/stories")
-        .then(res => res.json())
+        .then(res => res.ok ? res.json() : null)
         .then(data => {
           if (Array.isArray(data)) setStories(data);
         })
-        .catch(err => console.error("Error loading stories:", err));
+        .catch(() => {});
 
       // 6. Fetch direct chats
       fetch("/api/v1/chats")
-        .then(res => res.json())
+        .then(res => res.ok ? res.json() : null)
         .then(data => {
           if (Array.isArray(data)) setDirectMessages(data);
         })
-        .catch(err => console.error("Error loading chats:", err));
+        .catch(() => {});
 
       // 7. Fetch transactions & payment ledger
       fetch("/api/v1/transactions")
-        .then(res => res.json())
+        .then(res => res.ok ? res.json() : null)
         .then(data => {
           if (Array.isArray(data)) setTransactions(data);
         })
-        .catch(err => console.error("Error loading transactions:", err));
+        .catch(() => {});
 
       fetch("/api/v1/payments/ledger")
-        .then(res => res.json())
+        .then(res => res.ok ? res.json() : null)
         .then(data => {
           if (data && data.success && Array.isArray(data.ledger)) {
             setOnlineRechargeLedger(data.ledger);
           }
         })
-        .catch(err => console.error("Error loading payment ledger:", err));
+        .catch(() => {});
 
       // Real-time user profile sync
       const token = localStorage.getItem("pardais_user_token");
@@ -5464,19 +5455,19 @@ export default function App() {
 
     fetchInitial();
 
-    // Polling interval for real-time synchronization with Admin dashboard actions (every 1.2 seconds)
+    // Polling interval for real-time synchronization with Admin dashboard actions (every 3 seconds)
     const pollInterval = setInterval(() => {
       fetch("/api/v1/config")
-        .then(res => res.json())
+        .then(res => res.ok ? res.json() : null)
         .then(data => {
           if (data && Array.isArray(data.banners)) {
             setPromotionBanners(data.banners.filter((b: any) => b.active !== false));
           }
         })
-        .catch(err => console.error("Error polling configs:", err));
+        .catch(() => {});
 
       fetch("/api/v1/parties")
-        .then(res => res.json())
+        .then(res => res.ok ? res.json() : null)
         .then(data => {
           if (Array.isArray(data)) {
             setPartiesList(data);
@@ -5504,10 +5495,10 @@ export default function App() {
             }
           }
         })
-        .catch(err => console.error("Error polling parties:", err));
+        .catch(() => {});
 
       fetch("/api/v1/hosts")
-        .then(res => res.json())
+        .then(res => res.ok ? res.json() : null)
         .then(data => {
           if (Array.isArray(data)) {
             setLiveStreamsList(data);
@@ -5527,20 +5518,20 @@ export default function App() {
             });
           }
         })
-        .catch(err => console.error("Error polling hosts:", err));
+        .catch(() => {});
 
       fetch("/api/v1/gifts")
-        .then(res => res.json())
+        .then(res => res.ok ? res.json() : null)
         .then(data => {
           if (Array.isArray(data) && data.length > 0) {
             setGiftsList(data);
             saveGiftsToStorage(data);
           }
         })
-        .catch(err => console.error("Error polling gifts:", err));
+        .catch(() => {});
 
       fetch("/api/v1/reels")
-        .then(res => res.json())
+        .then(res => res.ok ? res.json() : null)
         .then(data => {
           if (Array.isArray(data)) {
             setReels(prev => {
@@ -5555,61 +5546,61 @@ export default function App() {
             });
           }
         })
-        .catch(err => console.error("Error polling reels:", err));
+        .catch(() => {});
 
       fetch("/api/v1/stories")
-        .then(res => res.json())
+        .then(res => res.ok ? res.json() : null)
         .then(data => {
           if (Array.isArray(data)) setStories(data);
         })
-        .catch(err => console.error("Error polling stories:", err));
+        .catch(() => {});
 
       fetch("/api/v1/chats")
-        .then(res => res.json())
+        .then(res => res.ok ? res.json() : null)
         .then(data => {
           if (Array.isArray(data)) setDirectMessages(data);
         })
-        .catch(err => console.error("Error polling chats:", err));
+        .catch(() => {});
 
       fetch("/api/v1/transactions")
-        .then(res => res.json())
+        .then(res => res.ok ? res.json() : null)
         .then(data => {
           if (Array.isArray(data)) setTransactions(data);
         })
-        .catch(err => console.error("Error polling transactions:", err));
+        .catch(() => {});
 
       fetch("/api/v1/payments/ledger")
-        .then(res => res.json())
+        .then(res => res.ok ? res.json() : null)
         .then(data => {
           if (data && data.success && Array.isArray(data.ledger)) {
             setOnlineRechargeLedger(data.ledger);
           }
         })
-        .catch(err => console.error("Error polling payment ledger:", err));
+        .catch(() => {});
 
       fetch("/api/v1/notifications")
-        .then(res => res.json())
+        .then(res => res.ok ? res.json() : null)
         .then(data => {
           if (Array.isArray(data)) setAppNotifications(data);
         })
-        .catch(err => console.error("Error polling notifications:", err));
+        .catch(() => {});
 
       fetch("/api/v1/families")
-        .then(res => res.json())
+        .then(res => res.ok ? res.json() : null)
         .then(data => {
           if (Array.isArray(data)) setFamiliesList(data);
         })
-        .catch(err => console.error("Error polling families:", err));
+        .catch(() => {});
 
       fetch("/api/v1/agencies")
-        .then(res => res.json())
+        .then(res => res.ok ? res.json() : null)
         .then(data => {
           if (Array.isArray(data)) setHostAgencies(data);
         })
-        .catch(err => console.error("Error polling agencies:", err));
+        .catch(() => {});
 
       fetch("/api/v1/coin-sellers")
-        .then(res => res.json())
+        .then(res => res.ok ? res.json() : null)
         .then(data => {
           if (Array.isArray(data)) {
             setCoinSellers(data);
@@ -5624,22 +5615,22 @@ export default function App() {
             setOfflineAgencies(mapped);
           }
         })
-        .catch(err => console.error("Error polling coin-sellers:", err));
+        .catch(() => {});
 
       fetch("/api/v1/agency-requests")
-        .then(res => res.json())
+        .then(res => res.ok ? res.json() : null)
         .then(data => {
           if (Array.isArray(data)) setAgencyRequests(data);
         })
-        .catch(err => console.error("Error polling agency requests:", err));
+        .catch(() => {});
 
       fetch("/api/v1/agency-coin-transactions")
-        .then(res => res.json())
+        .then(res => res.ok ? res.json() : null)
         .then(data => {
           if (Array.isArray(data)) setAgencyCoinTransactions(data);
         })
-        .catch(err => console.error("Error polling agency coin transactions:", err));
-    }, 1500);
+        .catch(() => {});
+    }, 3000);
 
     return () => {
       clearInterval(pollInterval);
