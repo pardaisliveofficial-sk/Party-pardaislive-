@@ -281,6 +281,209 @@ export default function AdminApp() {
     }
   };
 
+  // Moderation & Moderator Special Access State
+  const [moderatorsList, setModeratorsList] = useState<Array<{
+    username: string;
+    email: string;
+    grantedBy: string;
+    grantedAt: string;
+    role: string;
+  }>>(() => {
+    const saved = localStorage.getItem("pardais_moderators_list");
+    if (saved) {
+      try { return JSON.parse(saved); } catch (e) {}
+    }
+    return [
+      {
+        username: "Pardais_Mod_Official",
+        email: "mod@pardais.com",
+        grantedBy: "Admin Owner",
+        grantedAt: new Date().toLocaleDateString(),
+        role: "Special Access Moderator"
+      }
+    ];
+  });
+  const [newModInput, setNewModInput] = useState("");
+  const [modTargetUser, setModTargetUser] = useState("");
+  const [modWarningText, setModWarningText] = useState("Violation of community terms: Please adjust broadcast audio/content immediately.");
+  const [modTargetDevice, setModTargetDevice] = useState("");
+  const [modActionLoading, setModActionLoading] = useState(false);
+
+  useEffect(() => {
+    if (db?.configurations?.moderators && Array.isArray(db.configurations.moderators)) {
+      setModeratorsList(db.configurations.moderators);
+    }
+  }, [db]);
+
+  const handleGrantModerator = async (targetStr: string) => {
+    if (!targetStr.trim()) return;
+    const cleanStr = targetStr.trim().replace(/^@/, "");
+    if (moderatorsList.some(m => m.username.toLowerCase() === cleanStr.toLowerCase() || m.email.toLowerCase() === cleanStr.toLowerCase())) {
+      triggerToast("⚠️ User is already a Special Access Moderator.");
+      return;
+    }
+    const newMod = {
+      username: cleanStr,
+      email: cleanStr.includes("@") ? cleanStr : `${cleanStr}@pardais.com`,
+      grantedBy: "Admin Owner",
+      grantedAt: new Date().toLocaleDateString(),
+      role: "Special Access Moderator"
+    };
+    const updated = [...moderatorsList, newMod];
+    setModeratorsList(updated);
+    localStorage.setItem("pardais_moderators_list", JSON.stringify(updated));
+    setNewModInput("");
+
+    await syncWithServer("/api/v1/config", "POST", {
+      ...db?.configurations,
+      moderators: updated
+    });
+    triggerToast(`🛡️ Granted Special Moderator Access to @${cleanStr}`);
+  };
+
+  const handleRevokeModerator = async (username: string) => {
+    const updated = moderatorsList.filter(m => m.username.toLowerCase() !== username.toLowerCase());
+    setModeratorsList(updated);
+    localStorage.setItem("pardais_moderators_list", JSON.stringify(updated));
+
+    await syncWithServer("/api/v1/config", "POST", {
+      ...db?.configurations,
+      moderators: updated
+    });
+    triggerToast(`🗑️ Revoked Moderator Access for @${username}`);
+  };
+
+  const handleEndStreamOnTheSpot = async (streamType: string, streamId: string, hostUsername: string) => {
+    setModActionLoading(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/v1/moderation/end-stream`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          streamType,
+          streamId,
+          hostUsername,
+          reason: "Terminated on the spot by Moderator",
+          moderator: "Admin Moderator"
+        })
+      });
+      const data = await res.json();
+      triggerToast(`🛑 On-The-Spot Stream End: ${data?.message || "Stream terminated!"}`);
+      await fetchDb();
+    } catch (err: any) {
+      triggerToast(`❌ Failed to end stream: ${err.message || err}`);
+    } finally {
+      setModActionLoading(false);
+    }
+  };
+
+  const handleToggleUserSuspend = async (username: string, suspend: boolean) => {
+    if (!username.trim()) {
+      triggerToast("⚠️ Please enter or select a User ID / Username.");
+      return;
+    }
+    setModActionLoading(true);
+    try {
+      const cleanUser = username.trim().replace(/^@/, "");
+      const res = await fetch(`${API_BASE_URL}/api/v1/moderation/toggle-suspend`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          username: cleanUser,
+          suspend,
+          reason: suspend ? "Account Suspended by Moderator" : "Restored",
+          moderator: "Admin Moderator"
+        })
+      });
+      const data = await res.json();
+      triggerToast(data?.message || `User @${cleanUser} status updated.`);
+      await fetchDb();
+    } catch (err: any) {
+      triggerToast(`❌ Error updating user status: ${err.message || err}`);
+    } finally {
+      setModActionLoading(false);
+    }
+  };
+
+  const handleForceLiveOn = async (username: string) => {
+    if (!username.trim()) {
+      triggerToast("⚠️ Please enter or select a User ID / Username.");
+      return;
+    }
+    setModActionLoading(true);
+    try {
+      const cleanUser = username.trim().replace(/^@/, "");
+      const res = await fetch(`${API_BASE_URL}/api/v1/moderation/force-live-on`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          username: cleanUser,
+          title: "Official Stream Enabled by Moderator"
+        })
+      });
+      const data = await res.json();
+      triggerToast(data?.message || `Live status forced ON for @${cleanUser}`);
+      await fetchDb();
+    } catch (err: any) {
+      triggerToast(`❌ Error starting live: ${err.message || err}`);
+    } finally {
+      setModActionLoading(false);
+    }
+  };
+
+  const handleSendWarning = async (username: string, message: string) => {
+    if (!username.trim()) {
+      triggerToast("⚠️ Please enter or select a User ID / Username.");
+      return;
+    }
+    setModActionLoading(true);
+    try {
+      const cleanUser = username.trim().replace(/^@/, "");
+      const res = await fetch(`${API_BASE_URL}/api/v1/moderation/warning`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          username: cleanUser,
+          warningMessage: message || "Community Guidelines Warning issued.",
+          moderator: "Admin Moderator"
+        })
+      });
+      const data = await res.json();
+      triggerToast(data?.message || `Warning dispatched to @${cleanUser}`);
+    } catch (err: any) {
+      triggerToast(`❌ Error sending warning: ${err.message || err}`);
+    } finally {
+      setModActionLoading(false);
+    }
+  };
+
+  const handleToggleDeviceBan = async (deviceId: string, ban: boolean) => {
+    if (!deviceId.trim()) {
+      triggerToast("⚠️ Please enter or select a Device ID.");
+      return;
+    }
+    setModActionLoading(true);
+    try {
+      const cleanDev = deviceId.trim();
+      const res = await fetch(`${API_BASE_URL}/api/v1/moderation/device-ban`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          deviceId: cleanDev,
+          ban,
+          reason: ban ? "Device suspended by Moderator" : "Device restored"
+        })
+      });
+      const data = await res.json();
+      triggerToast(data?.message || `Device ${cleanDev} ban status updated.`);
+      await fetchDb();
+    } catch (err: any) {
+      triggerToast(`❌ Error setting device ban: ${err.message || err}`);
+    } finally {
+      setModActionLoading(false);
+    }
+  };
+
   const handleAddAgencyContact = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newAgencyForm.name.trim() || !newAgencyForm.whatsapp.trim()) {
@@ -2409,18 +2612,353 @@ export default function AdminApp() {
           {/* TAB: MODERATION & SAFETY */}
           {/* ========================================================================= */}
           {activeTab === "moderation" && (
-            <div className="bg-[#0f0f18] border border-white/5 rounded-2xl p-5 space-y-6 text-left">
-              <div className="border-b border-white/5 pb-4">
-                <h3 className="text-base font-black text-white uppercase tracking-wider font-mono">AI Moderation Dashboard & Guidelines</h3>
-                <p className="text-xs text-gray-400">Review flagged user chat lines, complete moderation audits and configure safety guidelines</p>
+            <div className="space-y-6 text-left">
+              {/* Top Banner Header */}
+              <div className="bg-[#0f0f18] border border-white/5 rounded-2xl p-5 space-y-2">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-white/5 pb-4">
+                  <div>
+                    <h3 className="text-base font-black text-white uppercase tracking-wider font-mono flex items-center space-x-2">
+                      <ShieldCheck className="w-5 h-5 text-red-500" />
+                      <span>Moderation Console & Special Access Management</span>
+                    </h3>
+                    <p className="text-xs text-gray-400 mt-1">
+                      Assign Special Access Moderator powers, perform on-the-spot stream terminations (Party/Solo/PK), suspend/unsuspend IDs, force live on, issue warnings, and ban/unban device hardware IDs.
+                    </p>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <span className="text-[10px] bg-red-500/10 text-red-400 border border-red-500/30 px-3 py-1 rounded-full font-mono font-bold uppercase animate-pulse">
+                      🔴 Live Mod Controls Active
+                    </span>
+                  </div>
+                </div>
               </div>
 
-              {/* Reports List */}
-              <div className="space-y-4">
-                <h4 className="text-xs font-black uppercase tracking-wider text-pink-500 font-mono">Open Infraction/Compliance Tickets</h4>
+              {/* ----------------------------------------------------------------- */}
+              {/* SECTION 1: SPECIAL ACCESS / MAKE MODERATOR MANAGEMENT */}
+              {/* ----------------------------------------------------------------- */}
+              <div className="bg-[#0f0f18] border border-white/5 rounded-2xl p-5 space-y-5">
+                <div className="border-b border-white/5 pb-3 flex items-center justify-between">
+                  <div>
+                    <h4 className="text-sm font-black text-white uppercase tracking-wider font-mono flex items-center space-x-2">
+                      <UserPlus className="w-4 h-4 text-purple-400" />
+                      <span>Assign Special Moderator Access ("Make Moderator")</span>
+                    </h4>
+                    <p className="text-[11px] text-gray-400">
+                      Grant Moderator status to specific user IDs or emails. Authorized moderators can use Mod Powers on-the-spot across all streams and accounts.
+                    </p>
+                  </div>
+                </div>
 
-                <div className="grid grid-cols-1 gap-4">
-                  {db.reports.map((rep: any) => (
+                {/* Grant Form */}
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    handleGrantModerator(newModInput);
+                  }}
+                  className="flex flex-col sm:flex-row items-center gap-3"
+                >
+                  <div className="relative flex-1 w-full">
+                    <input
+                      type="text"
+                      required
+                      placeholder="Enter Username, User ID or Email (e.g. @mod_pakistan or user@domain.com)"
+                      value={newModInput}
+                      onChange={(e) => setNewModInput(e.target.value)}
+                      className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-purple-500 font-mono"
+                    />
+                  </div>
+                  <button
+                    type="submit"
+                    disabled={!newModInput.trim()}
+                    className="w-full sm:w-auto px-6 py-2.5 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white font-black text-xs uppercase tracking-wider rounded-xl transition-all shadow-lg flex items-center justify-center space-x-2 shrink-0 cursor-pointer disabled:opacity-50"
+                  >
+                    <ShieldCheck className="w-4 h-4" />
+                    <span>Make Moderator / Grant Mod Access</span>
+                  </button>
+                </form>
+
+                {/* Active Moderators Grid */}
+                <div className="space-y-3 pt-2">
+                  <h5 className="text-xs font-black uppercase tracking-wider text-purple-400 font-mono">
+                    Authorized Special Access Moderators ({moderatorsList.length})
+                  </h5>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {moderatorsList.map((mod, idx) => (
+                      <div key={idx} className="p-3.5 bg-black/40 border border-purple-500/20 rounded-xl flex items-center justify-between">
+                        <div className="flex items-center space-x-3">
+                          <div className="w-10 h-10 rounded-full bg-purple-500/20 border border-purple-500/40 flex items-center justify-center text-purple-300 font-black text-xs">
+                            🛡️
+                          </div>
+                          <div>
+                            <p className="font-bold text-xs text-white font-mono">@{mod.username}</p>
+                            <p className="text-[10px] text-gray-400">{mod.email}</p>
+                            <span className="inline-block mt-1 text-[8px] bg-purple-500/20 text-purple-300 border border-purple-500/30 px-2 py-0.5 rounded font-mono font-bold uppercase">
+                              {mod.role || "Special Access Moderator"}
+                            </span>
+                          </div>
+                        </div>
+
+                        <button
+                          onClick={() => handleRevokeModerator(mod.username)}
+                          className="px-3 py-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 rounded-xl text-[10px] font-bold uppercase transition-all flex items-center space-x-1 cursor-pointer"
+                        >
+                          <Trash className="w-3 h-3" />
+                          <span>Revoke Access</span>
+                        </button>
+                      </div>
+                    ))}
+                    {moderatorsList.length === 0 && (
+                      <p className="text-center text-gray-500 py-3 uppercase font-mono text-xs col-span-2">No special moderators designated yet</p>
+                    )}
+                  </div>
+                </div>
+
+                {/* Quick Nomination from Ecosystem Users */}
+                <div className="border-t border-white/5 pt-4 space-y-3">
+                  <h5 className="text-xs font-black uppercase tracking-wider text-gray-400 font-mono">
+                    Quick Mod Access Nomination from Registered Accounts
+                  </h5>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5 max-h-48 overflow-y-auto pr-1">
+                    {[db?.user, ...(db?.adminUsersList || [])]
+                      .filter(Boolean)
+                      .slice(0, 12)
+                      .map((u, i) => {
+                        const isMod = moderatorsList.some(m => m.username.toLowerCase() === u.username.toLowerCase());
+                        return (
+                          <div key={i} className="p-2.5 bg-black/30 border border-white/5 rounded-xl flex items-center justify-between">
+                            <div className="flex items-center space-x-2">
+                              <img src={u.avatar} className="w-7 h-7 rounded-full object-cover border border-white/10" />
+                              <span className="text-xs font-bold text-white truncate max-w-[100px]">@{u.username}</span>
+                            </div>
+                            {isMod ? (
+                              <span className="text-[8px] text-purple-400 font-mono font-bold uppercase bg-purple-500/10 px-2 py-0.5 rounded border border-purple-500/20">
+                                ✓ Moderator
+                              </span>
+                            ) : (
+                              <button
+                                onClick={() => handleGrantModerator(u.username)}
+                                className="px-2 py-1 bg-purple-500/10 hover:bg-purple-500 text-purple-300 hover:text-white border border-purple-500/30 rounded text-[9px] font-bold font-mono transition-all cursor-pointer"
+                              >
+                                + Grant Mod Access
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })}
+                  </div>
+                </div>
+              </div>
+
+              {/* ----------------------------------------------------------------- */}
+              {/* SECTION 2: ON-THE-SPOT LIVE STREAM CONTROL CENTER */}
+              {/* ----------------------------------------------------------------- */}
+              <div className="bg-[#0f0f18] border border-white/5 rounded-2xl p-5 space-y-4">
+                <div className="border-b border-white/5 pb-3 flex items-center justify-between">
+                  <div>
+                    <h4 className="text-sm font-black text-white uppercase tracking-wider font-mono flex items-center space-x-2 text-red-400">
+                      <Radio className="w-4 h-4 animate-pulse text-red-500" />
+                      <span>On-The-Spot Stream Control Center (End Any Stream)</span>
+                    </h4>
+                    <p className="text-[11px] text-gray-400">
+                      Directly terminate Party Rooms, Solo Live Streams, or PK Battles on the spot with full moderator authority.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {/* Active Party Rooms */}
+                  {(db?.parties || []).map((party: any) => (
+                    <div key={party.id} className="p-4 bg-black/40 border border-red-500/20 rounded-xl space-y-3 relative">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[9px] bg-red-500/20 text-red-400 border border-red-500/30 px-2 py-0.5 rounded font-mono font-bold uppercase">
+                          🎉 Party Room
+                        </span>
+                        <span className="text-[9px] text-gray-400 font-mono">ID: {party.id}</span>
+                      </div>
+                      <div>
+                        <p className="text-xs font-bold text-white truncate">{party.title || "Party Room"}</p>
+                        <p className="text-[10px] text-gray-400 font-mono">Host: @{party.hostUsername}</p>
+                        <p className="text-[10px] text-pink-400 font-mono">Category: {party.category || "Audio Party"}</p>
+                      </div>
+                      <button
+                        disabled={modActionLoading}
+                        onClick={() => handleEndStreamOnTheSpot("party", party.id, party.hostUsername)}
+                        className="w-full py-2 bg-red-600/20 hover:bg-red-600 text-red-400 hover:text-white border border-red-500/40 rounded-xl text-[10px] font-black uppercase font-mono tracking-wider transition-all cursor-pointer flex items-center justify-center space-x-1.5"
+                      >
+                        <span>🛑 End Party Room On-The-Spot</span>
+                      </button>
+                    </div>
+                  ))}
+
+                  {/* Active Solo / Host Streams */}
+                  {(db?.hosts || []).filter((h: any) => h.isLive).map((host: any) => (
+                    <div key={host.id} className="p-4 bg-black/40 border border-pink-500/20 rounded-xl space-y-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[9px] bg-pink-500/20 text-pink-400 border border-pink-500/30 px-2 py-0.5 rounded font-mono font-bold uppercase">
+                          📹 Solo Stream
+                        </span>
+                        <span className="text-[9px] text-gray-400 font-mono">{host.category || "video"}</span>
+                      </div>
+                      <div className="flex items-center space-x-2.5">
+                        <img src={host.avatar} className="w-8 h-8 rounded-full object-cover border border-white/10" />
+                        <div className="truncate">
+                          <p className="text-xs font-bold text-white truncate">@{host.hostUsername || host.name}</p>
+                          <p className="text-[10px] text-gray-400 truncate">{host.statusText || "Live Broadcast"}</p>
+                        </div>
+                      </div>
+                      <button
+                        disabled={modActionLoading}
+                        onClick={() => handleEndStreamOnTheSpot("solo", host.id, host.hostUsername || host.name)}
+                        className="w-full py-2 bg-red-600/20 hover:bg-red-600 text-red-400 hover:text-white border border-red-500/40 rounded-xl text-[10px] font-black uppercase font-mono tracking-wider transition-all cursor-pointer flex items-center justify-center space-x-1.5"
+                      >
+                        <span>🛑 End Solo Stream On-The-Spot</span>
+                      </button>
+                    </div>
+                  ))}
+
+                  {(db?.parties || []).length === 0 && (db?.hosts || []).filter((h: any) => h.isLive).length === 0 && (
+                    <div className="col-span-full text-center py-6 bg-black/20 rounded-xl border border-white/5">
+                      <p className="text-gray-500 text-xs font-mono uppercase">No active party rooms or solo streams running right now</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* ----------------------------------------------------------------- */}
+              {/* SECTION 3: ON-THE-SPOT ID & DEVICE MODERATION ACTION POWERS */}
+              {/* ----------------------------------------------------------------- */}
+              <div className="bg-[#0f0f18] border border-white/5 rounded-2xl p-5 space-y-5">
+                <div className="border-b border-white/5 pb-3">
+                  <h4 className="text-sm font-black text-white uppercase tracking-wider font-mono flex items-center space-x-2 text-amber-400">
+                    <ShieldAlert className="w-4 h-4 text-amber-400" />
+                    <span>On-The-Spot Account, Stream & Device Moderator Power Panel</span>
+                  </h4>
+                  <p className="text-[11px] text-gray-400">
+                    Execute immediate moderation commands on any User ID, Stream, or Device Hardware.
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {/* Sub-Panel A: User Account ID Actions */}
+                  <div className="p-4 bg-black/40 border border-white/5 rounded-xl space-y-4">
+                    <h5 className="text-xs font-black uppercase tracking-wider text-purple-400 font-mono">
+                      👤 User ID Mod Actions (Suspend / Live On / Warning)
+                    </h5>
+
+                    <div className="space-y-1">
+                      <label className="text-[9px] uppercase font-mono font-bold text-gray-400">Target Username / User ID</label>
+                      <input
+                        type="text"
+                        placeholder="e.g. @Pardais_User or guest_1001"
+                        value={modTargetUser}
+                        onChange={(e) => setModTargetUser(e.target.value)}
+                        className="w-full bg-black/60 border border-white/10 rounded-xl px-3 py-2 text-xs text-white font-mono focus:border-purple-500 focus:outline-none"
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-[9px] uppercase font-mono font-bold text-gray-400">Warning Message Text</label>
+                      <input
+                        type="text"
+                        placeholder="Reason or warning details..."
+                        value={modWarningText}
+                        onChange={(e) => setModWarningText(e.target.value)}
+                        className="w-full bg-black/60 border border-white/10 rounded-xl px-3 py-2 text-xs text-white font-mono focus:border-purple-500 focus:outline-none"
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2 pt-1">
+                      <button
+                        disabled={modActionLoading || !modTargetUser.trim()}
+                        onClick={() => handleToggleUserSuspend(modTargetUser, true)}
+                        className="py-2 px-3 bg-red-600/20 hover:bg-red-600 text-red-400 hover:text-white border border-red-500/30 rounded-xl text-[10px] font-black uppercase font-mono transition-all cursor-pointer disabled:opacity-50"
+                      >
+                        🚨 Suspend Account ID
+                      </button>
+
+                      <button
+                        disabled={modActionLoading || !modTargetUser.trim()}
+                        onClick={() => handleToggleUserSuspend(modTargetUser, false)}
+                        className="py-2 px-3 bg-green-600/20 hover:bg-green-600 text-green-400 hover:text-white border border-green-500/30 rounded-xl text-[10px] font-black uppercase font-mono transition-all cursor-pointer disabled:opacity-50"
+                      >
+                        ✅ Un-suspend / Unblock ID
+                      </button>
+
+                      <button
+                        disabled={modActionLoading || !modTargetUser.trim()}
+                        onClick={() => handleForceLiveOn(modTargetUser)}
+                        className="py-2 px-3 bg-blue-600/20 hover:bg-blue-600 text-blue-400 hover:text-white border border-blue-500/30 rounded-xl text-[10px] font-black uppercase font-mono transition-all cursor-pointer disabled:opacity-50"
+                      >
+                        📹 Force Live ON
+                      </button>
+
+                      <button
+                        disabled={modActionLoading || !modTargetUser.trim()}
+                        onClick={() => handleSendWarning(modTargetUser, modWarningText)}
+                        className="py-2 px-3 bg-amber-600/20 hover:bg-amber-600 text-amber-300 hover:text-white border border-amber-500/30 rounded-xl text-[10px] font-black uppercase font-mono transition-all cursor-pointer disabled:opacity-50"
+                      >
+                        ⚠️ Dispatch Warning
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Sub-Panel B: Device Hardware Ban Actions */}
+                  <div className="p-4 bg-black/40 border border-white/5 rounded-xl space-y-4">
+                    <h5 className="text-xs font-black uppercase tracking-wider text-pink-400 font-mono">
+                      📱 Device Hardware Suspend & Un-suspend
+                    </h5>
+
+                    <div className="space-y-1">
+                      <label className="text-[9px] uppercase font-mono font-bold text-gray-400">Target Device Hardware ID</label>
+                      <input
+                        type="text"
+                        placeholder="e.g. DEV-HW-HXHYKI or IP/Hardware ID"
+                        value={modTargetDevice}
+                        onChange={(e) => setModTargetDevice(e.target.value)}
+                        className="w-full bg-black/60 border border-white/10 rounded-xl px-3 py-2 text-xs text-white font-mono focus:border-pink-500 focus:outline-none"
+                      />
+                    </div>
+
+                    <div className="text-[10px] text-gray-400 font-mono bg-black/20 p-2.5 rounded-lg border border-white/5">
+                      Quick select from logged user device: <span className="text-white font-bold">{db?.user?.deviceId || "DEV-HW-HXHYKI"}</span>
+                      <button
+                        onClick={() => setModTargetDevice(db?.user?.deviceId || "DEV-HW-HXHYKI")}
+                        className="ml-2 text-[9px] bg-pink-500/20 text-pink-300 px-2 py-0.5 rounded border border-pink-500/30 font-bold uppercase cursor-pointer"
+                      >
+                        Use My Device ID
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2 pt-2">
+                      <button
+                        disabled={modActionLoading || !modTargetDevice.trim()}
+                        onClick={() => handleToggleDeviceBan(modTargetDevice, true)}
+                        className="py-2.5 px-3 bg-red-600/20 hover:bg-red-600 text-red-400 hover:text-white border border-red-500/30 rounded-xl text-[10px] font-black uppercase font-mono transition-all cursor-pointer disabled:opacity-50"
+                      >
+                        📱 Suspend Device / Ban
+                      </button>
+
+                      <button
+                        disabled={modActionLoading || !modTargetDevice.trim()}
+                        onClick={() => handleToggleDeviceBan(modTargetDevice, false)}
+                        className="py-2.5 px-3 bg-emerald-600/20 hover:bg-emerald-600 text-emerald-400 hover:text-white border border-emerald-500/30 rounded-xl text-[10px] font-black uppercase font-mono transition-all cursor-pointer disabled:opacity-50"
+                      >
+                        📱 Un-suspend Device
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* ----------------------------------------------------------------- */}
+              {/* SECTION 4: OPEN INFRACTION & COMPLIANCE TICKETS */}
+              {/* ----------------------------------------------------------------- */}
+              <div className="bg-[#0f0f18] border border-white/5 rounded-2xl p-5 space-y-4">
+                <h4 className="text-xs font-black uppercase tracking-wider text-pink-500 font-mono">Open Community Infraction & Compliance Tickets</h4>
+
+                <div className="grid grid-cols-1 gap-3">
+                  {(db?.reports || []).map((rep: any) => (
                     <div key={rep.id} className="p-4 rounded-xl bg-black/35 border border-white/5 flex flex-col md:flex-row md:items-center justify-between gap-4">
                       <div className="space-y-1.5 text-left">
                         <div className="flex items-center space-x-2 bg-transparent">
@@ -2440,15 +2978,15 @@ export default function AdminApp() {
                         {rep.status === "pending" && (
                           <button
                             onClick={() => handleResolveReport(rep.id)}
-                            className="bg-green-500 hover:bg-green-400 text-black text-[10px] font-black uppercase px-3 py-1.5 rounded-lg transition-all cursor-pointer"
+                            className="bg-green-500 hover:bg-green-400 text-black text-[10px] font-black uppercase px-3 py-1.5 rounded-lg transition-all cursor-pointer font-mono font-bold"
                           >
-                            Resolve Issue
+                            Resolve Ticket
                           </button>
                         )}
                       </div>
                     </div>
                   ))}
-                  {db.reports.length === 0 && (
+                  {(db?.reports || []).length === 0 && (
                     <p className="text-center text-gray-500 py-4 uppercase font-mono text-xs">No community guideline reports logged</p>
                   )}
                 </div>

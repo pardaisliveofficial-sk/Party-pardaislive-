@@ -16,14 +16,7 @@ export const resolveApiUrl = (path: string): string => {
   const isAndroidAPK = typeof window !== "undefined" && (
     (window as any).Capacitor || 
     window.location.protocol === "file:" ||
-    window.location.protocol.includes("capacitor") ||
-    navigator.userAgent.toLowerCase().includes("android") ||
-    navigator.userAgent.toLowerCase().includes("capacitor") ||
-    (!window.location.hostname.includes("run.app") && (
-      window.location.hostname === "localhost" || 
-      window.location.hostname === "127.0.0.1" || 
-      !window.location.hostname
-    ))
+    window.location.protocol.includes("capacitor")
   );
 
   if (isAndroidAPK) {
@@ -88,7 +81,10 @@ export const authenticatedFetch = async (
     targetUrl = resolveApiUrl((input as Request).url);
   }
 
-  const token = getAuthToken();
+  let token = getAuthToken();
+  if (!token && retryCount === 0) {
+    token = await refreshSession(userInfoForRefresh);
+  }
   let headers: HeadersInit = init?.headers ? { ...init.headers } : {};
 
   if (token) {

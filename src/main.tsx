@@ -1,4 +1,4 @@
-import {StrictMode, useState, useEffect} from 'react';
+import React, { StrictMode, useState, useEffect } from 'react';
 import {createRoot} from 'react-dom/client';
 import App from './App.tsx';
 import AdminApp from './AdminApp.tsx';

@@ -103,7 +103,7 @@ import { Gift, GiftType, ChatMessage, HostProfile, UserProfile, Family, Agency, 
 import { DEFAULT_USER, MOCK_GIFTS, MOCK_HOSTS, MOCK_FAMILIES, MOCK_AGENCIES, DAILY_MISSIONS, STATIC_COMMENTS_POOL } from "./data";
 import { isAuthorizedAdmin, syncNominatedAdminEmails } from "./adminConfig";
 import { getRankingData } from "./rankingData";
-import { dbDataCache } from "./db/firebaseDb";
+import { dbDataCache, db } from "./db/firebaseDb";
 import { PardaisPartyLogo, PardaisLiveLogo } from "./components/PardaisPartyLogo";
 import { PardaisPartySplashScreen } from "./components/PardaisPartySplashScreen";
 import { PartyGamesModal } from "./components/PartyGamesModal";
@@ -152,18 +152,7 @@ const googleProvider = new GoogleAuthProvider();
 // Silence internal Firestore Client SDK logging to prevent spamming quota-exhausted stream errors in console
 setLogLevel("silent");
 
-export let db: any;
-try {
-  db = initializeFirestore(clientApp, {
-    experimentalForceLongPolling: true
-  }, firebaseConfig.firestoreDatabaseId);
-} catch (err) {
-  try {
-    db = getFirestore(clientApp, firebaseConfig.firestoreDatabaseId);
-  } catch (err2) {
-    db = getFirestore(clientApp);
-  }
-}
+export { db };
 export const storage = getStorage(clientApp);
 import { 
   ViewerGiftBox, 
@@ -31017,4 +31006,13 @@ export default function App() {
                         <p className="text-red-300 font-medium text-[8px]">{paymentErrorModalMsg}</p>
                       </div>
                     )}
-                  </di
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })()
+      )}
+    </div>
+  );
+}

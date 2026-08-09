@@ -1174,6 +1174,199 @@ app.post("/api/v1/user", authenticateUser, (req: any, res) => {
 });
 
 // ------------------------------------------------------------------
+// SPECIAL ACCESS / MODERATION ACTIONS ENDPOINTS
+// ------------------------------------------------------------------
+
+// 1. Moderate End Stream (Party, Solo Host, PK Battle)
+app.post("/api/v1/moderation/end-stream", (req, res) => {
+  const { streamType, streamId, hostUsername, reason, moderator } = req.body || {};
+  console.log(`[MODERATION ENGINE] Stream End Triggered by ${moderator || "Moderator"}: ${streamType} (ID: ${streamId}, Host: ${hostUsername}) Reason: ${reason}`);
+
+  let resultMessage = "Stream ended successfully.";
+
+  // End Party Room
+  if (streamType === "party" || streamId?.startsWith("party-")) {
+    const pIdx = dbData.parties?.findIndex((p: any) => p.id === streamId || p.hostUsername === hostUsername);
+    if (pIdx !== -1 && pIdx !== undefined) {
+      const party = dbData.parties[pIdx];
+      party.status = "ended";
+      dbData.parties.splice(pIdx, 1);
+      saveDatabase();
+      deleteDocument("parties", party.id);
+      resultMessage = `Party room ${party.id} (@${party.hostUsername}) terminated by Moderator.`;
+    }
+  }
+
+  // End Solo Host / PK Stream
+  const hIdx = dbData.hosts?.findIndex((h: any) => h.id === streamId || h.hostUsername === hostUsername || h.name === hostUsername);
+  if (hIdx !== -1 && hIdx !== undefined) {
+    const host = dbData.hosts[hIdx];
+    host.isLive = false;
+    host.inPk = false;
+    host.statusText = "Offline (Ended by Moderator)";
+    saveDatabase();
+    syncDocument("hosts", host.id, host);
+    resultMessage = `Live Stream for Host @${host.hostUsername || host.name} terminated by Moderator.`;
+  }
+
+  // Terminate any active PK session
+  Object.keys(activePkSessions).forEach(sessionId => {
+    const s = activePkSessions[sessionId];
+    if (s && (s.hostA?.username === hostUsername || s.hostB?.username === hostUsername || s.id === streamId)) {
+      s.status = "ended";
+      s.pkActive = false;
+      delete activePkSessions[sessionId];
+    }
+  });
+
+  res.json({ success: true, message: resultMessage });
+});
+
+// 2. Moderation Send Warning to User / Host
+app.post("/api/v1/moderation/warning", (req, res) => {
+  const { username, warningMessage, moderator } = req.body || {};
+  if (!username) return res.status(400).json({ error: "Target username is required" });
+
+  const target = dbData.users?.find((u: any) => String(u.username).toLowerCase() === String(username).toLowerCase());
+  if (target) {
+    if (!Array.isArray(target.warnings)) target.warnings = [];
+    target.warnings.push({
+      id: `warn-${Date.now()}`,
+      message: warningMessage || "Violation of Community Guidelines warning issued.",
+      moderator: moderator || "Moderator System",
+      timestamp: new Date().toISOString()
+    });
+    saveDatabase();
+    syncDocument("users", target.username, target);
+  }
+
+  // Send system notification
+  if (!Array.isArray(dbData.notifications)) dbData.notifications = [];
+  dbData.notifications.push({
+    id: `notif-warn-${Date.now()}`,
+    userId: target ? (target.uid || target.username) : username,
+    username: target ? target.username : username,
+    title: "⚠️ OFFICIAL MODERATOR WARNING",
+    body: warningMessage || "You have received an official warning for community guideline infraction.",
+    type: "warning",
+    timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+    read: false
+  });
+  saveDatabase();
+
+  res.json({ success: true, message: `Official Warning dispatched to @${username}` });
+});
+
+// 3. Suspend / Un-suspend User Account ID
+app.post("/api/v1/moderation/toggle-suspend", (req, res) => {
+  const { username, suspend, reason, moderator } = req.body || {};
+  if (!username) return res.status(400).json({ error: "Username is required" });
+
+  const target = dbData.users?.find((u: any) => String(u.username).toLowerCase() === String(username).toLowerCase());
+  const shouldSuspend = suspend !== false;
+
+  if (target) {
+    target.isBanned = shouldSuspend;
+    target.banReason = shouldSuspend ? (reason || "Account Suspended by Moderator") : null;
+    target.suspendedAt = shouldSuspend ? new Date().toISOString() : null;
+    target.suspendedBy = shouldSuspend ? (moderator || "Moderator") : null;
+    saveDatabase();
+    syncDocument("users", target.username, target);
+  }
+
+  // Also update in host record if host
+  const hostMatch = dbData.hosts?.find((h: any) => String(h.hostUsername || h.name).toLowerCase() === String(username).toLowerCase());
+  if (hostMatch) {
+    hostMatch.isBanned = shouldSuspend;
+    if (shouldSuspend) {
+      hostMatch.isLive = false;
+      hostMatch.inPk = false;
+    }
+    saveDatabase();
+    syncDocument("hosts", hostMatch.id, hostMatch);
+  }
+
+  res.json({
+    success: true,
+    isBanned: shouldSuspend,
+    message: `@${username} account status updated to ${shouldSuspend ? "SUSPENDED 🚫" : "ACTIVE / RESTORED ✅"}`
+  });
+});
+
+// 4. Force Live ON / Start Stream Override
+app.post("/api/v1/moderation/force-live-on", (req, res) => {
+  const { username, category, title } = req.body || {};
+  if (!username) return res.status(400).json({ error: "Username is required" });
+
+  let host = dbData.hosts?.find((h: any) => String(h.hostUsername || h.name).toLowerCase() === String(username).toLowerCase());
+  if (!host) {
+    const user = dbData.users?.find((u: any) => String(u.username).toLowerCase() === String(username).toLowerCase());
+    host = {
+      id: `host-${Date.now()}`,
+      name: username,
+      hostUsername: username,
+      role: "Official Broadcaster",
+      avatar: user?.avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&h=150&q=80",
+      followers: `${user?.followersCount || 1000}`,
+      isLive: true,
+      category: category || "video",
+      statusText: title || "Live Stream Started by Moderator Access",
+      bio: user?.bio || "Official Pardais Broadcaster",
+      agencyId: user?.agencyId || "agency-official",
+      likesCount: 0,
+      viewsCount: 1,
+      guestModeActive: false,
+      comments: []
+    };
+    if (!Array.isArray(dbData.hosts)) dbData.hosts = [];
+    dbData.hosts.push(host);
+  } else {
+    host.isLive = true;
+    host.statusText = title || host.statusText || "Live Stream Enabled by Moderator";
+    if (category) host.category = category;
+  }
+
+  saveDatabase();
+  syncDocument("hosts", host.id, host);
+
+  res.json({ success: true, message: `Live stream status for @${username} is now FORCE ACTIVATED (LIVE ON) 🔴` });
+});
+
+// 5. Suspend / Un-suspend Device Hardware ID
+app.post("/api/v1/moderation/device-ban", (req, res) => {
+  const { deviceId, ban, reason } = req.body || {};
+  if (!deviceId) return res.status(400).json({ error: "Device ID required" });
+
+  if (!Array.isArray(dbData.configurations.bannedDevices)) {
+    dbData.configurations.bannedDevices = [];
+  }
+
+  const shouldBan = ban !== false;
+  const devIndex = dbData.configurations.bannedDevices.findIndex((d: any) => typeof d === "string" ? d === deviceId : d.id === deviceId);
+
+  if (shouldBan) {
+    if (devIndex === -1) {
+      dbData.configurations.bannedDevices.push({
+        id: deviceId,
+        reason: reason || "Hardware device suspended by Moderator",
+        timestamp: new Date().toISOString()
+      });
+    }
+  } else {
+    if (devIndex !== -1) {
+      dbData.configurations.bannedDevices.splice(devIndex, 1);
+    }
+  }
+
+  saveDatabase();
+  res.json({
+    success: true,
+    banned: shouldBan,
+    message: `Device Hardware ID ${deviceId} is now ${shouldBan ? "SUSPENDED (DEVICE BANNED) 📱🚫" : "UNBANNED / RESTORED 📱✅"}`
+  });
+});
+
+// ------------------------------------------------------------------
 // REAL GOOGLE PAY & CARD PAYMENT GATEWAY VERIFICATION & RECHARGE ENGINE
 // ------------------------------------------------------------------
 app.post(["/api/v1/payments/process", "/api/v1/payments/verify"], (req: any, res) => {

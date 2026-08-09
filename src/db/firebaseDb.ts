@@ -35,12 +35,12 @@ setLogLevel("silent");
 
 export let db: any;
 try {
-  db = initializeFirestore(app, {
-    experimentalForceLongPolling: true
-  }, FIRESTORE_DB_ID);
+  db = getFirestore(app, FIRESTORE_DB_ID);
 } catch (err) {
   try {
-    db = getFirestore(app, FIRESTORE_DB_ID);
+    db = initializeFirestore(app, {
+      experimentalForceLongPolling: true
+    }, FIRESTORE_DB_ID);
   } catch (err2) {
     db = getFirestore(app);
   }

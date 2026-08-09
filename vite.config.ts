@@ -10,30 +10,15 @@ export default defineConfig(() => {
       alias: {
         '@': path.resolve(process.cwd(), '.'),
       },
-    },
-    esbuild: {
-      drop: ['console', 'debugger'],
+      dedupe: ['react', 'react-dom'],
     },
     build: {
-      minify: 'esbuild',
+      minify: 'esbuild' as const,
       cssMinify: true,
       rollupOptions: {
         input: {
           main: path.resolve(process.cwd(), 'index.html'),
           admin: path.resolve(process.cwd(), 'admin.html'),
-        },
-        output: {
-          manualChunks(id) {
-            if (id.includes('node_modules')) {
-              if (id.includes('react') || id.includes('react-dom') || id.includes('motion')) {
-                return 'vendor-core';
-              }
-              if (id.includes('lucide-react')) {
-                return 'vendor-icons';
-              }
-              return 'vendor-libs';
-            }
-          },
         },
       },
     },
