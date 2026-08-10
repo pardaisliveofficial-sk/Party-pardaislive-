@@ -30694,14 +30694,14 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => { setSelectedAuthMethod("email"); setLoginError(""); setLoginSuccessMsg(""); }}
-                className={}
+                className={selectedAuthMethod === "email" ? "bg-[#00f5ff]/20 text-[#00f5ff]" : "text-white/60"}
               >
                 Email OTP
               </button>
               <button
                 type="button"
                 onClick={() => { setSelectedAuthMethod("google"); setLoginError(""); setLoginSuccessMsg(""); }}
-                className={}
+                className={selectedAuthMethod === "google" ? "bg-[#00f5ff]/20 text-[#00f5ff]" : "text-white/60"}
               >
                 Google Auth
               </button>
