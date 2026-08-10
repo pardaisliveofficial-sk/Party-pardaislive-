@@ -8326,6 +8326,10 @@ export default function App() {
     }
   };
 
+  const currentPkg = selectedPaymentPackage || (onlinePackages && onlinePackages.length > 0 ? onlinePackages[0] : { id: 'pkg-1', coins: 1000, originalPrice: 100, discount: 0 });
+  const safeCountry = selectedCurrencyCountry || COUNTRIES_CURRENCIES[0];
+  const costObj = getCoinsCostInCurrency(currentPkg.coins || 0, safeCountry, currentPkg.discount || 0);
+
   return (
     <div className="min-h-screen bg-[#0b0c10] text-[#c5c6c7] font-sans flex flex-col items-center justify-center p-0 sm:p-4">
       {/* Dynamic Theme Stylesheet Override */}
@@ -30457,12 +30461,6 @@ export default function App() {
 
       {/* 💳 Online Payment Checkout Modal (Google Pay, Cards, EasyPaisa, JazzCash, Bank) */}
       {showCardPaymentModal && (
-        (() => {
-          const currentPkg = selectedPaymentPackage || (onlinePackages && onlinePackages.length > 0 ? onlinePackages[0] : { id: 'pkg-1', coins: 1000, originalPrice: 100, discount: 0 });
-          const safeCountry = selectedCurrencyCountry || COUNTRIES_CURRENCIES[0];
-          const costObj = getCoinsCostInCurrency(currentPkg.coins || 0, safeCountry, currentPkg.discount || 0);
-
-          return (
             <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-[9999] flex items-center justify-center p-4 overflow-y-auto animate-fadeIn">
               <div className="bg-[#12121a] border border-[#ff007f]/30 rounded-2xl p-5 w-full max-w-sm text-center relative shadow-2xl space-y-4 my-auto">
                 <button
@@ -30654,8 +30652,10 @@ export default function App() {
                       )}
                     </div>
                   </div>
-                </div>
-              )}
+                )}
+              </div>
+            </div>
+      )}
 
       {/* ========================================= */}
       {/* AUTHENTICATION REQUIRED MODAL (GUEST PROMPT) */}
@@ -30799,8 +30799,6 @@ export default function App() {
         </div>
       )}
 
-        </div>
-      </div>
     </div>
   );
 }
