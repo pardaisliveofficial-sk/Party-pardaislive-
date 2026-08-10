@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
-import { authenticatedFetch, resolveApiUrl, refreshSession } from "./lib/apiClient";
+import { authenticatedFetch, resolveApiUrl, refreshSession, getAuthToken } from "./lib/apiClient";
 import { COUNTRIES_CURRENCIES, CountryCurrency, getCoinsCostInCurrency } from "./currencyUtils";
 import { ReelsView } from "./components/ReelsView";
 import { AgoraStream } from "./components/AgoraStream";
@@ -104,7 +104,7 @@ import { Gift, GiftType, ChatMessage, HostProfile, UserProfile, Family, Agency, 
 import { DEFAULT_USER, MOCK_GIFTS, MOCK_HOSTS, MOCK_FAMILIES, MOCK_AGENCIES, DAILY_MISSIONS, STATIC_COMMENTS_POOL } from "./data";
 import { isAuthorizedAdmin, syncNominatedAdminEmails } from "./adminConfig";
 import { getRankingData } from "./rankingData";
-import { dbDataCache, db } from "./db/firebaseDb";
+import { dbDataCache, db, auth as firebaseAuth } from "./db/firebaseDb";
 import { PardaisPartyLogo, PardaisLiveLogo } from "./components/PardaisPartyLogo";
 import { PardaisPartySplashScreen } from "./components/PardaisPartySplashScreen";
 import { PartyGamesModal } from "./components/PartyGamesModal";
@@ -136,9 +136,10 @@ import {
   getDownloadURL 
 } from "firebase/storage";
 
-// Standardize authDomain for Firebase Google Auth Popup & Redirect Handler
+// Standardize authDomain & storageBucket for Firebase Google Auth & Storage Handlers
 const effectiveFirebaseConfig = {
   ...firebaseConfig,
+  storageBucket: (firebaseConfig as any).storageBucket || `${firebaseConfig.projectId || "pardais-party-production"}.firebasestorage.app`,
   authDomain: (firebaseConfig.authDomain && !firebaseConfig.authDomain.includes("soulverseapps.com"))
     ? firebaseConfig.authDomain
     : `${firebaseConfig.projectId || "pardais-party-production"}.firebaseapp.com`
@@ -147,14 +148,40 @@ const effectiveFirebaseConfig = {
 // Initialize Firebase client-side for authenticating via Google Sign-In
 const clientApps = getApps();
 const clientApp = clientApps.length === 0 ? initializeApp(effectiveFirebaseConfig) : getApp();
-const clientAuth = getAuth(clientApp);
+
+let clientAuth: any = firebaseAuth;
+if (!clientAuth) {
+  try {
+    clientAuth = getAuth(clientApp);
+  } catch (err) {
+    try {
+      clientAuth = getAuth();
+    } catch (err2) {
+      console.warn("[PARDAIS-PARTY] Auth initialization fallback:", err2);
+    }
+  }
+}
+
 const googleProvider = new GoogleAuthProvider();
 
 // Silence internal Firestore Client SDK logging to prevent spamming quota-exhausted stream errors in console
 setLogLevel("silent");
 
 export { db };
-export const storage = getStorage(clientApp);
+export let storage: any = null;
+let storageInitAttempted = false;
+export const getFirebaseStorage = () => {
+  if (!storageInitAttempted) {
+    storageInitAttempted = true;
+    try {
+      storage = getStorage(clientApp);
+    } catch (err) {
+      console.warn("[PARDAIS-PARTY] Firebase Storage service is not available:", err);
+      storage = null;
+    }
+  }
+  return storage;
+};
 import { 
   ViewerGiftBox, 
   GiftAnimationEngine, 
@@ -650,28 +677,59 @@ export default function App() {
   const [showTwoFactorModal, setShowTwoFactorModal] = useState<boolean>(false);
   const [twoFactorCode, setTwoFactorCode] = useState<string>("");
 
+  // Guest Mode & Auth Prompt Modal State
+  const [showAuthModal, setShowAuthModal] = useState<boolean>(false);
+  const [authModalReason, setAuthModalReason] = useState<string>("interact with features");
+  const [pendingAuthCallback, setPendingAuthCallback] = useState<(() => void) | null>(null);
+
+  // Require Auth Helper for Guest Interactivity Gating
+  const requireAuth = useCallback((actionName: string = "interact with features", callback?: () => void): boolean => {
+    const isLogged = localStorage.getItem("pardais_is_logged_in") === "true";
+    if (!isLogged) {
+      setAuthModalReason(actionName);
+      if (callback) {
+        setPendingAuthCallback(() => callback);
+      } else {
+        setPendingAuthCallback(null);
+      }
+      setShowAuthModal(true);
+      return false;
+    }
+    if (callback) {
+      callback();
+    }
+    return true;
+  }, []);
+
   // Core User Profile with persistent local storage recovery
   const getInitialUser = (): UserProfile => {
     if (typeof window !== "undefined") {
       try {
+        const isLogged = localStorage.getItem("pardais_is_logged_in") === "true";
         const saved = localStorage.getItem("pardais_user_profile");
         const customAvatar = localStorage.getItem("pardais_custom_avatar");
-        if (saved) {
+        if (isLogged && saved) {
           const parsed = JSON.parse(saved);
           if (parsed && (parsed.username || parsed.uniqueId)) {
             if (customAvatar) {
               parsed.avatar = customAvatar;
             }
+            parsed.isGuest = false;
             return parsed;
           }
         } else if (customAvatar) {
-          return { ...DEFAULT_USER, avatar: customAvatar };
+          return { ...DEFAULT_USER, avatar: customAvatar, isGuest: !isLogged };
         }
       } catch (e) {
         console.warn("Error parsing stored user profile:", e);
       }
     }
-    return DEFAULT_USER;
+    return {
+      ...DEFAULT_USER,
+      username: "Guest_Visitor",
+      fullName: "Guest Visitor",
+      isGuest: true,
+    };
   };
 
   const [user, setUser] = useState<UserProfile>(getInitialUser);
@@ -814,11 +872,13 @@ export default function App() {
     const restoreSession = async () => {
       // 1. Check if returning from Google Sign-In redirect
       try {
-        const redirectResult = await getRedirectResult(clientAuth);
-        if (redirectResult?.user) {
-          console.log("[GOOGLE AUTH] Redirect sign-in result detected on app load");
-          await processGoogleAuthUser(redirectResult.user);
-          return;
+        if (clientAuth) {
+          const redirectResult = await getRedirectResult(clientAuth);
+          if (redirectResult?.user) {
+            console.log("[GOOGLE AUTH] Redirect sign-in result detected on app load");
+            await processGoogleAuthUser(redirectResult.user);
+            return;
+          }
         }
       } catch (redirectErr) {
         console.warn("[GOOGLE AUTH] Redirect result processing warning:", redirectErr);
@@ -2395,14 +2455,24 @@ export default function App() {
             } else {
               fetch("/api/v1/parties")
                 .then(r => r.json())
-                .then(all => { if (Array.isArray(all)) setPartiesList(all); })
+                .then(all => {
+                  if (Array.isArray(all) && all.length > 0) {
+                    setPartiesList(all);
+                    setActivePartyId(all[0].id);
+                  }
+                })
                 .catch(() => {});
             }
           })
           .catch(() => {
             fetch("/api/v1/parties")
               .then(r => r.json())
-              .then(all => { if (Array.isArray(all)) setPartiesList(all); })
+              .then(all => {
+                if (Array.isArray(all) && all.length > 0) {
+                  setPartiesList(all);
+                  setActivePartyId(all[0].id);
+                }
+              })
               .catch(() => {});
           });
       }
@@ -6207,6 +6277,8 @@ export default function App() {
   // Send Chat Message with optional AI Moderation/Translation
   const handleSendChatMessage = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!requireAuth("send messages in live chat")) return;
+    e.preventDefault();
     if (commentsDisabled) {
       alert("🔒 Room Comments have been turned off in this live room by the host.");
       return;
@@ -6369,6 +6441,7 @@ export default function App() {
     imageUrl = "",
     customTextOverride = ""
   ) => {
+    if (!requireAuth("send private direct messages")) return;
     if (e) e.preventDefault();
     
     const otherUsername = activeChatContact?.username || activeChatContact?.name;
@@ -6463,6 +6536,7 @@ export default function App() {
 
   // Gift Sending Engine
   const handleSendGift = async (gift: Gift, count: number = 1, recipientName: string = activeHost.name, isCombo: boolean = false) => {
+    if (!requireAuth("send gifts to hosts & friends")) return;
     const totalCost = gift.cost * count;
     if (user.coins < totalCost) {
       alert(`Insufficient Coins! You need ${totalCost} coins but only have ${user.coins}.`);
@@ -6815,6 +6889,14 @@ export default function App() {
 
   // User Solo Live Broadcaster Handlers
   const startUserSoloLive = () => {
+    if (!requireAuth("start live streaming as a host")) return;
+    const isAdmin = isAuthorizedAdmin(user) || isAuthorizedAdmin(user?.email || user?.username);
+    const userLvl = Number(user?.userLevel || user?.level || 1);
+    if (!isAdmin && userLvl < 5) {
+      alert(`🔒 Live Stream Lock (Minimum Level 5 Required)!\n\nLive stream turn on krny k liye Level 5 zarori hai!\n\nAap ka current level: Level ${userLvl}.\nCoins spend kare'n (games, party rooms, or reels) taake aap ka level fast level-up ho sake! 🚀`);
+      return;
+    }
+
     requestAppPermission(
       "camera",
       "Camera access is needed to broadcast video, use high-quality beauty filters, and perform PK battle matches.",
@@ -6831,6 +6913,14 @@ export default function App() {
   };
 
   const actuallyGoLive = () => {
+    const isAdmin = isAuthorizedAdmin(user) || isAuthorizedAdmin(user?.email || user?.username);
+    const userLvl = Number(user?.userLevel || user?.level || 1);
+    if (!isAdmin && userLvl < 5) {
+      alert(`🔒 Live Stream Lock!\n\nLive stream turn on krny k liye Level 5 zarori hai! (Aap ka level: ${userLvl})`);
+      setClientView("feed");
+      return;
+    }
+
     setClientView("user-live");
     setUserLiveDuration(0); 
     setUserLiveViewers(0); 
@@ -7425,6 +7515,12 @@ export default function App() {
         localStorage.setItem("pardais_user_profile", JSON.stringify(data.user));
         setUser(data.user);
         setIsLoggedIn(true);
+        setShowAuthModal(false);
+        if (pendingAuthCallback) {
+          const cb = pendingAuthCallback;
+          setPendingAuthCallback(null);
+          try { cb(); } catch (e) {}
+        }
         if (data.isNewUser || !data.user.fullName) {
           setShowProfileSetupModal(true);
         }
@@ -7465,6 +7561,12 @@ export default function App() {
         localStorage.setItem("pardais_user_profile", JSON.stringify(fallbackUser));
         setUser(fallbackUser);
         setIsLoggedIn(true);
+        setShowAuthModal(false);
+        if (pendingAuthCallback) {
+          const cb = pendingAuthCallback;
+          setPendingAuthCallback(null);
+          try { cb(); } catch (e) {}
+        }
         setShowProfileSetupModal(true);
       });
   };
@@ -7575,6 +7677,12 @@ export default function App() {
     setUser(data.user);
     setIsLoggedIn(true);
     setShowGoogleChooser(false);
+    setShowAuthModal(false);
+    if (pendingAuthCallback) {
+      const cb = pendingAuthCallback;
+      setPendingAuthCallback(null);
+      try { cb(); } catch (e) {}
+    }
     setLoginError("");
     setChooserError("");
 
@@ -7651,6 +7759,12 @@ export default function App() {
     localStorage.setItem("pardais_user_profile", JSON.stringify(guestUser));
     setUser(guestUser);
     setIsLoggedIn(true);
+    setShowAuthModal(false);
+    if (pendingAuthCallback) {
+      const cb = pendingAuthCallback;
+      setPendingAuthCallback(null);
+      try { cb(); } catch (e) {}
+    }
     setShowProfileSetupModal(true);
   };
 
@@ -7718,7 +7832,12 @@ export default function App() {
       localStorage.removeItem("pardais_auth_token");
       localStorage.setItem("pardais_is_logged_in", "false");
       setIsLoggedIn(false);
-      setUser(DEFAULT_USER);
+      setUser({
+        ...DEFAULT_USER,
+        username: "Guest_Visitor",
+        fullName: "Guest Visitor",
+        isGuest: true
+      });
     }
   };
 
@@ -7836,14 +7955,68 @@ export default function App() {
 
   // Synchronized Party Hub Functions
   const handleCreateParty = async () => {
+    if (!requireAuth("create audio party rooms")) return;
     const finalRoomTitle = partyFormName.trim() || `${user.fullName || user.username || "Pardais"}'s Audio Lounge 🎙️`;
+    const validHost = user.username || "Host";
+    const tempId = `party-${Date.now()}`;
+
+    // Construct optimistic 12-seat Party Room object
+    const optimisticParty: any = {
+      id: tempId,
+      title: finalRoomTitle,
+      hostUsername: validHost,
+      hostAvatar: user.avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80",
+      category: partyFormCategory || "Music",
+      participantCount: 1,
+      maxCapacity: 12,
+      isPublic: partyFormIsPublic,
+      password: partyFormPassword || "",
+      language: partyFormLanguage || "Urdu",
+      description: partyFormDescription || "Welcome to our 12-seat audio party lounge!",
+      status: "active",
+      connectedViewers: [{ userId: validHost, username: validHost, avatar: user.avatar || "", level: user.userLevel || user.level || 1, vipLevel: user.vipLevel || 0 }],
+      seats: [
+        { id: 1, name: validHost, avatar: user.avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80", isMuted: false, isLocked: false },
+        { id: 2, name: null, avatar: null, isMuted: false, isLocked: false },
+        { id: 3, name: null, avatar: null, isMuted: false, isLocked: false },
+        { id: 4, name: null, avatar: null, isMuted: false, isLocked: false },
+        { id: 5, name: null, avatar: null, isMuted: false, isLocked: false },
+        { id: 6, name: null, avatar: null, isMuted: false, isLocked: false },
+        { id: 7, name: null, avatar: null, isMuted: false, isLocked: false },
+        { id: 8, name: null, avatar: null, isMuted: false, isLocked: false },
+        { id: 9, name: null, avatar: null, isMuted: false, isLocked: false },
+        { id: 10, name: null, avatar: null, isMuted: false, isLocked: false },
+        { id: 11, name: null, avatar: null, isMuted: false, isLocked: false },
+        { id: 12, name: null, avatar: null, isMuted: false, isLocked: false }
+      ],
+      comments: [
+        {
+          id: `sys-${Date.now()}`,
+          username: "System",
+          message: `🎙️ Room created successfully by @${validHost}. Welcome everyone!`,
+          isSystem: true,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        }
+      ]
+    };
+
+    // 1. Optimistic transition: Open room immediately
+    setPartiesList(prev => [optimisticParty, ...prev.filter(p => p.id !== tempId)]);
+    setActivePartyId(tempId);
+    setClientView("party-room");
+    setShowCreatePartyModal(false);
+    setPartyFormName("");
+    setPartyFormDescription("");
+    setPartyFormPassword("");
+
+    // 2. Sync with backend API
     try {
-      const response = await fetch("/api/v1/parties", {
+      const response = await authenticatedFetch("/api/v1/parties", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           title: finalRoomTitle,
-          hostUsername: user.username,
+          hostUsername: validHost,
           hostAvatar: user.avatar,
           category: partyFormCategory || "Music",
           isPublic: partyFormIsPublic,
@@ -7852,32 +8025,24 @@ export default function App() {
           description: partyFormDescription || "Welcome to our 12-seat audio party lounge!"
         })
       });
-      const data = await response.json();
-      if (data && data.id) {
-        setPartiesList(prev => {
-          const exists = prev.some(p => p.id === data.id);
-          if (exists) {
-            return prev.map(p => p.id === data.id ? data : p);
-          }
-          return [...prev, data];
-        });
-        setActivePartyId(data.id);
-        setClientView("party-room");
-        setShowCreatePartyModal(false);
-        // reset form
-        setPartyFormName("");
-        setPartyFormDescription("");
-        setPartyFormPassword("");
-      } else {
-        alert(data?.error || "Unable to start Party Room. Please try again.");
+
+      if (response.ok) {
+        const data = await response.json();
+        if (data && data.id) {
+          setPartiesList(prev => {
+            const filtered = prev.filter(p => p.id !== tempId && p.id !== data.id);
+            return [data, ...filtered];
+          });
+          setActivePartyId(data.id);
+        }
       }
     } catch (e) {
-      console.error("Error creating party:", e);
-      alert("Network error: Unable to start Party Room. Please check connection.");
+      console.warn("[PARDAIS-PARTY] Party created in local state (network offline):", e);
     }
   };
 
   const handleJoinParty = async (partyId: string) => {
+    if (!requireAuth("join audio party rooms")) return;
     try {
       const userLvl = user.userLevel || user.level || 1;
       const vipLvl = user.vipLevel || 0;
@@ -7887,7 +8052,7 @@ export default function App() {
       setActivePartyId(partyId);
       setClientView("party-room");
 
-      const response = await fetch(`/api/v1/parties/${partyId}/join`, {
+      const response = await authenticatedFetch(`/api/v1/parties/${partyId}/join`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ 
@@ -7897,20 +8062,21 @@ export default function App() {
           vipLevel: vipLvl
         })
       });
-      const data = await response.json();
-      if (data && !data.error) {
-        setPartiesList(prev => {
-          const exists = prev.some(p => p.id === partyId);
-          if (exists) {
-            return prev.map(p => p.id === partyId ? data : p);
-          }
-          return [...prev, data];
-        });
-      } else {
-        alert(data.error || "Failed to join party room");
+
+      if (response.ok) {
+        const data = await response.json();
+        if (data && !data.error) {
+          setPartiesList(prev => {
+            const exists = prev.some(p => p.id === partyId);
+            if (exists) {
+              return prev.map(p => p.id === partyId ? data : p);
+            }
+            return [...prev, data];
+          });
+        }
       }
     } catch (e) {
-      console.error("Error joining party:", e);
+      console.warn("Error joining party:", e);
     }
   };
 
@@ -7951,6 +8117,7 @@ export default function App() {
   };
 
   const handlePartyJoinSeat = async (partyId: string, seatId: number) => {
+    if (!requireAuth("take audio seats & speak in rooms")) return;
     const userLvl = user.userLevel || user.level || 1;
     const vipLvl = user.vipLevel || 0;
     triggerJoinNotif(user.username, userLvl, vipLvl);
@@ -8015,34 +8182,56 @@ export default function App() {
   };
 
   const handlePartyToggleMute = async (partyId: string, seatId: number) => {
+    // 1. Optimistic state update: toggle isMuted instantly in local state
+    setPartiesList(prev => prev.map(p => {
+      if (p.id !== partyId) return p;
+      return {
+        ...p,
+        seats: (p.seats || []).map((s: any) => s.id === seatId ? { ...s, isMuted: !s.isMuted } : s)
+      };
+    }));
+
     try {
-      const response = await fetch(`/api/v1/parties/${partyId}/seats/toggle-mute`, {
+      const response = await authenticatedFetch(`/api/v1/parties/${partyId}/seats/toggle-mute`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ seatId })
       });
-      const data = await response.json();
-      if (data && !data.error) {
-        setPartiesList(prev => prev.map(p => p.id === partyId ? data : p));
+      if (response.ok) {
+        const data = await response.json();
+        if (data && !data.error) {
+          setPartiesList(prev => prev.map(p => p.id === partyId ? data : p));
+        }
       }
     } catch (e) {
-      console.error("Error toggling mute:", e);
+      console.warn("Error toggling mute:", e);
     }
   };
 
   const handlePartyToggleLock = async (partyId: string, seatId: number) => {
+    // 1. Optimistic state update: toggle isLocked instantly in local state
+    setPartiesList(prev => prev.map(p => {
+      if (p.id !== partyId) return p;
+      return {
+        ...p,
+        seats: (p.seats || []).map((s: any) => s.id === seatId ? { ...s, isLocked: !s.isLocked } : s)
+      };
+    }));
+
     try {
-      const response = await fetch(`/api/v1/parties/${partyId}/seats/toggle-lock`, {
+      const response = await authenticatedFetch(`/api/v1/parties/${partyId}/seats/toggle-lock`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ seatId })
       });
-      const data = await response.json();
-      if (data && !data.error) {
-        setPartiesList(prev => prev.map(p => p.id === partyId ? data : p));
+      if (response.ok) {
+        const data = await response.json();
+        if (data && !data.error) {
+          setPartiesList(prev => prev.map(p => p.id === partyId ? data : p));
+        }
       }
     } catch (e) {
-      console.error("Error toggling lock:", e);
+      console.warn("Error toggling lock:", e);
     }
   };
 
@@ -8061,6 +8250,7 @@ export default function App() {
   };
 
   const handlePartyComment = async (partyId: string, messageText: string) => {
+    if (!requireAuth("send messages in room chats")) return;
     if (!messageText.trim()) return;
     try {
       const response = await fetch(`/api/v1/parties/${partyId}/comments`, {
@@ -8416,566 +8606,7 @@ export default function App() {
                       Clear Session
                     </button>
                   </div>
-                ) : !isLoggedIn ? (
-                  /* ========================================= */
-                  /* MOCK AUTHENTICATION & LOGIN FORM */
-                  /* ========================================= */
-                  <div className="flex-1 flex flex-col justify-between p-6 bg-gradient-to-b from-[#190628] via-[#0A0A0A] to-[#0A0A0A] relative scroll-view-y safe-padding-top safe-padding-bottom">
-                    
-                    {/* Brand header */}
-                    <div className="text-center mt-3">
-                      <PardaisPartyLogo size="md" showText={true} />
-                    </div>
-
-                    <div className="space-y-4 my-auto">
-                      {/* Login method toggle */}
-                      <div className="grid grid-cols-2 gap-2 bg-[#1f2833]/40 p-1 rounded-xl border border-[#1f2833]">
-                        <button
-                          type="button"
-                          onClick={() => { setSelectedAuthMethod("email"); setLoginError(""); setLoginSuccessMsg(""); }}
-                          className={`py-2 text-xs font-bold rounded-lg transition-all ${
-                            selectedAuthMethod === "email"
-                              ? "bg-gradient-to-r from-[#7b2cbf] to-[#00f5ff] text-white shadow-md"
-                              : "text-gray-400 hover:text-white"
-                          }`}
-                        >
-                          Email OTP
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => { setSelectedAuthMethod("google"); setLoginError(""); setLoginSuccessMsg(""); }}
-                          className={`py-2 text-xs font-bold rounded-lg transition-all ${
-                            selectedAuthMethod === "google"
-                              ? "bg-gradient-to-r from-[#7b2cbf] to-[#00f5ff] text-white shadow-md"
-                              : "text-gray-400 hover:text-white"
-                          }`}
-                        >
-                          Google Auth
-                        </button>
-                      </div>
-
-                      {/* Instant One-Tap Quick Login Button */}
-                      <button
-                        type="button"
-                        onClick={handleQuickGuestLogin}
-                        className="w-full py-2.5 px-4 bg-gradient-to-r from-[#00f5ff]/20 via-[#7b2cbf]/20 to-[#ff007f]/20 hover:from-[#00f5ff]/30 hover:to-[#ff007f]/30 border border-[#00f5ff]/40 rounded-2xl flex items-center justify-center space-x-2 text-white shadow-lg transition-all active:scale-[0.98] cursor-pointer"
-                      >
-                        <Zap className="w-4 h-4 text-[#00f5ff] animate-pulse" />
-                        <span className="text-xs font-black tracking-wide">⚡ One-Tap Instant Guest Login</span>
-                      </button>
-
-                      {/* Error Alert */}
-                      {loginError && (
-                        <div className="p-2.5 bg-red-950/40 border border-red-500/50 rounded-xl text-[10px] text-red-200 flex items-start space-x-2 animate-bounce">
-                          <AlertTriangle className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" />
-                          <span className="flex-1 font-medium">{loginError}</span>
-                        </div>
-                      )}
-
-                      {/* Success Alert */}
-                      {loginSuccessMsg && (
-                        <div className="p-2.5 bg-green-950/40 border border-green-500/50 rounded-xl text-[10px] text-green-200 flex items-start space-x-2 animate-fadeIn">
-                          <BadgeCheck className="w-4 h-4 text-green-400 flex-shrink-0 mt-0.5" />
-                          <span className="flex-1 font-medium">{loginSuccessMsg}</span>
-                        </div>
-                      )}
-
-                      {selectedAuthMethod === "email" ? (
-                        <form onSubmit={isOtpSent ? handleVerifyEmailOtp : handleSendEmailOtp} className="space-y-3">
-                          <div>
-                            <label className="text-[9px] uppercase tracking-wider text-gray-400 block mb-1 font-bold font-mono">Email Address</label>
-                            <input
-                              type="email"
-                              placeholder="user@example.com"
-                              value={loginEmail}
-                              onChange={(e) => {
-                                setLoginEmail(e.target.value);
-                                if (loginError) setLoginError("");
-                              }}
-                              disabled={isOtpSent}
-                              className="w-full bg-[#1e1e2d] border border-[#303040] rounded-xl px-3 py-2 text-white text-xs focus:outline-none focus:border-[#ff007f] font-mono"
-                            />
-                          </div>
-
-                          {isOtpSent && (
-                            <div className="animate-pop-gift bg-[#1e1e2d] p-3 rounded-xl border border-[#ff007f]/20 space-y-1">
-                              <label className="text-[9px] uppercase tracking-wider text-[#00f5ff] block font-bold font-mono">Enter 6-Digit OTP Code</label>
-                              <input
-                                type="text"
-                                placeholder="123456"
-                                value={loginOtp}
-                                onChange={(e) => {
-                                  setLoginOtp(e.target.value);
-                                  if (loginError) setLoginError("");
-                                }}
-                                className="w-full bg-[#12121a] border border-[#00f5ff] rounded-lg px-3 py-2 text-white text-center text-sm font-black focus:outline-none tracking-widest font-mono"
-                              />
-                            </div>
-                          )}
-
-                          <button
-                            type="submit"
-                            className="w-full bg-gradient-to-r from-[#ff007f] to-[#7b2cbf] text-white py-2.5 rounded-xl text-xs font-bold shadow-lg hover:opacity-95 transition-all cursor-pointer"
-                          >
-                            {isOtpSent ? "Verify Code & Log In" : "Send Email OTP Code"}
-                          </button>
-                        </form>
-                      ) : (
-                        <div className="space-y-2">
-                          {/* Google Sign-in button */}
-                          <button
-                            type="button"
-                            onClick={handleGoogleSignIn}
-                            className="w-full h-12 bg-white text-gray-900 font-bold rounded-2xl text-xs flex items-center justify-center space-x-3 hover:bg-gray-100 active:scale-[0.98] transition-all shadow-xl shadow-black/20 border border-gray-200 cursor-pointer"
-                          >
-                            <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24" width="16" height="16" xmlns="http://www.w3.org/2000/svg">
-                              <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
-                              <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
-                              <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" fill="#FBBC05"/>
-                              <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" fill="#EA4335"/>
-                            </svg>
-                            <span className="text-sm font-black tracking-wide">Continue with Google</span>
-                          </button>
-                        </div>
-                      )}
-
-                      {/* Disabled / Coming Soon Methods Divider */}
-                      <div className="pt-2">
-                        <div className="relative flex py-2 items-center">
-                          <div className="flex-grow border-t border-white/5"></div>
-                          <span className="flex-shrink mx-3 text-[8.5px] text-gray-500 font-bold uppercase tracking-widest font-mono">Coming Soon Options</span>
-                          <div className="flex-grow border-t border-white/5"></div>
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-2 mt-1">
-                          {/* Apple Sign-in Coming Soon */}
-                          <button
-                            type="button"
-                            onClick={() => setLoginError("Apple Sign In Coming Soon")}
-                            className="flex items-center justify-center space-x-2 p-2.5 rounded-xl bg-white/[0.02] border border-white/5 hover:bg-white/[0.04] transition-all relative group cursor-pointer"
-                          >
-                            <span className="text-sm saturate-50 group-hover:scale-110 transition-transform"></span>
-                            <span className="text-[9px] text-gray-400 font-bold">Apple ID</span>
-                          </button>
-
-                          {/* Facebook Sign-in Coming Soon */}
-                          <button
-                            type="button"
-                            onClick={() => setLoginError("Facebook Login Coming Soon")}
-                            className="flex items-center justify-center space-x-2 p-2.5 rounded-xl bg-white/[0.02] border border-white/5 hover:bg-white/[0.04] transition-all relative group cursor-pointer"
-                          >
-                            <span className="text-sm saturate-50 group-hover:scale-110 transition-transform">👤</span>
-                            <span className="text-[9px] text-gray-400 font-bold">Facebook</span>
-                          </button>
-                        </div>
-                      </div>
-
-                      {/* 2FA Toggle switch */}
-                      <div className="flex items-center justify-between border-t border-[#1f2833]/30 pt-3">
-                        <div className="flex items-center space-x-2">
-                          <Shield className="w-4 h-4 text-[#00f5ff]" />
-                          <div>
-                            <p className="text-[10px] font-bold text-white">Two-Factor Authentication (2FA)</p>
-                            <p className="text-[8px] text-gray-400">Extra layer of verification safety</p>
-                          </div>
-                        </div>
-                        <input
-                          type="checkbox"
-                          checked={is2FAEnabled}
-                          onChange={() => setIs2FAEnabled(!is2FAEnabled)}
-                          className="w-4 h-4 text-[#ff007f] accent-[#ff007f] rounded"
-                        />
-                      </div>
-
-                      {/* Terms and conditions accepting option */}
-                      <div className="border-t border-[#1f2833]/30 pt-3">
-                        <label className="flex items-start space-x-2 cursor-pointer select-none">
-                          <input
-                            type="checkbox"
-                            checked={termsAccepted}
-                            onChange={(e) => {
-                              setTermsAccepted(e.target.checked);
-                              if (e.target.checked) setLoginError("");
-                            }}
-                            className="w-4 h-4 rounded mt-0.5 text-[#ff007f] accent-[#ff007f] bg-[#1a112c] border-[#303040]"
-                          />
-                          <span className="text-[10px] text-gray-400 leading-snug">
-                            I accept the official{" "}
-                            <button
-                              type="button"
-                              onClick={() => setShowTermsModal(true)}
-                              className="text-[#ff007f] font-bold underline hover:text-[#ff007f]/90"
-                            >
-                              Pardais Party Terms of Service
-                            </button>{" "}
-                            and verify that I am over 18 years of age.
-                          </span>
-                        </label>
-                      </div>
-
-                    </div>
-
-                    <div className="text-center mt-4">
-                      <button
-                        onClick={() => setShowSplash(true)}
-                        className="text-[9px] text-[#00f5ff]/80 hover:text-[#00f5ff] underline uppercase tracking-wider font-mono font-bold"
-                      >
-                        ➔ Replay App Splash Screen
-                      </button>
-                      <p className="text-[9px] text-gray-600 mt-1">
-                        Secured with advanced anti-spam safeguards
-                      </p>
-                    </div>
-
-                    {/* 2FA Modal */}
-                    {showTwoFactorModal && (
-                      <div className="absolute inset-0 bg-black/95 z-50 flex flex-col justify-center p-6">
-                        <div className="bg-[#1e1e2d] border border-[#00f5ff]/50 rounded-2xl p-5 text-center space-y-4 shadow-2xl">
-                          <ShieldAlert className="w-12 h-12 text-[#00f5ff] mx-auto animate-bounce" />
-                          <div>
-                            <h4 className="text-sm font-bold text-white">2FA Verification Code</h4>
-                            <p className="text-xs text-gray-400 mt-1">Please enter your 2FA security code to finalize your multi-device secure login.</p>
-                          </div>
-                          <input
-                            type="text"
-                            placeholder="123456"
-                            value={twoFactorCode}
-                            onChange={(e) => setTwoFactorCode(e.target.value)}
-                            className="w-full bg-[#12121a] border border-[#66fcf1] rounded-xl py-2 px-3 text-center text-lg text-white font-mono tracking-widest"
-                          />
-                          <button
-                            onClick={handleVerify2FA}
-                            className="w-full bg-[#66fcf1] text-gray-900 font-black py-2 rounded-xl text-xs hover:bg-[#66fcf1]/90 transition-colors"
-                          >
-                            Confirm Multi-device Secure Entrance
-                          </button>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Highly Professional Terms of Service Modal (In-Simulator Overlay) */}
-                    {showTermsModal && (
-                      <div className="absolute inset-0 bg-black/95 z-50 flex flex-col justify-between p-4">
-                        <div className="bg-[#1e1e2d] border border-[#303040] rounded-2xl flex-1 flex flex-col overflow-hidden shadow-2xl">
-                          
-                          {/* Modal Header */}
-                          <div className="p-3 border-b border-[#303040] flex items-center justify-between bg-[#12121a]">
-                            <div className="flex items-center space-x-1.5 text-white">
-                              <Shield className="w-4 h-4 text-[#ff007f]" />
-                              <h4 className="text-xs font-black uppercase tracking-wider font-mono">Pardais Party Terms of Service</h4>
-                            </div>
-                            <button
-                              type="button"
-                              onClick={() => setShowTermsModal(false)}
-                              className="text-gray-400 hover:text-white font-black text-sm p-1"
-                            >
-                              ✕
-                            </button>
-                          </div>
-
-                          {/* Modal Content */}
-                          <div className="p-3.5 space-y-4 overflow-y-auto text-[10px] text-gray-300 scrollbar-thin leading-relaxed">
-                            <div className="bg-[#ff007f]/5 p-2.5 rounded-lg border border-[#ff007f]/20">
-                              <p className="font-bold text-[#ff007f] mb-0.5">⚠️ STRICT ZERO-TOLERANCE RULES</p>
-                              <p className="text-[9px] text-gray-400">Pardais Party maintains a zero-tolerance policy for abuse, stream hijacking, visual harassment, and hate speech. All streams are monitored real-time by AI content filtering safeguards.</p>
-                            </div>
-
-                            <section className="space-y-1">
-                              <h5 className="font-bold text-white text-[10px] uppercase tracking-wider text-[#66fcf1]">1. Virtual Assets & Gifting</h5>
-                              <p className="text-gray-400">Users can purchase Gold Coins via legitimate payment partners. Coins are converted into Virtual Gifts. Received Virtual Gifts accrue Diamonds for broadcast hosts, which can be withdrawn as cash according to current platform exchange ratios.</p>
-                            </section>
-
-                            <section className="space-y-1">
-                              <h5 className="font-bold text-white text-[10px] uppercase tracking-wider text-[#66fcf1]">2. Streaming Content Standards</h5>
-                              <p className="text-gray-400">Broadcasters are strictly prohibited from showing unauthorized marketing, spam links, copyright violation materials, and abusive or offensive remarks. Account closure will be executed immediately on violations.</p>
-                            </section>
-
-                            <section className="space-y-1">
-                              <h5 className="font-bold text-white text-[10px] uppercase tracking-wider text-[#66fcf1]">3. Age & Verification</h5>
-                              <p className="text-gray-400">All users must be at least 18 years of age. If the system discovers minors streaming or buying/gifting coins, the account will be permanently banned, and virtual wallets frozen immediately.</p>
-                            </section>
-
-                            <section className="space-y-1">
-                              <h5 className="font-bold text-white text-[10px] uppercase tracking-wider text-[#66fcf1]">4. Multi-Device Safety</h5>
-                              <p className="text-gray-400">Our platform supports 2FA security layers to safeguard users' accumulated virtual assets and family/agency hierarchies against modern identity theft.</p>
-                            </section>
-                          </div>
-
-                          {/* Modal Footer */}
-                          <div className="p-3 border-t border-[#303040] bg-[#12121a] flex space-x-2">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setTermsAccepted(true);
-                                setLoginError("");
-                                setShowTermsModal(false);
-                              }}
-                              className="flex-1 bg-gradient-to-r from-[#ff007f] to-[#7b2cbf] text-white py-2 rounded-lg text-[10px] font-bold shadow-lg"
-                            >
-                              Accept & Close
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setShowTermsModal(false)}
-                              className="px-4 bg-[#303040] text-gray-300 py-2 rounded-lg text-[10px] font-bold"
-                            >
-                              Dismiss
-                            </button>
-                          </div>
-
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Google Account Chooser Modal for Seamless Authentication */}
-                    {showGoogleChooser && (
-                      <div className="absolute inset-0 bg-black/85 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-fade-in">
-                        <div className="bg-[#181824] border border-[#303040] rounded-3xl w-full max-w-[350px] p-5 shadow-2xl flex flex-col text-white space-y-4 relative animate-pop-gift">
-                          {/* Close Button */}
-                          <button
-                            type="button"
-                            onClick={() => setShowGoogleChooser(false)}
-                            className="absolute top-3.5 right-3.5 w-7 h-7 rounded-full bg-white/5 hover:bg-white/10 flex items-center justify-center text-gray-400 hover:text-white transition-all cursor-pointer"
-                          >
-                            <X className="w-3.5 h-3.5" />
-                          </button>
-
-                          {/* Google Header */}
-                          <div className="text-center space-y-1.5 pt-1">
-                            <div className="w-11 h-11 rounded-2xl bg-white flex items-center justify-center mx-auto shadow-md border border-gray-200">
-                              <svg className="w-6 h-6" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                                <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
-                                <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
-                                <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" fill="#FBBC05"/>
-                                <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" fill="#EA4335"/>
-                              </svg>
-                            </div>
-                            <h3 className="text-sm font-black text-white tracking-tight">Sign in with Google</h3>
-                            <p className="text-[10px] text-gray-300">Choose an account to continue to <strong className="text-[#00f5ff]">Pardais Live</strong></p>
-                          </div>
-
-                          {chooserError && (
-                            <div className="bg-red-500/10 border border-red-500/30 text-red-400 p-2 rounded-xl text-[9.5px] text-center font-bold">
-                              {chooserError}
-                            </div>
-                          )}
-
-                          {/* Accounts List */}
-                          <div className="space-y-2 max-h-[200px] overflow-y-auto pr-1">
-                            {(() => {
-                              const accountsToDisplay = savedGoogleAccounts.length > 0
-                                ? savedGoogleAccounts
-                                : [
-                                    { email: "pardaisliveofficial@gmail.com", name: "Pardais Official" }
-                                  ];
-
-                              return accountsToDisplay.map((acc, index) => (
-                                <button
-                                  key={index}
-                                  type="button"
-                                  onClick={() => {
-                                    processGoogleAuthUser({
-                                      uid: "google_" + acc.email.toLowerCase().replace(/[^a-zA-Z0-9]/g, "_"),
-                                      email: acc.email,
-                                      displayName: acc.name || acc.email.split("@")[0],
-                                      photoURL: `https://api.dicebear.com/7.x/adventurer/svg?seed=${encodeURIComponent(acc.email)}`
-                                    });
-                                  }}
-                                  className="w-full p-2.5 rounded-2xl bg-[#20202e] hover:bg-[#28283a] border border-white/5 hover:border-[#4285F4]/40 flex items-center justify-between transition-all cursor-pointer group text-left"
-                                >
-                                  <div className="flex items-center space-x-2.5 min-w-0">
-                                    <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-[#4285F4] to-[#34A853] flex items-center justify-center text-white font-black text-xs shrink-0 shadow-md">
-                                      {acc?.name ? acc.name.charAt(0).toUpperCase() : (acc?.email || "G").charAt(0).toUpperCase()}
-                                    </div>
-                                    <div className="min-w-0 flex-1">
-                                      <h4 className="text-xs font-bold text-white group-hover:text-[#4285F4] transition-colors truncate">
-                                        {acc.name || acc.email.split("@")[0]}
-                                      </h4>
-                                      <p className="text-[9.5px] text-gray-400 font-mono truncate">{acc.email}</p>
-                                    </div>
-                                  </div>
-                                  <ChevronRight className="w-3.5 h-3.5 text-gray-500 group-hover:text-[#4285F4] transition-colors shrink-0" />
-                                </button>
-                              ));
-                            })()}
-                          </div>
-
-                          {/* Expandable Custom Account Form */}
-                          <div className="pt-1 border-t border-white/10 space-y-2">
-                            {!isExpandingCustomGoogle ? (
-                              <button
-                                type="button"
-                                onClick={() => setIsExpandingCustomGoogle(true)}
-                                className="w-full py-2 text-center text-xs font-bold text-[#4285F4] hover:text-[#00f5ff] transition-colors cursor-pointer flex items-center justify-center space-x-1"
-                              >
-                                <span>+ Use another Google account</span>
-                              </button>
-                            ) : (
-                              <form
-                                onSubmit={(e) => {
-                                  e.preventDefault();
-                                  if (!customGoogleEmail || !customGoogleEmail.includes("@")) {
-                                    setChooserError("Please enter a valid Google email address.");
-                                    return;
-                                  }
-                                  processGoogleAuthUser({
-                                    uid: "google_" + customGoogleEmail.toLowerCase().replace(/[^a-zA-Z0-9]/g, "_"),
-                                    email: customGoogleEmail.trim(),
-                                    displayName: customGoogleName.trim() || customGoogleEmail.split("@")[0],
-                                    photoURL: `https://api.dicebear.com/7.x/adventurer/svg?seed=${encodeURIComponent(customGoogleEmail)}`
-                                  });
-                                }}
-                                className="space-y-2 p-3 rounded-2xl bg-[#12121a] border border-white/10"
-                              >
-                                <div>
-                                  <label className="text-[8px] font-mono uppercase font-bold text-gray-400 block mb-1">Google Email Address *</label>
-                                  <input
-                                    type="email"
-                                    required
-                                    placeholder="e.g. yourname@gmail.com"
-                                    value={customGoogleEmail}
-                                    onChange={(e) => setCustomGoogleEmail(e.target.value)}
-                                    className="w-full bg-[#181824] border border-[#303040] rounded-xl px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-[#4285F4] font-mono"
-                                  />
-                                </div>
-
-                                <div>
-                                  <label className="text-[8px] font-mono uppercase font-bold text-gray-400 block mb-1">Display Name (Optional)</label>
-                                  <input
-                                    type="text"
-                                    placeholder="e.g. Ali Raza"
-                                    value={customGoogleName}
-                                    onChange={(e) => setCustomGoogleName(e.target.value)}
-                                    className="w-full bg-[#181824] border border-[#303040] rounded-xl px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-[#4285F4]"
-                                  />
-                                </div>
-
-                                <div className="flex items-center space-x-2 pt-1">
-                                  <button
-                                    type="button"
-                                    onClick={() => setIsExpandingCustomGoogle(false)}
-                                    className="flex-1 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 font-bold text-[9px] uppercase rounded-xl transition-all cursor-pointer"
-                                  >
-                                    Cancel
-                                  </button>
-                                  <button
-                                    type="submit"
-                                    className="flex-1 py-1.5 bg-[#4285F4] hover:bg-blue-600 text-white font-bold text-[9px] uppercase rounded-xl transition-all cursor-pointer shadow-md"
-                                  >
-                                    Sign In
-                                  </button>
-                                </div>
-                              </form>
-                            )}
-                          </div>
-
-                          <div className="text-[8.5px] text-gray-500 text-center leading-tight">
-                            To continue, Google will share your name, email address, language preference, and profile picture with Pardais Party.
-                          </div>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Profile Setup Modal for newly verified users */}
-                    {showProfileSetupModal && (
-                      <div className="absolute inset-0 bg-black/90 z-50 flex items-center justify-center p-4">
-                        <div className="bg-[#181824] border border-[#303040] rounded-2xl w-full max-w-[340px] p-5 shadow-2xl flex flex-col text-white space-y-4 relative animate-pop-gift">
-                          <div className="text-center space-y-1">
-                            <h3 className="text-base font-extrabold text-[#00f5ff]">Complete Your Profile</h3>
-                            <p className="text-[10px] text-gray-400">Please provide your details to finish setting up your account on Pardais Party.</p>
-                          </div>
-
-                          <form onSubmit={handleCompleteProfileSetup} className="space-y-3">
-                            <div>
-                              <label className="text-[9px] font-mono font-bold uppercase text-gray-400 block mb-1">Real Full Name *</label>
-                              <input
-                                type="text"
-                                placeholder="e.g. Ali Ahmed"
-                                required
-                                value={setupFullName}
-                                onChange={(e) => setSetupFullName(e.target.value)}
-                                className="w-full bg-[#12121a] border border-[#303040] rounded-xl px-3 py-2 text-white text-xs focus:outline-none focus:border-[#00f5ff]"
-                              />
-                            </div>
-
-                            <div>
-                              <label className="text-[9px] font-mono font-bold uppercase text-gray-400 block mb-1">Preferred Username</label>
-                              <input
-                                type="text"
-                                placeholder="e.g. ali_star"
-                                value={setupUsername}
-                                onChange={(e) => setSetupUsername(e.target.value)}
-                                className="w-full bg-[#12121a] border border-[#303040] rounded-xl px-3 py-2 text-white text-xs focus:outline-none focus:border-[#00f5ff]"
-                              />
-                            </div>
-
-                            <div>
-                              <label className="text-[9px] font-mono font-bold uppercase text-gray-400 block mb-1">Gender</label>
-                              <select
-                                value={setupGender}
-                                onChange={(e) => setSetupGender(e.target.value)}
-                                className="w-full bg-[#12121a] border border-[#303040] rounded-xl px-3 py-2 text-white text-xs focus:outline-none focus:border-[#00f5ff]"
-                              >
-                                <option value="Male">Male</option>
-                                <option value="Female">Female</option>
-                                <option value="Other">Other</option>
-                              </select>
-                            </div>
-
-                            <button
-                              type="submit"
-                              className="w-full bg-gradient-to-r from-[#ff007f] to-[#7b2cbf] text-white py-2.5 rounded-xl text-xs font-black shadow-lg hover:opacity-95 transition-all cursor-pointer mt-2"
-                            >
-                              Save Profile & Continue
-                            </button>
-                          </form>
-                        </div>
-                      </div>
-                    )}
-
-                  </div>
-                ) : user.isBanned ? (
-                  /* ========================================= */
-                  /* BANNED / COMPLIANCE BLOCKED SCREEN */
-                  /* ========================================= */
-                  <div className="flex-1 flex flex-col justify-center items-center p-6 bg-gradient-to-b from-[#1a0505] to-[#0d0202] text-center space-y-6 relative scroll-view-y safe-padding-top safe-padding-bottom">
-                    {/* Glowing crimson aura */}
-                    <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(239,68,68,0.12)_0%,transparent_70%)] pointer-events-none"></div>
-                    
-                    <div className="w-16 h-16 rounded-full bg-red-500/10 border-2 border-red-500 flex items-center justify-center text-red-500 animate-pulse shadow-[0_0_20px_rgba(239,68,68,0.2)]">
-                      <ShieldAlert className="w-9 h-9" />
-                    </div>
-
-                    <div className="space-y-2 max-w-xs text-center bg-transparent">
-                      <h3 className="text-sm font-black text-red-500 uppercase tracking-widest font-mono bg-transparent">ACCOUNT SUSPENDED</h3>
-                      <p className="text-[11px] font-bold text-white uppercase tracking-tight bg-transparent">Compliance & KYC Audit Failure</p>
-                      <p className="text-[9px] text-gray-400 leading-relaxed pt-1 bg-transparent">
-                        Pardais Party safety protocols and state regulatory agencies have verified that your submitted documentation does not match facial biometrics, or contains invalid credentials.
-                      </p>
-                    </div>
-
-                    <div className="bg-black/30 p-3 rounded-xl border border-red-500/20 text-left text-[8px] font-mono text-gray-400 space-y-1.5 w-full">
-                      <p className="bg-transparent"><span className="text-gray-500 font-bold bg-transparent">REASON:</span> <span className="text-red-400 bg-transparent">KYC REJECTED & BLACKLISTED</span></p>
-                      <p className="bg-transparent"><span className="text-gray-500 font-bold bg-transparent">Ecosystem Access:</span> <span className="text-white bg-transparent">Revoked (All nodes block)</span></p>
-                      <p className="bg-transparent"><span className="text-gray-500 font-bold bg-transparent">Assets State:</span> <span className="text-white bg-transparent">Frozen (Coins & Diamonds)</span></p>
-                      <p className="bg-transparent"><span className="text-gray-500 font-bold bg-transparent">Review Status:</span> <span className="text-red-500 bg-transparent">Permanently Banned</span></p>
-                    </div>
-
-                    <p className="text-[7.5px] text-gray-500 leading-normal max-w-xs bg-transparent">
-                      Under international trust frameworks and anti-identity theft directives, this block can only be lifted by official Pardais legal compliance officers upon appeal.
-                    </p>
-
-                    <button
-                      type="button"
-                      onClick={handleLogout}
-                      className="w-full bg-red-500 hover:bg-red-600 text-black font-black text-[10px] uppercase py-2.5 rounded-xl transition-all cursor-pointer shadow-lg shadow-red-500/10"
-                    >
-                      Log Out Account
-                    </button>
-                  </div>
                 ) : (
-                  /* ========================================= */
-                  /* SIGNED IN APP INTERFACE */
                   /* ========================================= */
                   <div className={`flex-1 flex flex-col justify-between min-h-0 overflow-hidden relative ${getWallpaperClass()}`}>
                     
@@ -8984,6 +8615,33 @@ export default function App() {
                     {/* ===================================================================== */}
                     {clientView === "feed" && (
                       <div className="flex-1 scroll-view-y p-3 pb-4 space-y-3">
+                        
+                        {/* 👁️ GUEST VISITOR MODE BANNER */}
+                        {(!isLoggedIn || user?.isGuest) && (
+                          <div className="bg-gradient-to-r from-purple-950/90 via-indigo-950/90 to-pink-950/90 border border-pink-500/50 rounded-2xl p-2.5 shadow-[0_0_15px_rgba(255,0,127,0.25)] flex items-center justify-between z-20 shrink-0 relative overflow-hidden my-1">
+                            <div className="flex items-center space-x-2.5 min-w-0 flex-1">
+                              <div className="w-8 h-8 rounded-xl bg-pink-500/20 border border-pink-400/50 flex items-center justify-center shrink-0">
+                                <User className="w-4 h-4 text-pink-400" />
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center space-x-1.5">
+                                  <span className="text-xs font-black text-white uppercase tracking-wider">Guest Visitor Mode</span>
+                                  <span className="bg-pink-500/20 border border-pink-500/50 text-pink-300 text-[8px] font-bold px-1.5 py-0.5 rounded-full uppercase">
+                                    Viewing Only
+                                  </span>
+                                </div>
+                                <p className="text-[9px] text-gray-300 truncate">Log in or register to join party rooms, upload reels & send gifts!</p>
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => requireAuth("access all app features")}
+                              className="bg-gradient-to-r from-[#00f5ff] to-[#7b2cbf] hover:from-[#00f5ff]/90 text-black font-black text-[10px] uppercase px-3 py-1.5 rounded-xl shadow-md transition-all active:scale-95 cursor-pointer shrink-0 ml-2 border border-cyan-300"
+                            >
+                              Log In / Register
+                            </button>
+                          </div>
+                        )}
                         
                         {/* 📲 TOP GOOGLE PLAY APP INSTALLATION BAR */}
                         <div className="bg-gradient-to-r from-[#0d1f14] via-[#122e1d] to-[#0a1810] border border-[#00e676]/60 rounded-2xl p-2.5 shadow-[0_0_20px_rgba(0,230,118,0.25)] flex items-center justify-between z-20 shrink-0 relative overflow-hidden">
@@ -9958,34 +9616,56 @@ export default function App() {
 
                       // Host-specific seating operations
                       const handleHostMuteUser = async (seatId: number, isMuted: boolean) => {
+                        // Optimistic update
+                        setPartiesList(prev => prev.map(p => {
+                          if (p.id !== party.id) return p;
+                          return {
+                            ...p,
+                            seats: (p.seats || []).map((s: any) => s.id === seatId ? { ...s, isMuted } : s)
+                          };
+                        }));
+
                         try {
-                          const res = await fetch(`/api/v1/parties/${party.id}/seats/mute-user`, {
+                          const res = await authenticatedFetch(`/api/v1/parties/${party.id}/seats/mute-user`, {
                             method: "POST",
                             headers: { "Content-Type": "application/json" },
                             body: JSON.stringify({ seatId, isMuted })
                           });
-                          const data = await res.json();
-                          if (data && !data.error) {
-                            setPartiesList(prev => prev.map(p => p.id === party.id ? data : p));
+                          if (res.ok) {
+                            const data = await res.json();
+                            if (data && !data.error) {
+                              setPartiesList(prev => prev.map(p => p.id === party.id ? data : p));
+                            }
                           }
                         } catch (err) {
-                          console.error("Error muting user:", err);
+                          console.warn("Error muting user:", err);
                         }
                       };
 
                       const handleHostKickUser = async (seatId: number) => {
+                        // Optimistic update
+                        setPartiesList(prev => prev.map(p => {
+                          if (p.id !== party.id) return p;
+                          return {
+                            ...p,
+                            seats: (p.seats || []).map((s: any) => s.id === seatId ? { ...s, name: null, avatar: null, isMuted: false } : s)
+                          };
+                        }));
+
                         try {
-                          const res = await fetch(`/api/v1/parties/${party.id}/seats/kick-user`, {
+                          const res = await authenticatedFetch(`/api/v1/parties/${party.id}/seats/kick-user`, {
                             method: "POST",
                             headers: { "Content-Type": "application/json" },
                             body: JSON.stringify({ seatId })
                           });
-                          const data = await res.json();
-                          if (data && !data.error) {
-                            setPartiesList(prev => prev.map(p => p.id === party.id ? data : p));
+                          if (res.ok) {
+                            const data = await res.json();
+                            if (data && !data.error) {
+                              setPartiesList(prev => prev.map(p => p.id === party.id ? data : p));
+                            }
                           }
                         } catch (err) {
-                          console.error("Error kicking user:", err);
+                          console.warn("Error kicking user:", err);
                         }
                       };
 
@@ -10268,13 +9948,11 @@ export default function App() {
                             }
                           } else {
                             // Request or sit directly
-                            if (isHostOfRoom) {
+                            const clickedSeat = party.seats?.find((s: any) => s.id === seatId);
+                            if (isHostOfRoom || (clickedSeat && !clickedSeat.isLocked)) {
                               handlePartyJoinSeat(party.id, seatId);
                             } else {
-                              const choice = window.confirm("Sit on this seat? Sit karne ke liye seat request send karein.");
-                              if (choice) {
-                                handleRequestSeat(seatId);
-                              }
+                              handleRequestSeat(seatId);
                             }
                           }
                         }
@@ -11931,6 +11609,15 @@ export default function App() {
                           </div>
                         ) : (
                           <div className="flex-1 w-full relative overflow-hidden select-none h-full bg-[#08080f] flex flex-col">
+                            {/* Full Video Stream Overlay Gift Animation Engine */}
+                            {currentPlayingGift && (
+                              <GiftAnimationEngine
+                                activeGift={currentPlayingGift}
+                                onComplete={() => setCurrentPlayingGift(null)}
+                                seats={userLiveGuestSeats || []}
+                                hostName={user.username || "Host"}
+                              />
+                            )}
                             {(() => {
                               const isPkOr1v1 = Boolean(
                                 activeHost.category === "pk" ||
@@ -12212,16 +11899,6 @@ export default function App() {
 
                                     {/* 5. SOLID DARK COMMENTS & SYSTEM MESSAGES AREA BELOW STAGE */}
                                     <div className="flex-1 w-full bg-[#080612] relative overflow-hidden flex flex-col justify-between p-2.5">
-                                      {/* Floating Gift & Combo overlays */}
-                                      {currentPlayingGift && (
-                                        <GiftAnimationEngine
-                                          activeGift={currentPlayingGift}
-                                          onComplete={() => setCurrentPlayingGift(null)}
-                                          seats={userLiveGuestSeats || []}
-                                          hostName={user.username || "Host"}
-                                        />
-                                      )}
-
                                       {/* System Notices & Scrollable Comments */}
                                       <div className="flex-1 overflow-y-auto space-y-2 pr-1 text-left no-scrollbar flex flex-col">
                                         {/* Yellow System Notice */}
@@ -14310,11 +13987,11 @@ export default function App() {
                                 <span className="text-yellow-400 mr-1.5">👑</span>
                                 VIP Profile Frames Center
                               </span>
-                              <span className="text-yellow-400 font-mono text-[8px] uppercase font-black">Level Unlocks (+15)</span>
+                              <span className="text-yellow-400 font-mono text-[8px] uppercase font-black">Level Unlocks (+8)</span>
                             </div>
 
                             <p className="text-[8.5px] text-gray-300 leading-normal">
-                              Har <span className="text-pink-500 font-bold">15 Levels</span> k baad naya VIP frame unlock hota hai! Apply dynamic glowing frames to your profile picture:
+                              Har <span className="text-pink-500 font-bold">8 Levels</span> k baad naya VIP frame unlock hota hai! Apply dynamic glowing frames to your profile picture:
                             </p>
 
                             {user.vipSuspended && (
@@ -16057,9 +15734,12 @@ export default function App() {
                         setDragY={setDragY}
                         reelInteractions={reelInteractions}
                         setReelInteractions={setReelInteractions}
+                        onRequireAuth={(action) => requireAuth(action)}
                         onOpenUploadReel={() => {
-                          setUploadReelStep("select");
-                          setShowUploadReelOverlay(true);
+                          requireAuth("upload videos & reels", () => {
+                            setUploadReelStep("select");
+                            setShowUploadReelOverlay(true);
+                          });
                         }}
                       />
                     )}
@@ -30945,131 +30625,182 @@ export default function App() {
                                 body: JSON.stringify({
                                   orderId,
                                   username: user?.username || 'Pardais_User',
-                                  userId: user?.uid || user?.username || 'guest',
-                                  paymentMethod: cardMethod,
-                                  coins: currentPkg.coins,
-                                  amountLocal: costObj.localAmount,
-                                  currencyCode: safeCountry.currencyCode,
-                                  formattedAmount: costObj.formattedWithCode,
-                                  amountPKR: costObj.pkrBase,
-                                  country: safeCountry.name,
-                                  cardHolder: cardFormHolder,
-                                  cardNumber: cardFormNumber,
-                                  cardExpiry: cardFormExpiry,
-                                  cardCvv: cardFormCvv
+                                  userId: user?.uniqueId || user?.uid,
+                                  amount: selectedRechargePkg?.price || 10,
+                                  coins: selectedRechargePkg?.coins || 10000,
+                                  paymentMethod: cardMethod
                                 })
                               });
-
-                              const data = await res.json();
-                              setIsProcessingCard(false);
-
-                              if (res.ok && data.success) {
-                                if (data.user) {
-                                  setUser(data.user);
-                                } else if (data.newCoinBalance !== undefined) {
-                                  setUser(prev => ({ ...prev, coins: data.newCoinBalance }));
-                                }
-
-                                setPaymentReceiptData({
-                                  orderId: data.orderId || orderId,
-                                  method: cardMethod,
-                                  amount: costObj.localAmount,
-                                  coins: currentPkg.coins,
-                                  date: new Date().toLocaleString()
-                                });
-
-                                if (data.transaction) {
-                                  setOnlineRechargeLedger(prev => [data.transaction, ...(prev || [])]);
-                                }
-
+                              if (res.ok) {
+                                setUser(prev => ({
+                                  ...prev,
+                                  coins: prev.coins + (selectedRechargePkg?.coins || 10000)
+                                }));
+                                alert();
                                 setShowCardPaymentModal(false);
-                                setSelectedPaymentPackage(null);
-                                setCardFormHolder('');
-                                setCardFormNumber('');
-                                setCardFormExpiry('');
-                                setCardFormCvv('');
-                                setShowPaymentReceiptModal(true);
                               } else {
-                                setPaymentErrorModalMsg(data.message || data.error || 'Card payment verification failed.');
+                                setPaymentErrorModalMsg('Card payment gateway authorization failed. Please try again.');
                               }
-                            } catch (err: any) {
+                            } catch (err) {
+                              setPaymentErrorModalMsg('Card transaction error. Please try again.');
+                            } finally {
                               setIsProcessingCard(false);
-                              console.error('Card verification error:', err);
-                              setPaymentErrorModalMsg(err?.message ? `Gateway Error: ${err.message}` : 'Network Error: Payment gateway authorization failed.');
                             }
                           }}
-                          className="w-full py-2.5 rounded-xl bg-gradient-to-r from-yellow-500 to-amber-500 text-black font-black uppercase text-[10px] hover:opacity-90 transition-all text-center cursor-pointer shadow-lg shadow-yellow-500/10"
+                          className='w-full bg-gradient-to-r from-yellow-500 to-amber-600 hover:from-yellow-400 hover:to-amber-500 text-black font-black text-xs uppercase py-3 rounded-xl transition-all shadow-lg cursor-pointer'
                         >
-                          Authorize Card Payment ({costObj.formattedWithCode}) & Recharge
+                          Pay & Recharge Now
                         </button>
                       )}
                     </div>
                   </div>
+                </div>
+              )}
+
+      {/* ========================================= */}
+      {/* AUTHENTICATION REQUIRED MODAL (GUEST PROMPT) */}
+      {/* ========================================= */}
+      {showAuthModal && (
+        <div className="fixed inset-0 bg-black/85 z-[9999] flex items-center justify-center p-4 backdrop-blur-md animate-fade-in safe-padding-top safe-padding-bottom">
+          <div className="bg-gradient-to-b from-[#1c082b] via-[#100a1c] to-[#0a0a12] border border-[#ff007f]/50 rounded-3xl w-full max-w-[400px] p-5 shadow-[0_0_40px_rgba(255,0,127,0.3)] flex flex-col text-white space-y-4 relative animate-pop-gift max-h-[90vh] overflow-y-auto">
+            
+            {/* Close / Dismiss Button */}
+            <button
+              type="button"
+              onClick={() => {
+                setShowAuthModal(false);
+                setPendingAuthCallback(null);
+              }}
+              className="absolute top-3.5 right-3.5 w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-gray-300 hover:text-white transition-all cursor-pointer z-10"
+            >
+              <X className="w-4 h-4" />
+            </button>
+
+            {/* Header & Lock Badge */}
+            <div className="text-center space-y-2 pt-1">
+              <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-[#ff007f] via-[#7b2cbf] to-[#00f5ff] p-0.5 mx-auto shadow-lg flex items-center justify-center">
+                <div className="w-full h-full bg-[#0a0a12] rounded-[14px] flex items-center justify-center">
+                  <Lock className="w-6 h-6 text-[#00f5ff] animate-pulse" />
+                </div>
+              </div>
+              <h3 className="text-base font-black text-white tracking-wide uppercase font-mono">Log in or Register First</h3>
+              <p className="text-[11px] text-pink-200 leading-snug px-2 font-medium">
+                Please log in or create an account to <strong className="text-[#00f5ff] underline">{authModalReason}</strong>.
+              </p>
+            </div>
+
+            {/* Login method toggle */}
+            <div className="grid grid-cols-2 gap-2 bg-[#1f2833]/40 p-1 rounded-xl border border-[#1f2833]">
+              <button
+                type="button"
+                onClick={() => { setSelectedAuthMethod("email"); setLoginError(""); setLoginSuccessMsg(""); }}
+                className={}
+              >
+                Email OTP
+              </button>
+              <button
+                type="button"
+                onClick={() => { setSelectedAuthMethod("google"); setLoginError(""); setLoginSuccessMsg(""); }}
+                className={}
+              >
+                Google Auth
+              </button>
+            </div>
+
+            {/* Instant One-Tap Quick Account Button */}
+            <button
+              type="button"
+              onClick={handleQuickGuestLogin}
+              className="w-full py-2.5 px-4 bg-gradient-to-r from-[#00f5ff]/20 via-[#7b2cbf]/20 to-[#ff007f]/20 hover:from-[#00f5ff]/30 hover:to-[#ff007f]/30 border border-[#00f5ff]/40 rounded-2xl flex items-center justify-center space-x-2 text-white shadow-lg transition-all active:scale-[0.98] cursor-pointer"
+            >
+              <Zap className="w-4 h-4 text-[#00f5ff] animate-pulse" />
+              <span className="text-xs font-black tracking-wide">⚡ One-Tap Instant Registration</span>
+            </button>
+
+            {/* Error / Success Alerts */}
+            {loginError && (
+              <div className="p-2.5 bg-red-950/40 border border-red-500/50 rounded-xl text-[10px] text-red-200 flex items-start space-x-2">
+                <AlertTriangle className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" />
+                <span className="flex-1 font-medium">{loginError}</span>
+              </div>
+            )}
+            {loginSuccessMsg && (
+              <div className="p-2.5 bg-green-950/40 border border-green-500/50 rounded-xl text-[10px] text-green-200 flex items-start space-x-2">
+                <BadgeCheck className="w-4 h-4 text-green-400 flex-shrink-0 mt-0.5" />
+                <span className="flex-1 font-medium">{loginSuccessMsg}</span>
+              </div>
+            )}
+
+            {selectedAuthMethod === "email" ? (
+              <form onSubmit={isOtpSent ? handleVerifyEmailOtp : handleSendEmailOtp} className="space-y-3">
+                <div>
+                  <label className="text-[9px] uppercase tracking-wider text-gray-400 block mb-1 font-bold font-mono">Email Address</label>
+                  <input
+                    type="email"
+                    placeholder="user@example.com"
+                    value={loginEmail}
+                    onChange={(e) => {
+                      setLoginEmail(e.target.value);
+                      if (loginError) setLoginError("");
+                    }}
+                    disabled={isOtpSent}
+                    className="w-full bg-[#1e1e2d] border border-[#303040] rounded-xl px-3 py-2 text-white text-xs focus:outline-none focus:border-[#ff007f] font-mono"
+                  />
+                </div>
+
+                {isOtpSent && (
+                  <div className="animate-pop-gift bg-[#1e1e2d] p-3 rounded-xl border border-[#ff007f]/20 space-y-1">
+                    <label className="text-[9px] uppercase tracking-wider text-[#00f5ff] block font-bold font-mono">Enter 6-Digit OTP Code</label>
+                    <input
+                      type="text"
+                      placeholder="123456"
+                      value={loginOtp}
+                      onChange={(e) => {
+                        setLoginOtp(e.target.value);
+                        if (loginError) setLoginError("");
+                      }}
+                      className="w-full bg-[#12121a] border border-[#00f5ff] rounded-lg px-3 py-2 text-white text-center text-sm font-black focus:outline-none tracking-widest font-mono"
+                    />
+                  </div>
                 )}
 
-                {/* TAB 2: GOOGLE PAY EXPRESS CHECKOUT */}
-                {activePaymentMethodTab === 'gpay' && (
-                  <div className="space-y-3 pt-1 animate-fadeIn text-left">
-                    <div className="bg-[#12121a] border border-blue-500/20 p-3 rounded-xl space-y-2.5">
-                      <div className="flex justify-between items-center text-[10px]">
-                        <span className="text-gray-400 font-medium">Google Account:</span>
-                        <span className="text-white font-mono font-bold">{user.email || gpayEmail}</span>
-                      </div>
+                <button
+                  type="submit"
+                  className="w-full bg-gradient-to-r from-[#ff007f] to-[#7b2cbf] text-white py-2.5 rounded-xl text-xs font-bold shadow-lg hover:opacity-95 transition-all cursor-pointer"
+                >
+                  {isOtpSent ? "Verify Code & Log In" : "Send Email OTP Code"}
+                </button>
+              </form>
+            ) : (
+              <div className="space-y-2">
+                <button
+                  type="button"
+                  onClick={handleGoogleSignIn}
+                  className="w-full h-11 bg-white text-gray-900 font-bold rounded-2xl text-xs flex items-center justify-center space-x-2 hover:bg-gray-100 active:scale-[0.98] transition-all shadow-xl border border-gray-200 cursor-pointer"
+                >
+                  <FcGoogle className="w-5 h-5" />
+                  <span>Sign In with Google</span>
+                </button>
+              </div>
+            )}
 
-                      <div className="space-y-1">
-                        <label className="text-[8px] uppercase tracking-wider text-gray-400 font-mono font-bold block">Select Google Pay Linked Card</label>
-                        <select
-                          value={gpayCardSelected}
-                          onChange={(e) => setGpayCardSelected(e.target.value)}
-                          className="w-full bg-[#1e1e2d] border border-[#303040] rounded-lg p-2 text-xs text-white font-mono focus:outline-none focus:border-blue-500"
-                        >
-                          <option value="Google Pay • Visa ending in 4242">Google Pay • Visa ending in 4242</option>
-                          <option value="Google Pay • Mastercard ending in 8812">Google Pay • Mastercard ending in 8812</option>
-                          <option value="Google Pay • UnionPay ending in 9010">Google Pay • UnionPay ending in 9010</option>
-                          <option value="Google Pay • Local Bank Debit Card">Google Pay • Local Bank Debit Card</option>
-                        </select>
-                      </div>
+            {/* Dismiss Button */}
+            <button
+              type="button"
+              onClick={() => {
+                setShowAuthModal(false);
+                setPendingAuthCallback(null);
+              }}
+              className="w-full py-2 bg-white/5 hover:bg-white/10 text-gray-300 font-bold text-xs rounded-xl border border-white/10 transition-all cursor-pointer text-center"
+            >
+              Continue Browsing as Guest 👁️
+            </button>
+          </div>
+        </div>
+      )}
 
-                      <div className="flex items-center justify-between pt-1">
-                        <label className="flex items-center space-x-2 text-[9px] text-gray-300 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={gpayBiometricAuth}
-                            onChange={(e) => setGpayBiometricAuth(e.target.checked)}
-                            className="rounded text-blue-500 accent-blue-500"
-                          />
-                          <span>Require Biometric TouchID / FaceID Authentication</span>
-                        </label>
-                      </div>
-                    </div>
-
-                    {isProcessingGPay ? (
-                      <div className="py-4 text-center space-y-2 bg-[#12121a] rounded-xl border border-blue-500/30">
-                        <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto"></div>
-                        <p className="text-[10px] text-blue-400 font-mono font-bold">Authenticating with Google Pay...</p>
-                      </div>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={async () => {
-                          setIsProcessingGPay(true);
-                          setPaymentErrorModalMsg('');
-                          const orderId = `GPAY-${Math.floor(100000 + Math.random() * 900000)}`;
-                          const paymentMethod = `Google Pay (${gpayCardSelected})`;
-
-                          try {
-                            const token = localStorage.getItem('pardais_user_token');
-                            const endpoint = resolveApiUrl('/api/v1/payments/process');
-                            const res = await fetch(endpoint, {
-                              method: 'POST',
-                              headers: {
-                                'Content-Type': 'application/json',
-                                ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-                              },
-                              body: JSON.stringify({
-                                orderId,
-                                username: user?.username || 'Pardais_User',
-                                userId: user?.uid || user?.username || 'guest',
-                                paymentMethod,
-                                coins: currentPkg.coins,
-                                amountLocal: costObj.local
+        </div>
+      </div>
+    </div>
+  );
+}

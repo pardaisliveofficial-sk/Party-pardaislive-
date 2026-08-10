@@ -273,15 +273,15 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
 
       if (isUnmounted) return;
 
-      if (!tokenData || !tokenData.token) {
-        console.error("[AgoraStream] Missing Agora RTC token from server endpoint");
+      if (!tokenData) {
+        console.error("[AgoraStream] Missing Agora RTC credentials from server endpoint");
         setStatus("error");
-        setStatusDetails("Agora RTC Token Required - Please verify Server Token endpoint");
+        setStatusDetails("Agora RTC Endpoint Unreachable");
         return;
       }
 
       const targetAppId = tokenData.appId || "44f9db7ec1dc4d4bba73e459534d6f59";
-      const targetToken = tokenData.token;
+      const targetToken = tokenData.token || null;
       const targetUid = tokenData.uid || requestUid;
       const targetChannel = tokenData.channelName || cleanChannel;
 

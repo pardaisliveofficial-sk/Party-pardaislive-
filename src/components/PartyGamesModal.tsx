@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from "react";
 import { UserProfile, Transaction } from "../types";
 import { X, Sparkles, Trophy, HelpCircle, History, RotateCw, Volume2, VolumeX, Flame, Zap, ShieldCheck, Gift, Gem } from "lucide-react";
+import { getProgressionFromCoins } from "../levelUtils";
 
 interface PartyGamesModalProps {
   user: UserProfile;
@@ -325,8 +326,19 @@ export const PartyGamesModal: React.FC<PartyGamesModalProps> = ({
 
     if (soundEnabled) playSoundEffect("click");
 
-    // DEDUCTION: Bet coins are deducted from Gifting Wallet (user.coins)
-    setUser(prev => ({ ...prev, coins: Math.max(0, prev.coins - betAmount) }));
+    // DEDUCTION: Bet coins are deducted from Gifting Wallet & XP increased to level up
+    setUser(prev => {
+      const newXp = (prev.xp || 0) + betAmount;
+      const prog = getProgressionFromCoins(newXp);
+      return {
+        ...prev,
+        coins: Math.max(0, (prev.coins || 0) - betAmount),
+        xp: newXp,
+        userLevel: prog.level,
+        level: prog.level,
+        vipLevel: prog.vipLevel
+      };
+    });
     setIsSpinning(true);
     setLastWheelResult(null);
 
@@ -463,8 +475,19 @@ export const PartyGamesModal: React.FC<PartyGamesModalProps> = ({
 
     if (soundEnabled) playSoundEffect("click");
 
-    // Deduct bet from Gifting Wallet
-    setUser(prev => ({ ...prev, coins: Math.max(0, prev.coins - betAmount) }));
+    // Deduct bet from Gifting Wallet & XP increased to level up
+    setUser(prev => {
+      const newXp = (prev.xp || 0) + betAmount;
+      const prog = getProgressionFromCoins(newXp);
+      return {
+        ...prev,
+        coins: Math.max(0, (prev.coins || 0) - betAmount),
+        xp: newXp,
+        userLevel: prog.level,
+        level: prog.level,
+        vipLevel: prog.vipLevel
+      };
+    });
     setSelectedChest(chestIdx);
     setChestOpening(true);
 
@@ -545,7 +568,18 @@ export const PartyGamesModal: React.FC<PartyGamesModalProps> = ({
 
     if (soundEnabled) playSoundEffect("click");
 
-    setUser(prev => ({ ...prev, coins: Math.max(0, prev.coins - betAmount) }));
+    setUser(prev => {
+      const newXp = (prev.xp || 0) + betAmount;
+      const prog = getProgressionFromCoins(newXp);
+      return {
+        ...prev,
+        coins: Math.max(0, (prev.coins || 0) - betAmount),
+        xp: newXp,
+        userLevel: prog.level,
+        level: prog.level,
+        vipLevel: prog.vipLevel
+      };
+    });
     setIsSpinningSlots(true);
     setLastSlotWin(null);
 

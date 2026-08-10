@@ -1,4 +1,5 @@
 import { initializeApp, getApps, getApp } from "firebase/app";
+import { getAuth } from "firebase/auth";
 import { 
   initializeFirestore, 
   getFirestore,
@@ -18,7 +19,8 @@ let firebaseConfig = {
   projectId: appletConfig.projectId || "sehr-live-production",
   appId: appletConfig.appId || "1:496371999211:web:3caed46eb0e946c1c9b9ae",
   apiKey: appletConfig.apiKey || "AIzaSyDUcaaRaU2ZJNUp90CMdl9gER_0oe1Db_E",
-  authDomain: appletConfig.authDomain || "sehr-live-production.firebaseapp.com"
+  authDomain: appletConfig.authDomain || "sehr-live-production.firebaseapp.com",
+  storageBucket: (appletConfig as any).storageBucket || `${appletConfig.projectId || "sehr-live-production"}.firebasestorage.app`
 };
 
 let FIRESTORE_DB_ID = appletConfig.firestoreDatabaseId || "ai-studio-sehrlive-472fb6a7-1901-43d4-8fd3-710376199072";
@@ -29,6 +31,17 @@ const app = apps.length === 0
   : getApp();
 
 console.log("[PARDAIS-PARTY FIREBASE] Firebase Client SDK initialized successfully with projectId:", firebaseConfig.projectId);
+
+export let auth: any;
+try {
+  auth = getAuth(app);
+} catch (err) {
+  try {
+    auth = getAuth();
+  } catch (err2) {
+    console.warn("[PARDAIS-PARTY FIREBASE] Failed to initialize Firebase Auth:", err2);
+  }
+}
 
 // Silence internal Firestore client logging
 setLogLevel("silent");

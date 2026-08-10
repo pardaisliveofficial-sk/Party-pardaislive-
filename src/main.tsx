@@ -1,4 +1,4 @@
-import React, { StrictMode, useState, useEffect } from 'react';
+import React, { StrictMode, useState, useEffect, Component, ErrorInfo, ReactNode } from 'react';
 import {createRoot} from 'react-dom/client';
 import App from './App.tsx';
 import AdminApp from './AdminApp.tsx';
@@ -114,6 +114,77 @@ if (typeof window !== "undefined") {
   };
 }
 
+interface ErrorBoundaryProps {
+  children: ReactNode;
+}
+
+interface ErrorBoundaryState {
+  hasError: boolean;
+  error: Error | null;
+}
+
+class AppErrorBoundary extends (React.Component as any) {
+  constructor(props: any) {
+    super(props);
+    this.state = {
+      hasError: false,
+      error: null
+    };
+  }
+
+  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    console.error("[Pardais Party Production Error Boundary Caught]:", error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="min-h-screen bg-[#08080c] flex items-center justify-center p-4 font-sans text-white">
+          <div className="bg-[#12121c] border border-pink-500/30 p-6 rounded-3xl max-w-md w-full shadow-2xl text-center space-y-4">
+            <div className="w-14 h-14 rounded-full bg-pink-500/10 border border-pink-500/30 flex items-center justify-center mx-auto text-2xl">
+              ⚡
+            </div>
+            <div className="space-y-1">
+              <h2 className="text-lg font-black uppercase tracking-wider text-white">Pardais Ecosystem Restored</h2>
+              <p className="text-xs text-gray-400">A temporary interface state occurred and was safely caught.</p>
+            </div>
+            {this.state.error?.message && (
+              <div className="bg-black/50 p-3 rounded-xl border border-white/10 font-mono text-[10px] text-pink-300 text-left overflow-x-auto max-h-24">
+                {this.state.error.message}
+              </div>
+            )}
+            <div className="flex space-x-2 pt-2">
+              <button
+                onClick={() => {
+                  this.setState({ hasError: false, error: null });
+                  window.location.href = "/";
+                }}
+                className="flex-1 py-2.5 bg-gradient-to-r from-pink-600 to-purple-600 text-white font-bold text-xs uppercase tracking-wider rounded-xl hover:opacity-90 transition-all cursor-pointer"
+              >
+                📱 Mobile App
+              </button>
+              <button
+                onClick={() => {
+                  this.setState({ hasError: false, error: null });
+                  window.location.reload();
+                }}
+                className="flex-1 py-2.5 bg-white/10 hover:bg-white/20 border border-white/20 text-white font-bold text-xs uppercase tracking-wider rounded-xl transition-all cursor-pointer"
+              >
+                🔄 Reload App
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 function MainRouter() {
   const [isAdminView, setIsAdminView] = useState(() => {
     if (typeof window === "undefined") return false;
@@ -131,9 +202,24 @@ function MainRouter() {
       setIsAdminView(path.startsWith("/admin") || search.includes("admin") || hash.includes("admin"));
     };
 
+    const originalPushState = window.history.pushState;
+    const originalReplaceState = window.history.replaceState;
+
+    window.history.pushState = function (...args) {
+      originalPushState.apply(this, args);
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    };
+
+    window.history.replaceState = function (...args) {
+      originalReplaceState.apply(this, args);
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    };
+
     window.addEventListener("popstate", checkRoute);
     window.addEventListener("hashchange", checkRoute);
     return () => {
+      window.history.pushState = originalPushState;
+      window.history.replaceState = originalReplaceState;
       window.removeEventListener("popstate", checkRoute);
       window.removeEventListener("hashchange", checkRoute);
     };
@@ -158,12 +244,18 @@ function MainRouter() {
             <span>📱 Switch to Mobile App View</span>
           </button>
         </div>
-        <AdminApp />
+        <AppErrorBoundary>
+          <AdminApp />
+        </AppErrorBoundary>
       </div>
     );
   }
 
-  return <App />;
+  return (
+    <AppErrorBoundary>
+      <App />
+    </AppErrorBoundary>
+  );
 }
 
 createRoot(document.getElementById('root')!).render(

@@ -196,14 +196,22 @@ export const AgoraPartyAudio: React.FC<AgoraPartyAudioProps> = ({
     };
   }, [isSimulated, userRole]);
 
-  // Handle dynamic mute / unmute for direct WebRTC mic stream in simulation mode
+  // Handle dynamic mute / unmute for both Agora track and direct WebRTC mic stream
   useEffect(() => {
-    if (isSimulated && localMicStreamRef.current) {
+    if (localAudioTrack) {
+      localAudioTrack.setEnabled(!isMuted)
+        .then(() => {
+          console.log(`[AgoraPartyAudio] Agora Mic live state set to: ${!isMuted}`);
+        })
+        .catch(err => console.error("Error setting local voice track state:", err));
+    }
+    if (localMicStreamRef.current) {
       localMicStreamRef.current.getAudioTracks().forEach(track => {
         track.enabled = !isMuted;
       });
+      console.log(`[AgoraPartyAudio] WebRTC Direct Mic live state set to: ${!isMuted}`);
     }
-  }, [isMuted, isSimulated]);
+  }, [isMuted, localAudioTrack, isSimulated]);
 
   // Initialize Agora Client
   useEffect(() => {
@@ -252,10 +260,10 @@ export const AgoraPartyAudio: React.FC<AgoraPartyAudioProps> = ({
         return;
       }
 
-      // Ensure tokenData and tokenData.token exist
-      if (!tokenData || !tokenData.token) {
-        console.warn("[AgoraPartyAudio] No token provided from server, switching to direct WebRTC pipeline");
-        switchToSimulation("Direct WebRTC Fallback (No Token)");
+      // Ensure tokenData exists
+      if (!tokenData) {
+        console.warn("[AgoraPartyAudio] No response from token endpoint, switching to direct WebRTC pipeline");
+        switchToSimulation("Direct WebRTC Fallback (No Server Response)");
         return;
       }
 

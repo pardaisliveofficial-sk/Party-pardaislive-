@@ -7,6 +7,84 @@ import {
 } from "lucide-react";
 import { Gift, GiftType, ChatMessage, Transaction, UserProfile } from "../types";
 
+// Web Audio API Synthesizer for Gift Sound Effects
+export const playGiftAudioSynthesizer = (soundType: string = "ding") => {
+  try {
+    const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioCtx) return;
+    const ctx = new AudioCtx();
+    const now = ctx.currentTime;
+
+    const lower = (soundType || "ding").toLowerCase();
+    if (lower.includes("roar")) {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sawtooth";
+      osc.frequency.setValueAtTime(90, now);
+      osc.frequency.exponentialRampToValueAtTime(220, now + 0.3);
+      osc.frequency.exponentialRampToValueAtTime(70, now + 1.8);
+      gain.gain.setValueAtTime(0.4, now);
+      gain.gain.exponentialRampToValueAtTime(0.01, now + 2.0);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now);
+      osc.stop(now + 2.0);
+    } else if (lower.includes("firework") || lower.includes("blast") || lower.includes("rocket")) {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(250, now);
+      osc.frequency.exponentialRampToValueAtTime(1600, now + 0.5);
+      gain.gain.setValueAtTime(0.35, now);
+      gain.gain.exponentialRampToValueAtTime(0.01, now + 1.2);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now);
+      osc.stop(now + 1.2);
+    } else if (lower.includes("engine") || lower.includes("rev") || lower.includes("car")) {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sawtooth";
+      osc.frequency.setValueAtTime(120, now);
+      osc.frequency.exponentialRampToValueAtTime(550, now + 0.6);
+      osc.frequency.exponentialRampToValueAtTime(300, now + 1.6);
+      gain.gain.setValueAtTime(0.35, now);
+      gain.gain.exponentialRampToValueAtTime(0.01, now + 1.8);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now);
+      osc.stop(now + 1.8);
+    } else if (lower.includes("magic") || lower.includes("sparkle") || lower.includes("chime")) {
+      [523.25, 659.25, 783.99, 1046.5].forEach((freq, idx) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = "sine";
+        osc.frequency.setValueAtTime(freq, now + idx * 0.12);
+        gain.gain.setValueAtTime(0.25, now + idx * 0.12);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + idx * 0.12 + 0.8);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(now + idx * 0.12);
+        osc.stop(now + idx * 0.12 + 0.8);
+      });
+    } else {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(880, now);
+      osc.frequency.exponentialRampToValueAtTime(440, now + 0.4);
+      gain.gain.setValueAtTime(0.3, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.5);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now);
+      osc.stop(now + 0.5);
+    }
+  } catch (e) {
+    console.warn("Audio Context sound effect error:", e);
+  }
+};
+
 // Static Default Categories (Admin can add/edit/delete/sort dynamically)
 const INITIAL_CATEGORIES = [
   "Popular", "New", "Lucky", "VIP", "Festival", "Premium", "Luxury", "Event", "PK", "Limited Edition"
@@ -24,9 +102,9 @@ export const DEFAULT_ADVANCED_GIFTS: Gift[] = [
     animationClass: "animate-bounce", 
     category: "Popular", 
     description: "Roaring Golden Lion of supreme royalty & majesty!", 
-    animationFile: "🦁", 
-    animationFormat: "svga", 
-    animationDuration: 8, 
+    animationFile: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4", 
+    animationFormat: "mp4", 
+    animationDuration: 10, 
     animationDisplayType: "full", 
     comboSupported: true, 
     status: "active", 
@@ -38,6 +116,58 @@ export const DEFAULT_ADVANCED_GIFTS: Gift[] = [
     soundEffect: "roar",
     priority: 100, 
     sortingOrder: 0, 
+    isFavorite: false 
+  },
+  { 
+    id: "g-spice", 
+    name: "Indian Spice 🌶️", 
+    cost: 3000, 
+    type: GiftType.THREE_D, 
+    icon: "🌶️", 
+    color: "from-red-600 via-amber-500 to-yellow-500", 
+    animationClass: "animate-bounce", 
+    category: "Popular", 
+    description: "Sizzling Indian Spice explosion video overlay!", 
+    animationFile: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4", 
+    animationFormat: "mp4", 
+    animationDuration: 10, 
+    animationDisplayType: "full", 
+    comboSupported: true, 
+    status: "active", 
+    featured: true,
+    limited: false,
+    vipOnly: false,
+    pkOnly: false,
+    eventOnly: false,
+    soundEffect: "roar",
+    priority: 95, 
+    sortingOrder: 1, 
+    isFavorite: false 
+  },
+  { 
+    id: "g-fireworks", 
+    name: "Fireworks 🎆", 
+    cost: 5000, 
+    type: GiftType.THREE_D, 
+    icon: "🎆", 
+    color: "from-purple-500 via-pink-500 to-amber-400", 
+    animationClass: "animate-pulse", 
+    category: "Popular", 
+    description: "Grand sparkling celebration fireworks video overlay!", 
+    animationFile: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4", 
+    animationFormat: "mp4", 
+    animationDuration: 12, 
+    animationDisplayType: "full", 
+    comboSupported: true, 
+    status: "active", 
+    featured: true,
+    limited: false,
+    vipOnly: false,
+    pkOnly: false,
+    eventOnly: false,
+    soundEffect: "fireworks",
+    priority: 90, 
+    sortingOrder: 2, 
     isFavorite: false 
   },
   { 
@@ -341,7 +471,7 @@ export const loadGiftsFromStorage = (): Gift[] => {
         parsed.forEach(g => {
           if (g && g.id) {
             const defG = DEFAULT_ADVANCED_GIFTS.find(d => d.id === g.id);
-            if (defG && (defG.animationFormat === "webm" || defG.animationFormat === "mp4") && (!g.animationFile || g.animationFile.length < 10 || !g.animationFile.startsWith("http"))) {
+            if (defG && (defG.animationFormat === "webm" || defG.animationFormat === "mp4") && (!g.animationFile || g.animationFile.length < 5 || (typeof g.animationFile === "string" && !g.animationFile.startsWith("http") && !g.animationFile.startsWith("data:") && !g.animationFile.startsWith("blob:")))) {
               g.animationFile = defG.animationFile;
               g.animationFormat = defG.animationFormat;
             }
@@ -1232,6 +1362,15 @@ export const GiftAnimationEngine: React.FC<GiftAnimationEngineProps> = ({
     setVideoError(false);
     setSecondsLeft(duration);
 
+    // Play synthesized sound effect matching gift type (Lion Roar, Fireworks, Engine Rev, Rocket, Chime, etc.)
+    const sound = currentGift?.gift?.soundEffect || (
+      currentGift?.gift?.name?.toLowerCase().includes("lion") ? "roar" :
+      currentGift?.gift?.name?.toLowerCase().includes("firework") ? "fireworks" :
+      currentGift?.gift?.name?.toLowerCase().includes("spice") ? "roar" :
+      "ding"
+    );
+    playGiftAudioSynthesizer(sound);
+
     // Countdown interval for timer display
     const countdown = setInterval(() => {
       setSecondsLeft(prev => {
@@ -1272,46 +1411,47 @@ export const GiftAnimationEngine: React.FC<GiftAnimationEngineProps> = ({
     };
   }, [currentGift?.id || currentGift?.timestamp || (currentGift?.gift ? currentGift.gift.id : null), duration]);
 
-  if (!currentGift) return null;
-
-  const { sender, recipient, gift, comboCount } = currentGift;
+  const { sender, recipient, gift, comboCount } = currentGift || {};
   const displayType = gift?.animationDisplayType || "full";
   const format = (gift?.animationFormat || "").toLowerCase();
   const animFile = gift?.animationFile || gift?.videoUrl || gift?.animationUrl || gift?.icon;
-  const rawVideoUrl = gift?.videoUrl || gift?.animationUrl || (typeof gift?.animationFile === 'string' && (gift.animationFile.startsWith('http') || gift.animationFile.startsWith('data:') || gift.animationFile.startsWith('blob:') || gift.animationFile.endsWith('.mp4') || gift.animationFile.endsWith('.webm')) ? gift.animationFile : "");
+  const rawVideoUrl = gift?.videoUrl || gift?.animationUrl || (typeof gift?.animationFile === 'string' && (gift.animationFile.startsWith('http') || gift.animationFile.startsWith('data:') || gift.animationFile.startsWith('blob:') || gift.animationFile.endsWith('.mp4') || gift.animationFile.endsWith('.webm') || gift.animationFile.endsWith('.gif')) ? gift.animationFile : "");
   const giftCost = gift?.cost || gift?.coins || 10;
   const giftIcon = gift?.icon || gift?.emoji || "🎁";
 
   const videoSource = rawVideoUrl || (typeof animFile === 'string' ? animFile : "");
 
   // Detect whether videoSource is a valid playable video URL / Data URI / Blob
-  const isPlayableVideoUrl = Boolean(
-    !videoError &&
-    videoSource &&
-    typeof videoSource === "string" &&
-    videoSource.length > 3 &&
-    (
-      videoSource.startsWith("http://") ||
-      videoSource.startsWith("https://") ||
-      videoSource.startsWith("data:") ||
-      videoSource.startsWith("blob:") ||
-      videoSource.endsWith(".webm") ||
-      videoSource.endsWith(".mp4") ||
-      videoSource.includes(".webm?") ||
-      videoSource.includes(".mp4?") ||
-      format === "webm" ||
-      format === "mp4"
-    )
+  const isVideoFormat = format === "mp4" || format === "webm";
+  const isVideoUrl = typeof videoSource === "string" && (
+    videoSource.startsWith("http://") ||
+    videoSource.startsWith("https://") ||
+    videoSource.startsWith("data:video") ||
+    videoSource.startsWith("data:application") ||
+    videoSource.startsWith("blob:") ||
+    videoSource.endsWith(".webm") ||
+    videoSource.endsWith(".mp4") ||
+    videoSource.includes(".webm?") ||
+    videoSource.includes(".mp4?")
   );
 
-  // Auto-trigger video playback when component mounts or currentGift updates
+  const isPlayableVideoUrl = !videoError && Boolean(videoSource && (isVideoFormat || isVideoUrl));
+
+  // Detect whether source is an Animated GIF
+  const isGif = !isPlayableVideoUrl && (
+    format === "gif" || 
+    (typeof videoSource === "string" && (videoSource.endsWith(".gif") || videoSource.startsWith("data:image/gif")))
+  );
+
+  // Auto-trigger video playback with unmuted attempt on component mount
   useEffect(() => {
     if (isPlayableVideoUrl && videoRef.current) {
       videoRef.current.currentTime = 0;
+      videoRef.current.muted = false;
       const playPromise = videoRef.current.play();
       if (playPromise !== undefined) {
         playPromise.catch(err => {
-          console.warn("Video playback autoplay interrupted, retrying muted:", err);
+          console.warn("Unmuted video autoplay restricted, falling back to muted video:", err);
           if (videoRef.current) {
             videoRef.current.muted = true;
             videoRef.current.play().catch(e => {
@@ -1324,14 +1464,28 @@ export const GiftAnimationEngine: React.FC<GiftAnimationEngineProps> = ({
     }
   }, [currentGift?.id, isPlayableVideoUrl, videoSource]);
 
+  if (!currentGift) return null;
+
   const isLionGift = Boolean(
     gift?.id === "g-lion" ||
     (gift?.name && gift.name.toLowerCase().includes("lion")) ||
     giftIcon === "🦁"
   );
 
-  const isSvga = !isPlayableVideoUrl && (format === "svga" || (animFile && typeof animFile === 'string' && animFile.endsWith(".svga")));
-  const isSmallEmojiOnly = !isPlayableVideoUrl && !isSvga && !isLionGift && giftCost >= 10 && giftCost <= 500;
+  const isSpiceGift = Boolean(
+    gift?.id === "g-spice" ||
+    (gift?.name && gift.name.toLowerCase().includes("spice")) ||
+    giftIcon === "🌶️"
+  );
+
+  const isFireworksGift = Boolean(
+    gift?.id === "g-fireworks" ||
+    (gift?.name && gift.name.toLowerCase().includes("firework")) ||
+    giftIcon === "🎆"
+  );
+
+  const isSvga = !isPlayableVideoUrl && !isGif && (format === "svga" || (animFile && typeof animFile === 'string' && animFile.endsWith(".svga")));
+  const isSmallEmojiOnly = !isPlayableVideoUrl && !isGif && !isSvga && !isLionGift && !isSpiceGift && !isFireworksGift && giftCost >= 10 && giftCost <= 500;
 
   const handleFinish = () => {
     if (!finishCalledRef.current) {
@@ -1342,27 +1496,27 @@ export const GiftAnimationEngine: React.FC<GiftAnimationEngineProps> = ({
 
   return (
     <AnimatePresence>
-      <div className="absolute inset-x-0 top-24 bottom-16 z-30 pointer-events-none flex flex-col justify-end items-center overflow-hidden bg-transparent select-none">
+      <div className="absolute inset-0 z-50 pointer-events-none flex flex-col justify-between items-center overflow-hidden bg-transparent select-none p-3">
         
         {/* Professional Gift Information Banner */}
         <motion.div
-          initial={{ y: -30, opacity: 0, scale: 0.9 }}
+          initial={{ y: -40, opacity: 0, scale: 0.85 }}
           animate={{ y: 0, opacity: 1, scale: 1 }}
-          exit={{ y: -30, opacity: 0, scale: 0.9 }}
+          exit={{ y: -40, opacity: 0, scale: 0.85 }}
           transition={{ type: "spring", damping: 16 }}
-          className="absolute top-2 z-40 bg-gradient-to-r from-purple-950/90 via-black/95 to-amber-950/90 border border-amber-400/50 rounded-full px-5 py-2 flex items-center space-x-2.5 text-white shadow-[0_4px_30px_rgba(255,215,0,0.4)] backdrop-blur-md"
+          className="z-50 bg-gradient-to-r from-purple-950/95 via-black/95 to-amber-950/95 border border-amber-400/60 rounded-full px-5 py-2.5 flex items-center space-x-3 text-white shadow-[0_0_35px_rgba(255,215,0,0.5)] backdrop-blur-md"
         >
           <span className="text-xl animate-bounce">🎁</span>
-          <div className="flex items-center space-x-1.5 text-xs font-mono">
+          <div className="flex items-center space-x-2 text-xs font-mono">
             <span className="font-black text-amber-300 drop-shadow-md">👤 {sender}</span>
             <span className="text-gray-300 font-semibold">sent</span>
             <span className="font-black text-pink-400 drop-shadow-md">{giftIcon} {gift?.name || "Virtual Gift"}</span>
-            <span className="font-extrabold text-yellow-300">×{comboCount || 1}</span>
+            <span className="font-extrabold text-yellow-300 text-sm">×{comboCount || 1}</span>
             <span className="text-gray-400">to</span>
             <span className="font-bold text-cyan-300">{recipient}</span>
           </div>
 
-          <span className="text-[9px] text-amber-200/80 font-mono border-l border-amber-400/30 pl-2.5">
+          <span className="text-[10px] text-amber-200/90 font-mono border-l border-amber-400/30 pl-2.5 font-bold">
             {secondsLeft}s
           </span>
         </motion.div>
@@ -1379,7 +1533,7 @@ export const GiftAnimationEngine: React.FC<GiftAnimationEngineProps> = ({
           />
         )}
 
-        {/* 60 FPS Hardware-Accelerated Animation Layer */}
+        {/* 60 FPS Hardware-Accelerated Video Animation Layer */}
         <motion.div
           initial={{ scale: 0.8, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
@@ -1396,21 +1550,29 @@ export const GiftAnimationEngine: React.FC<GiftAnimationEngineProps> = ({
               ref={videoRef}
               src={videoSource}
               autoPlay
-              muted
               playsInline
               preload="auto"
               onEnded={handleFinish}
               onError={(e) => {
-                console.warn("Gift WebM Video playback error, falling back to 3D display:", e);
+                console.warn("Gift Video playback error, falling back to 3D display:", e);
                 setVideoError(true);
               }}
-              className="w-full h-full max-h-[65vh] max-w-[90vw] object-contain pointer-events-none relative z-20 drop-shadow-[0_0_35px_rgba(255,215,0,0.6)]"
+              className="w-full h-full max-h-[70vh] max-w-[95vw] object-contain pointer-events-none relative z-20 drop-shadow-[0_0_40px_rgba(255,215,0,0.8)]"
               style={{
+                mixBlendMode: "screen", // Blends out dark backgrounds on video overlays seamlessly
                 transform: "translateZ(0)",
                 willChange: "transform",
                 backfaceVisibility: "hidden",
                 backgroundColor: "transparent"
               }}
+            />
+          ) : isGif ? (
+            /* RENDER ANIMATED GIF OVERLAY */
+            <img
+              src={videoSource}
+              alt={gift?.name}
+              className="w-full h-full max-h-[70vh] max-w-[95vw] object-contain pointer-events-none relative z-20 drop-shadow-[0_0_40px_rgba(255,215,0,0.8)]"
+              style={{ mixBlendMode: "screen" }}
             />
           ) : isLionGift ? (
             /* SPECIAL 3D GOLDEN LION ROAR ANIMATION DISPLAY */
@@ -1430,6 +1592,32 @@ export const GiftAnimationEngine: React.FC<GiftAnimationEngineProps> = ({
               {/* Royal Golden Lion Title Badge */}
               <div className="mt-2 bg-gradient-to-r from-amber-600 via-yellow-500 to-amber-700 text-white font-black text-xs px-4 py-1.5 rounded-full border border-yellow-300/60 shadow-[0_0_25px_rgba(255,215,0,0.8)] tracking-widest uppercase font-mono">
                 ✨ ROYAL GOLDEN LION ROAR ✨
+              </div>
+            </div>
+          ) : isSpiceGift ? (
+            /* SPECIAL INDIAN SPICE ANIMATION DISPLAY */
+            <div className="relative z-20 flex flex-col items-center justify-center bg-transparent pointer-events-none animate-bounce">
+              <div className="relative flex items-center justify-center scale-110">
+                <span className="text-[140px] block filter drop-shadow-[0_0_50px_rgba(255,100,0,1)] select-none">
+                  🌶️
+                </span>
+                <div className="absolute w-64 h-64 border-4 border-red-500/70 rounded-full animate-ping pointer-events-none" />
+              </div>
+              <div className="mt-2 bg-gradient-to-r from-red-600 via-amber-500 to-yellow-500 text-white font-black text-xs px-4 py-1.5 rounded-full border border-amber-300/60 shadow-[0_0_25px_rgba(255,100,0,0.8)] tracking-widest uppercase font-mono">
+                🔥 INDIAN SPICE POWER 🔥
+              </div>
+            </div>
+          ) : isFireworksGift ? (
+            /* SPECIAL FIREWORKS ANIMATION DISPLAY */
+            <div className="relative z-20 flex flex-col items-center justify-center bg-transparent pointer-events-none animate-pulse">
+              <div className="relative flex items-center justify-center scale-110">
+                <span className="text-[140px] block filter drop-shadow-[0_0_50px_rgba(255,0,255,1)] select-none animate-spin">
+                  🎆
+                </span>
+                <div className="absolute w-72 h-72 border-4 border-pink-400/80 rounded-full animate-ping pointer-events-none" />
+              </div>
+              <div className="mt-2 bg-gradient-to-r from-purple-600 via-pink-500 to-amber-400 text-white font-black text-xs px-4 py-1.5 rounded-full border border-pink-300/60 shadow-[0_0_25px_rgba(255,0,255,0.8)] tracking-widest uppercase font-mono">
+                ✨ GRAND CELEBRATION FIREWORKS ✨
               </div>
             </div>
           ) : isSvga ? (

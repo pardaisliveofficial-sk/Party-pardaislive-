@@ -56,7 +56,81 @@ app.use(express.json());
 const DB_PATH = path.join(process.cwd(), "pardais_live_db.json");
 
 const DEFAULT_DEMO_HOSTS: any[] = [];
-const DEFAULT_DEMO_PARTIES: any[] = [];
+const DEFAULT_DEMO_PARTIES: any[] = [
+  {
+    id: "party-101",
+    title: "🔥 Pardais Official Audio Lounge (12 Seats)",
+    hostUsername: "pardais_official",
+    hostAvatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&h=150&q=80",
+    category: "Music",
+    participantCount: 4,
+    maxCapacity: 12,
+    isPublic: true,
+    password: "",
+    language: "Urdu / Hindi",
+    description: "Welcome to Pardais Official 12-Seat Voice Lounge! Chat, listen to music, and make new friends! 🎙️✨",
+    status: "active",
+    connectedViewers: [
+      { userId: "pardais_official", username: "pardais_official", avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&h=150&q=80", level: 10, vipLevel: 5 },
+      { userId: "sara_khan", username: "sara_khan", avatar: "https://images.unsplash.com/photo-1517841905240-472988babdf9?auto=format&fit=crop&w=150&h=150&q=80", level: 5, vipLevel: 2 },
+      { userId: "ali_raza", username: "ali_raza", avatar: "https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?auto=format&fit=crop&w=150&h=150&q=80", level: 8, vipLevel: 3 },
+      { userId: "zoya_star", username: "zoya_star", avatar: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=150&h=150&q=80", level: 12, vipLevel: 6 }
+    ],
+    seats: [
+      { id: 1, name: "pardais_official", avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&h=150&q=80", isMuted: false, isLocked: false },
+      { id: 2, name: "sara_khan", avatar: "https://images.unsplash.com/photo-1517841905240-472988babdf9?auto=format&fit=crop&w=150&h=150&q=80", isMuted: false, isLocked: false },
+      { id: 3, name: "ali_raza", avatar: "https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?auto=format&fit=crop&w=150&h=150&q=80", isMuted: false, isLocked: false },
+      { id: 4, name: "zoya_star", avatar: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=150&h=150&q=80", isMuted: true, isLocked: false },
+      { id: 5, name: null, avatar: null, isMuted: false, isLocked: false },
+      { id: 6, name: null, avatar: null, isMuted: false, isLocked: false },
+      { id: 7, name: null, avatar: null, isMuted: false, isLocked: false },
+      { id: 8, name: null, avatar: null, isMuted: false, isLocked: false },
+      { id: 9, name: null, avatar: null, isMuted: false, isLocked: false },
+      { id: 10, name: null, avatar: null, isMuted: false, isLocked: false },
+      { id: 11, name: null, avatar: null, isMuted: false, isLocked: false },
+      { id: 12, name: null, avatar: null, isMuted: false, isLocked: false }
+    ],
+    comments: [
+      { id: "c1", username: "System", message: "🎙️ Welcome to Pardais Official Audio Lounge! Enjoy 12-seat high quality audio chat.", isSystem: true, timestamp: "12:00 PM" },
+      { id: "c2", username: "pardais_official", message: "Assalam o Alaikum everyone! Welcome to the party! 🎉", isSystem: false, timestamp: "12:01 PM" }
+    ]
+  },
+  {
+    id: "party-102",
+    title: "🎶 Late Night Poetry & Music Lounge",
+    hostUsername: "bilal_vibe",
+    hostAvatar: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=150&h=150&q=80",
+    category: "Poetry & Music",
+    participantCount: 2,
+    maxCapacity: 12,
+    isPublic: true,
+    password: "",
+    language: "Urdu",
+    description: "Late night relaxed vibes, acoustic songs, and Urdu poetry! All welcome to take a seat 💖",
+    status: "active",
+    connectedViewers: [
+      { userId: "bilal_vibe", username: "bilal_vibe", avatar: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=150&h=150&q=80", level: 6, vipLevel: 1 },
+      { userId: "aamna_rose", username: "aamna_rose", avatar: "https://images.unsplash.com/photo-1524504388940-b1c1722653e1?auto=format&fit=crop&w=150&h=150&q=80", level: 4, vipLevel: 1 }
+    ],
+    seats: [
+      { id: 1, name: "bilal_vibe", avatar: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=150&h=150&q=80", isMuted: false, isLocked: false },
+      { id: 2, name: "aamna_rose", avatar: "https://images.unsplash.com/photo-1524504388940-b1c1722653e1?auto=format&fit=crop&w=150&h=150&q=80", isMuted: false, isLocked: false },
+      { id: 3, name: null, avatar: null, isMuted: false, isLocked: false },
+      { id: 4, name: null, avatar: null, isMuted: false, isLocked: false },
+      { id: 5, name: null, avatar: null, isMuted: false, isLocked: false },
+      { id: 6, name: null, avatar: null, isMuted: false, isLocked: false },
+      { id: 7, name: null, avatar: null, isMuted: false, isLocked: false },
+      { id: 8, name: null, avatar: null, isMuted: false, isLocked: false },
+      { id: 9, name: null, avatar: null, isMuted: false, isLocked: false },
+      { id: 10, name: null, avatar: null, isMuted: false, isLocked: false },
+      { id: 11, name: null, avatar: null, isMuted: false, isLocked: false },
+      { id: 12, name: null, avatar: null, isMuted: false, isLocked: false }
+    ],
+    comments: [
+      { id: "c1", username: "System", message: "🎙️ Welcome to Late Night Poetry & Music Lounge!", isSystem: true, timestamp: "12:05 PM" }
+    ]
+  }
+];
 
 // Define dbData as a reference pointing directly to the real-time replicated Firestore cache
 let dbData: any = dbDataCache;
@@ -1561,7 +1635,9 @@ app.get("/api/v1/payments/ledger", (req, res) => {
   });
 });
 const DEFAULT_ADVANCED_GIFTS_SERVER = [
-  { id: "g-lion", name: "Golden Lion 🦁", cost: 10000, type: "3d", icon: "🦁", color: "from-amber-500 via-yellow-500 to-amber-700", animationClass: "animate-bounce", category: "Popular", description: "Roaring Golden Lion of supreme royalty & majesty!", animationFile: "🦁", animationFormat: "svga", animationDuration: 8, animationDisplayType: "full", comboSupported: true, status: "active", featured: true, priority: 100 },
+  { id: "g-lion", name: "Golden Lion 🦁", cost: 10000, type: "3d", icon: "🦁", color: "from-amber-500 via-yellow-500 to-amber-700", animationClass: "animate-bounce", category: "Popular", description: "Roaring Golden Lion of supreme royalty & majesty!", animationFile: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4", animationFormat: "mp4", animationDuration: 10, animationDisplayType: "full", comboSupported: true, status: "active", featured: true, priority: 100 },
+  { id: "g-spice", name: "Indian Spice 🌶️", cost: 3000, type: "3d", icon: "🌶️", color: "from-red-600 via-amber-500 to-yellow-500", animationClass: "animate-bounce", category: "Popular", description: "Sizzling Indian Spice explosion video overlay!", animationFile: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4", animationFormat: "mp4", animationDuration: 10, animationDisplayType: "full", comboSupported: true, status: "active", featured: true, priority: 95 },
+  { id: "g-fireworks", name: "Fireworks 🎆", cost: 5000, type: "3d", icon: "🎆", color: "from-purple-500 via-pink-500 to-amber-400", animationClass: "animate-pulse", category: "Popular", description: "Grand sparkling celebration fireworks video overlay!", animationFile: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4", animationFormat: "mp4", animationDuration: 12, animationDisplayType: "full", comboSupported: true, status: "active", featured: true, priority: 90 },
   { id: "g-rose", name: "Red Rose", cost: 10, type: "2d", icon: "🌹", color: "from-pink-500 to-rose-600", animationClass: "animate-bounce", category: "Popular", description: "A fresh beautiful red rose of deep admiration.", animationFile: "🌹", animationFormat: "svg", animationDuration: 5, animationDisplayType: "small", comboSupported: true, status: "active", featured: true, priority: 10 },
   { id: "g-heart", name: "Love Heart", cost: 99, type: "2d", icon: "💖", color: "from-red-500 to-pink-500", animationClass: "animate-pulse", category: "Popular", description: "Express your warm affection.", animationFile: "💖", animationFormat: "svg", animationDuration: 5, animationDisplayType: "small", comboSupported: true, status: "active", featured: true, priority: 9 },
   { id: "g-lucky-coin", name: "Lucky Coin", cost: 50, type: "2d", icon: "🪙", color: "from-yellow-400 to-amber-600", animationClass: "animate-bounce", category: "Lucky", description: "Send fortune!", animationFile: "🪙", animationFormat: "svg", animationDuration: 5, animationDisplayType: "small", comboSupported: true, status: "active", featured: false, priority: 8 },
@@ -1581,7 +1657,7 @@ app.get("/api/v1/gifts", (req, res) => {
     dbData.gifts.forEach((g: any) => {
       if (g && g.id) {
         const defG = DEFAULT_ADVANCED_GIFTS_SERVER.find(d => d.id === g.id);
-        if (defG && (!g.animationFile || g.animationFile.length < 10 || !g.animationFile.startsWith("http"))) {
+        if (defG && (!g.animationFile || g.animationFile.length < 5 || (typeof g.animationFile === "string" && !g.animationFile.startsWith("http") && !g.animationFile.startsWith("data:") && !g.animationFile.startsWith("blob:")))) {
           g.animationFile = defG.animationFile;
           g.animationFormat = defG.animationFormat;
         }

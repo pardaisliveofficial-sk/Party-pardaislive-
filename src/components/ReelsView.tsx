@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
+import { getProgressionFromCoins } from "../levelUtils";
 import {
   Heart,
   MessageSquare,
@@ -333,6 +334,7 @@ export interface ReelsViewProps {
   reelInteractions: Record<string, any>;
   setReelInteractions: React.Dispatch<React.SetStateAction<any>>;
   onOpenUploadReel?: () => void;
+  onRequireAuth?: (actionName: string) => boolean;
 }
 
 export const ReelsView: React.FC<ReelsViewProps> = ({
@@ -359,7 +361,8 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
   setDragY,
   reelInteractions,
   setReelInteractions,
-  onOpenUploadReel
+  onOpenUploadReel,
+  onRequireAuth
 }) => {
   const [showCommentDrawer, setShowCommentDrawer] = useState<boolean>(false);
   const [newCommentText, setNewCommentText] = useState<string>("");
@@ -801,6 +804,7 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
                       </div>
                       <button
                         onClick={() => {
+                          if (onRequireAuth && !onRequireAuth("follow creators")) return;
                           setReels(prev => prev.map(r => {
                             if (r.creator === reel.creator) {
                               return { ...r, isFollowed: !r.isFollowed };
@@ -820,6 +824,7 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
                     {/* Like Action */}
                     <button
                       onClick={() => {
+                        if (onRequireAuth && !onRequireAuth("like short videos")) return;
                         setReels(prev => prev.map(r => {
                           if (r.id === reel.id) {
                             const newLiked = !r.liked;
@@ -846,7 +851,10 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
 
                     {/* Comment Drawer Trigger */}
                     <button
-                      onClick={() => setShowCommentDrawer(true)}
+                      onClick={() => {
+                        if (onRequireAuth && !onRequireAuth("comment on videos")) return;
+                        setShowCommentDrawer(true);
+                      }}
                       className="flex flex-col items-center active:scale-75 transition-transform"
                     >
                       <div className="p-2.5 rounded-full bg-black/40 text-white border border-white/10 hover:bg-black/65 backdrop-blur-md">
@@ -1018,7 +1026,18 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
                     alert("⚠ Insufficient Gold Coins! Go to your profile wallet and tap 'Claim Bonus Coins' to get free virtual coins! 🪙");
                     return;
                   }
-                  setUser(prev => ({ ...prev, coins: prev.coins - g.cost }));
+                  setUser(prev => {
+                    const newXp = (prev.xp || 0) + g.cost;
+                    const prog = getProgressionFromCoins(newXp);
+                    return {
+                      ...prev,
+                      coins: Math.max(0, prev.coins - g.cost),
+                      xp: newXp,
+                      userLevel: prog.level,
+                      level: prog.level,
+                      vipLevel: prog.vipLevel
+                    };
+                  });
                   setShowReelGiftOverlay(false);
                   
                   setActiveReelGiftAnimation({ icon: g.icon, name: g.name });
