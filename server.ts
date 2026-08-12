@@ -717,6 +717,124 @@ app.post("/api/v1/auth/google-login", (req, res) => {
 });
 
 // 2. Dispatch Email Verification OTP Code
+// SMTP delivery helper:
+// Railway may occasionally fail local DNS resolution for smtp.gmail.com.
+// We therefore resolve the SMTP hostname through DNS-over-HTTPS and connect
+// directly to the returned IPv4 address while preserving TLS SNI.
+async function resolveSmtpIpv4ViaDoh(hostname: string): Promise<string[]> {
+  const providers = [
+    `https://dns.google/resolve?name=${encodeURIComponent(hostname)}&type=A`,
+    `https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(hostname)}&type=A`
+  ];
+
+  for (const url of providers) {
+    try {
+      const response = await fetch(url, {
+        headers: { accept: "application/dns-json" },
+        signal: AbortSignal.timeout(7000)
+      });
+      if (!response.ok) continue;
+
+      const data: any = await response.json();
+      const addresses = Array.isArray(data?.Answer)
+        ? data.Answer
+            .filter((answer: any) => answer?.type === 1 && typeof answer?.data === "string")
+            .map((answer: any) => answer.data.trim())
+            .filter(Boolean)
+        : [];
+
+      if (addresses.length) return [...new Set(addresses)];
+    } catch (error: any) {
+      console.warn(`[PARDAIS PARTY EMAIL] DoH resolution failed for ${hostname}: ${error?.message || error}`);
+    }
+  }
+
+  return [];
+}
+
+async function sendPardaisPartyEmail(to: string, otp: string): Promise<void> {
+  const configuredHost = String(process.env.SMTP_HOST || "smtp.gmail.com").trim() || "smtp.gmail.com";
+  const configuredPort = Number(process.env.SMTP_PORT || 587);
+  const configuredSecure = String(process.env.SMTP_SECURE || "").trim().toLowerCase() === "true";
+
+  const hostCandidates = [
+    configuredHost,
+    "smtp.gmail.com",
+    "smtp.googlemail.com"
+  ].filter((host, index, list) => host && list.indexOf(host) === index);
+
+  const portCandidates = configuredPort === 465
+    ? [{ port: 465, secure: true }, { port: 587, secure: false }]
+    : [{ port: configuredPort || 587, secure: configuredSecure }, { port: 465, secure: true }];
+
+  let lastError: any = null;
+
+  for (const smtpHost of hostCandidates) {
+    const addresses = await resolveSmtpIpv4ViaDoh(smtpHost);
+
+    // Try the hostname first only if DNS is available locally; this keeps the
+    // normal path simple. If Railway returns ENOTFOUND, the DoH/IP path below
+    // is used automatically.
+    for (const mode of portCandidates) {
+      const targets: Array<{ host: string; directIp: boolean }> = [
+        { host: smtpHost, directIp: false },
+        ...addresses.map((ip) => ({ host: ip, directIp: true }))
+      ];
+
+      for (const target of targets) {
+        try {
+          console.log(
+            `[PARDAIS PARTY EMAIL] Trying SMTP ${smtpHost}:${mode.port}` +
+            `${target.directIp ? ` via ${target.host}` : ""}`
+          );
+
+          const transporter = nodemailer.createTransport({
+            host: target.host,
+            port: mode.port,
+            secure: mode.secure,
+            auth: {
+              user: String(process.env.SMTP_USER || "").trim(),
+              pass: String(process.env.SMTP_PASS || "")
+            },
+            connectionTimeout: 10000,
+            greetingTimeout: 10000,
+            socketTimeout: 15000,
+            ...(target.directIp
+              ? { tls: { servername: smtpHost, rejectUnauthorized: true } }
+              : {})
+          });
+
+          await transporter.verify();
+
+          await transporter.sendMail({
+            from: `"Pardais Party" <${String(process.env.SMTP_USER).trim()}>`,
+            to,
+            subject: "Your Pardais Party Email Verification OTP Code",
+            html: `<div style="font-family:Arial,sans-serif;padding:20px;background:#0f0f18;color:#fff;border-radius:12px;">
+              <h2 style="color:#ff007f;">Pardais Party Email Verification</h2>
+              <p>Your 6-digit verification code is:</p>
+              <div style="font-size:32px;font-weight:bold;letter-spacing:6px;color:#00f5ff;margin:20px 0;">${otp}</div>
+              <p style="color:#8888aa;font-size:12px;">This code will expire in 10 minutes. If you did not request this, please ignore this email.</p>
+            </div>`
+          });
+
+          console.log(`[PARDAIS PARTY EMAIL] SMTP delivery successful via ${smtpHost}:${mode.port}`);
+          transporter.close();
+          return;
+        } catch (error: any) {
+          lastError = error;
+          console.warn(
+            `[PARDAIS PARTY EMAIL] SMTP attempt failed ${smtpHost}:${mode.port}` +
+            `${target.directIp ? ` (${target.host})` : ""}: ${error?.message || error}`
+          );
+        }
+      }
+    }
+  }
+
+  throw lastError || new Error("All configured SMTP delivery attempts failed.");
+}
+
 app.post("/api/v1/auth/send-email-otp", async (req, res) => {
   const { email } = req.body;
   if (!email || typeof email !== "string" || !email.includes("@")) {
@@ -729,77 +847,35 @@ app.post("/api/v1/auth/send-email-otp", async (req, res) => {
   if (!dbData.emailOtps) dbData.emailOtps = {};
   dbData.emailOtps[cleanEmail] = {
     otp,
-    expiresAt: Date.now() + 10 * 60 * 1000 // 10 minutes expiry
+    expiresAt: Date.now() + 10 * 60 * 1000
   };
   saveDatabase();
 
-  console.log(`[PARDAIS PARTY EMAIL OTP GATEWAY] Dispatched OTP [${otp}] to ${cleanEmail}`);
+  console.log(`[PARDAIS PARTY EMAIL OTP GATEWAY] Generated OTP for ${cleanEmail}`);
 
-  // Send real email via nodemailer if SMTP transport is set up
   try {
-    if (process.env.SMTP_USER) {
-      const smtpUser = String(process.env.SMTP_USER || "").trim();
-      const smtpPass = String(process.env.SMTP_PASS || "").trim();
-      const configuredHost = String(process.env.SMTP_HOST || "smtp.gmail.com").trim();
-      const smtpPort = Number(process.env.SMTP_PORT) || 587;
-      const smtpSecure = String(process.env.SMTP_SECURE || "false").trim().toLowerCase() === "true";
-
-      // Try the configured Gmail SMTP hostname first, then Google's legacy
-      // gmail hostname as a DNS fallback. This helps when a hosting provider
-      // temporarily cannot resolve smtp.gmail.com.
-      const smtpHosts = Array.from(new Set([configuredHost, "smtp.googlemail.com"]));
-      let delivered = false;
-      let lastEmailError: unknown = null;
-
-      for (const smtpHost of smtpHosts) {
-        try {
-          const transporter = nodemailer.createTransport({
-            host: smtpHost,
-            port: smtpPort,
-            secure: smtpSecure,
-            auth: {
-              user: smtpUser,
-              pass: smtpPass
-            },
-            connectionTimeout: 15000,
-            greetingTimeout: 15000,
-            socketTimeout: 20000
-          });
-
-          await transporter.sendMail({
-            from: `"Pardais Party" <${smtpUser}>`,
-            to: cleanEmail,
-            subject: "Your Pardais Party Email Verification OTP Code",
-            html: `<div style="font-family: Arial, sans-serif; padding: 20px; background: #0f0f18; color: #ffffff; border-radius: 12px;">
-          <h2 style="color: #ff007f;">Pardais Party Email Verification</h2>
-          <p>Your 6-digit verification code is:</p>
-          <div style="font-size: 32px; font-weight: bold; letter-spacing: 6px; color: #00f5ff; margin: 20px 0;">${otp}</div>
-          <p style="color: #8888aa; font-size: 12px;">This code will expire in 10 minutes. If you did not request this, please ignore.</p>
-        </div>`
-          });
-
-          delivered = true;
-          console.log(`[PARDAIS PARTY EMAIL] SMTP delivery successful via ${smtpHost}`);
-          break;
-        } catch (hostErr) {
-          lastEmailError = hostErr;
-          console.warn(`[PARDAIS PARTY EMAIL] SMTP host failed (${smtpHost}):`, hostErr);
-        }
-      }
-
-      if (!delivered) {
-        console.warn("[PARDAIS PARTY EMAIL] All SMTP hosts failed:", lastEmailError);
-      }
+    if (!process.env.SMTP_USER || !process.env.SMTP_PASS) {
+      throw new Error("SMTP_USER or SMTP_PASS is missing.");
     }
-  } catch (emailErr) {
-    console.warn("[PARDAIS PARTY EMAIL] SMTP transport warning:", emailErr);
-  }
 
-  res.json({
-    success: true,
-    message: `Verification OTP code dispatched to ${cleanEmail}. Check your email inbox.`,
-    otp: otp // Included for easy dev/testing verification
-  });
+    await sendPardaisPartyEmail(cleanEmail, otp);
+
+    return res.json({
+      success: true,
+      message: `Verification OTP code sent to ${cleanEmail}. Check your email inbox.`
+    });
+  } catch (emailErr: any) {
+    console.error("[PARDAIS PARTY EMAIL] SMTP delivery failed:", emailErr?.message || emailErr);
+
+    // Do not claim delivery succeeded when SMTP failed.
+    delete dbData.emailOtps[cleanEmail];
+    saveDatabase();
+
+    return res.status(502).json({
+      success: false,
+      error: "Unable to send verification email right now. Please try again."
+    });
+  }
 });
 
 // 3. Verify Email OTP Code
