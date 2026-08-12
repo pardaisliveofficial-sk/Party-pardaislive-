@@ -6,6 +6,7 @@ import {
   Send, AlertCircle, DollarSign, Archive, Volume2, ArrowUpRight, Search, Activity
 } from "lucide-react";
 import { Gift, GiftType, ChatMessage, Transaction, UserProfile } from "../types";
+import { resolveApiUrl } from "../lib/apiClient";
 
 // Web Audio API Synthesizer for Gift Sound Effects
 export const playGiftAudioSynthesizer = (soundType: string = "ding") => {
@@ -1955,7 +1956,7 @@ export const AdminGiftTab: React.FC<AdminGiftTabProps> = ({
       setCategoriesList(updatedCats);
       saveCategoriesToStorage(updatedCats);
       try {
-        fetch("/api/v1/categories", {
+        fetch(resolveApiUrl("/api/v1/categories"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(updatedCats)
@@ -1969,13 +1970,13 @@ export const AdminGiftTab: React.FC<AdminGiftTabProps> = ({
     try {
       const endpoint = editingGift ? `/api/v1/gifts/${editingGift.id}` : "/api/v1/gifts";
       const method = editingGift ? "PUT" : "POST";
-      const res = await fetch(endpoint, {
+      const res = await fetch(resolveApiUrl(endpoint), {
         method,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
       });
       if (res.ok) {
-        const fetchRes = await fetch("/api/v1/gifts");
+        const fetchRes = await fetch(resolveApiUrl("/api/v1/gifts"));
         if (fetchRes.ok) {
           const allGifts = await fetchRes.json();
           if (Array.isArray(allGifts) && allGifts.length > 0) {
@@ -2027,7 +2028,7 @@ export const AdminGiftTab: React.FC<AdminGiftTabProps> = ({
       saveGiftsToStorage(nextGifts);
 
       try {
-        await fetch(`/api/v1/gifts/${id}`, { method: "DELETE" });
+        await fetch(resolveApiUrl(`/api/v1/gifts/${id}`), { method: "DELETE" });
       } catch (err) {
         console.error("Failed to delete gift on backend:", err);
       }
@@ -2049,7 +2050,7 @@ export const AdminGiftTab: React.FC<AdminGiftTabProps> = ({
     setNewCatName("");
 
     try {
-      await fetch("/api/v1/categories", {
+      await fetch(resolveApiUrl("/api/v1/categories"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(next)
@@ -2078,7 +2079,7 @@ export const AdminGiftTab: React.FC<AdminGiftTabProps> = ({
     setRenameCatText("");
 
     try {
-      await fetch("/api/v1/categories", {
+      await fetch(resolveApiUrl("/api/v1/categories"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(next)
@@ -2097,7 +2098,7 @@ export const AdminGiftTab: React.FC<AdminGiftTabProps> = ({
       saveCategoriesToStorage(next);
 
       try {
-        await fetch("/api/v1/categories", {
+        await fetch(resolveApiUrl("/api/v1/categories"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(next)

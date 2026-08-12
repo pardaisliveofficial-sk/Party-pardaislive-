@@ -12,6 +12,7 @@ import {
   setLogLevel,
   getDocs
 } from "firebase/firestore";
+import { resolveApiUrl } from "../lib/apiClient";
 import appletConfig from "../../firebase-applet-config.json";
 
 // Initialize Firebase using Client SDK
@@ -201,7 +202,7 @@ export async function checkAndSeedDatabase() {
     console.log("[PARDAIS-PARTY FIREBASE] Initializing firestore database seeding from backend API...");
     let localDb: any = {};
     try {
-      const res = await fetch("/api/v1/db");
+      const res = await fetch(resolveApiUrl("/api/v1/db"));
       if (res.ok) {
         localDb = await res.json();
       }

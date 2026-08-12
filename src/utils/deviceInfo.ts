@@ -1,3 +1,5 @@
+import { resolveApiUrl } from "../lib/apiClient";
+
 export interface DeviceInfo {
   deviceId: string;
   deviceModel: string;
@@ -161,7 +163,7 @@ export async function fetchRealDeviceLocation(): Promise<DeviceInfo> {
 
   try {
     // 1. First fetch IP from local server endpoint or public fallback
-    const res = await fetch("/api/v1/ip-info").catch(() => null);
+    const res = await fetch(resolveApiUrl("/api/v1/ip-info")).catch(() => null);
     if (res && res.ok) {
       const data = await res.json();
       if (data.ip && data.ip !== "127.0.0.1" && data.ip !== "::1") {

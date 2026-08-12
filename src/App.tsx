@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
-import { authenticatedFetch, resolveApiUrl, refreshSession, getAuthToken } from "./lib/apiClient";
+import { authenticatedFetch, resolveApiUrl, refreshSession, getAuthToken, isCapacitorOrAndroid } from "./lib/apiClient";
 import { COUNTRIES_CURRENCIES, CountryCurrency, getCoinsCostInCurrency } from "./currencyUtils";
 import { ReelsView } from "./components/ReelsView";
 import { AgoraStream } from "./components/AgoraStream";
@@ -302,15 +302,7 @@ const normalizeReelUrl = (url: string | undefined | null): string => {
   // Handle local uploads with relative path for web preview and absolute domain for android APK
   if (url.startsWith("/uploads/") || url.startsWith("uploads/")) {
     const cleanPath = url.startsWith("/") ? url : `/${url}`;
-    const isAndroidAPK = typeof window !== "undefined" && (
-      (window as any).Capacitor || 
-      window.location.protocol === "file:" ||
-      window.location.protocol.includes("capacitor")
-    );
-    if (isAndroidAPK) {
-      return `https://api.pardaisparty.soulverseapps.com${cleanPath}`;
-    }
-    return cleanPath;
+    return resolveApiUrl(cleanPath);
   }
 
   // Parse reels/ key from the URL and convert to public custom R2 delivery domain
@@ -4783,22 +4775,7 @@ export default function App() {
           xhr.addEventListener("error", () => reject(new Error("Network connection error during R2 video upload")));
           xhr.addEventListener("abort", () => reject(new Error("Video upload operation aborted")));
 
-          let uploadUrl = "/api/v1/reels/upload-video";
-          const isAndroidAPK = typeof window !== "undefined" && (
-            (window as any).Capacitor || 
-            window.location.protocol === "file:" ||
-            window.location.protocol.includes("capacitor") ||
-            navigator.userAgent.toLowerCase().includes("android") ||
-            navigator.userAgent.toLowerCase().includes("capacitor") ||
-            (!window.location.hostname.includes("run.app") && (
-              window.location.hostname === "localhost" || 
-              window.location.hostname === "127.0.0.1" || 
-              !window.location.hostname
-            ))
-          );
-          if (isAndroidAPK) {
-            uploadUrl = `https://api.pardaisparty.soulverseapps.com${uploadUrl}`;
-          }
+          const uploadUrl = resolveApiUrl("/api/v1/reels/upload-video");
 
           console.log("[PARDAIS-PARTY FRONTEND] Dispatching XHR upload request to:", uploadUrl);
           xhr.open("POST", uploadUrl);

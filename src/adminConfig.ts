@@ -1,4 +1,6 @@
 // Authorized Admin Email Accounts for Pardais Party Web Admin Portal
+import { resolveApiUrl } from "./lib/apiClient";
+
 export const DEFAULT_ADMIN_EMAILS: string[] = [
   "pardaisliveofficial@gmail.com",
   "saifkhokhar657@gmail.com",
@@ -63,7 +65,7 @@ export function isAuthorizedAdmin(
 // Fetch nominated emails from backend server & sync to localStorage
 export async function syncNominatedAdminEmails(): Promise<string[]> {
   try {
-    const res = await fetch("/api/v1/admin-emails");
+    const res = await fetch(resolveApiUrl("/api/v1/admin-emails"));
     if (res.ok) {
       const data = await res.json();
       if (Array.isArray(data)) {
@@ -85,7 +87,7 @@ export async function addNominatedAdminEmail(email: string): Promise<{ success: 
   }
 
   try {
-    const res = await fetch("/api/v1/admin-emails", {
+    const res = await fetch(resolveApiUrl("/api/v1/admin-emails"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email: cleaned })
@@ -116,7 +118,7 @@ export async function removeNominatedAdminEmail(email: string): Promise<{ succes
   const cleaned = email.toLowerCase().trim();
 
   try {
-    const res = await fetch(`/api/v1/admin-emails/${encodeURIComponent(cleaned)}`, {
+    const res = await fetch(resolveApiUrl(`/api/v1/admin-emails/${encodeURIComponent(cleaned)}`), {
       method: "DELETE"
     });
 

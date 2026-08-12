@@ -1,32 +1,117 @@
 // Shared Authenticated API Client for Pardais Party Application
 // Manages API URL resolution, Authorization headers, session refresh, and request retry
 
+export const PRODUCTION_API_BASE = "https://api.pardaisparty.soulverseapps.com";
+
+export const isCapacitorOrAndroid = (): boolean => {
+  if (typeof window === "undefined") return false;
+
+  // Explicit Capacitor object check
+  if ((window as any).Capacitor || (window as any).CapacitorNative) return true;
+
+  const loc = window.location;
+  if (!loc) return false;
+
+  // File or capacitor scheme
+  if (loc.protocol === "file:" || loc.protocol.includes("capacitor") || loc.origin === "null") {
+    return true;
+  }
+
+  const ua = (navigator.userAgent || "").toLowerCase();
+  const isAndroidUA = ua.includes("android") || ua.includes("capacitor") || ua.includes("wv");
+
+  // If running on a web domain (e.g. *.run.app or *.soulverseapps.com or custom web domain), it is Web environment
+  const host = (loc.hostname || "").toLowerCase();
+  const isWebDomain = host.includes("run.app") || host.includes("soulverseapps.com") || host.includes("github.io");
+
+  if (isWebDomain) {
+    return false;
+  }
+
+  // If running on localhost / 127.0.0.1 in an Android UserAgent or Capacitor context, it is APK
+  if (isAndroidUA || host === "localhost" || host === "127.0.0.1" || !host) {
+    return true;
+  }
+
+  return false;
+};
+
 export const resolveApiUrl = (path: string): string => {
-  if (!path) return "";
+  if (!path) {
+    return isCapacitorOrAndroid() ? PRODUCTION_API_BASE : "";
+  }
   if (path.startsWith("http://") || path.startsWith("https://")) {
     return path;
   }
 
-  // In standard browser environment, prefer same-origin relative path so requests hit local server directly
-  if (
-    typeof window !== "undefined" &&
-    window.location &&
-    window.location.origin &&
-    window.location.origin !== "null" &&
-    !window.location.origin.startsWith("file:") &&
-    !window.location.origin.startsWith("capacitor:")
-  ) {
-    return path.startsWith("/") ? path : `/${path}`;
+  const cleanPath = path.startsWith("/") ? path : `/${path}`;
+
+  // In Android APK / Capacitor environment, route to central production API base
+  if (isCapacitorOrAndroid()) {
+    return `${PRODUCTION_API_BASE}${cleanPath}`;
   }
 
   const envApiUrl = (import.meta as any).env?.VITE_API_URL;
   if (envApiUrl && typeof envApiUrl === "string" && envApiUrl.trim().length > 0) {
     const base = envApiUrl.trim().replace(/\/+$/, "");
-    return `${base}${path.startsWith("/") ? path : `/${path}`}`;
+    return `${base}${cleanPath}`;
   }
 
-  return path;
+  return cleanPath;
 };
+
+// Global fetch interceptor to guarantee relative API requests resolve to production API base on Android APK
+if (typeof window !== "undefined" && !(window as any).__pardais_fetch_patched) {
+  (window as any).__pardais_fetch_patched = true;
+
+  try {
+    const originalFetch = window.fetch ? window.fetch.bind(window) : globalThis.fetch.bind(globalThis);
+
+    const customFetch = async function (input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+      let urlString = "";
+      if (typeof input === "string") {
+        urlString = input;
+      } else if (input instanceof URL) {
+        urlString = input.toString();
+      } else if (input && typeof input === "object" && "url" in input) {
+        urlString = (input as Request).url;
+      }
+
+      if (urlString && (urlString.startsWith("/api/") || urlString.startsWith("api/"))) {
+        const resolved = resolveApiUrl(urlString);
+        if (typeof input === "string") {
+          input = resolved;
+        } else if (input instanceof URL) {
+          input = new URL(resolved);
+        } else if (input && typeof input === "object" && "url" in input) {
+          input = new Request(resolved, input as RequestInit);
+        }
+      }
+
+      return originalFetch(input, init);
+    };
+
+    // Check if property descriptor allows redefinition before attempting
+    let desc: PropertyDescriptor | undefined;
+    let targetObj: any = window;
+    while (targetObj) {
+      desc = Object.getOwnPropertyDescriptor(targetObj, "fetch");
+      if (desc) break;
+      targetObj = Object.getPrototypeOf(targetObj);
+    }
+
+    if (!desc || desc.configurable !== false) {
+      Object.defineProperty(window, "fetch", {
+        value: customFetch,
+        writable: true,
+        configurable: true,
+        enumerable: true,
+      });
+    }
+  } catch (err) {
+    console.warn("[PARDAIS API] Global fetch patching skipped:", err);
+  }
+}
 
 export const getAuthToken = (): string | null => {
   if (typeof window === "undefined") return null;

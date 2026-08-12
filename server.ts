@@ -4966,34 +4966,56 @@ app.post("/api/v1/kyc-requests", (req, res) => {
 
 app.put("/api/v1/kyc-requests/:id", (req, res) => {
   const { id } = req.params;
+  if (!Array.isArray(dbData.kycRequests)) dbData.kycRequests = [];
+  if (!Array.isArray(dbData.auditLogs)) dbData.auditLogs = [];
+
   const index = dbData.kycRequests.findIndex((r: any) => r.id === id);
   if (index !== -1) {
-    dbData.kycRequests[index] = { ...dbData.kycRequests[index], ...req.body };
-    // Synchronize status back into user profile if it's the main profile
-    if (dbData.kycRequests[index].username === dbData.user.username) {
-      dbData.user.kycStatus = dbData.kycRequests[index].status;
-      if (dbData.kycRequests[index].status === "approved") {
-        dbData.user.isVerified = true;
-      } else if (dbData.kycRequests[index].status === "rejected") {
-        dbData.user.isVerified = false;
-      }
-    }
-    // Update target inside admin users array
-    const usrIdx = dbData.adminUsersList.findIndex((u: any) => u.username === dbData.kycRequests[index].username);
-    if (usrIdx !== -1) {
-      dbData.adminUsersList[usrIdx].kycStatus = dbData.kycRequests[index].status;
-      if (dbData.kycRequests[index].status === "approved") {
-        dbData.adminUsersList[usrIdx].isVerified = true;
-      }
-    }
-    saveDatabase();
+    dbData.kycRequests[index] = { ...dbData.kycRequests[index], ...req.body, updatedAt: new Date().toISOString() };
+    const targetUsername = dbData.kycRequests[index].username;
+    const status = dbData.kycRequests[index].status;
 
-    // Sync updates to Firestore
+    // Synchronize status back into user profile if it's the main profile
+    if (targetUsername === dbData.user?.username) {
+      dbData.user.kycStatus = status;
+      dbData.user.isVerified = (status === "approved");
+      if (req.body.rejectionReason) dbData.user.kycRejectionReason = req.body.rejectionReason;
+    }
+
+    // Update target inside users and admin Users list
+    if (Array.isArray(dbData.users)) {
+      const uIdx = dbData.users.findIndex((u: any) => u.username === targetUsername);
+      if (uIdx !== -1) {
+        dbData.users[uIdx].kycStatus = status;
+        dbData.users[uIdx].isVerified = (status === "approved");
+        if (req.body.rejectionReason) dbData.users[uIdx].kycRejectionReason = req.body.rejectionReason;
+        syncDocument("users", targetUsername, dbData.users[uIdx]);
+      }
+    }
+
+    if (Array.isArray(dbData.adminUsersList)) {
+      const usrIdx = dbData.adminUsersList.findIndex((u: any) => u.username === targetUsername);
+      if (usrIdx !== -1) {
+        dbData.adminUsersList[usrIdx].kycStatus = status;
+        dbData.adminUsersList[usrIdx].isVerified = (status === "approved");
+        if (req.body.rejectionReason) dbData.adminUsersList[usrIdx].kycRejectionReason = req.body.rejectionReason;
+        syncDocument("adminUsersList", targetUsername, dbData.adminUsersList[usrIdx]);
+      }
+    }
+
+    // Log Audit Action
+    dbData.auditLogs.unshift({
+      id: `audit_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      timestamp: new Date().toISOString(),
+      admin: req.body.adminUsername || "Super Admin",
+      action: `KYC_${status.toUpperCase()}`,
+      target: targetUsername,
+      details: { id, status, rejectionReason: req.body.rejectionReason || null }
+    });
+
+    saveDatabase();
     syncDocument("kycRequests", id, dbData.kycRequests[index]);
     writeMetadata("user_profile", dbData.user);
-    if (usrIdx !== -1) {
-      syncDocument("adminUsersList", dbData.kycRequests[index].username, dbData.adminUsersList[usrIdx]);
-    }
 
     res.json(dbData.kycRequests[index]);
   } else {
@@ -5001,31 +5023,135 @@ app.put("/api/v1/kyc-requests/:id", (req, res) => {
   }
 });
 
-// Admin Users grid management (ban/unban, edit stats)
+// Admin Users grid management (ban/unban, edit stats, toggle permissions)
 app.get("/api/v1/admin-users", (req, res) => {
-  res.json(dbData.adminUsersList);
+  if (!Array.isArray(dbData.users)) dbData.users = [];
+  if (!Array.isArray(dbData.adminUsersList)) dbData.adminUsersList = [];
+
+  const userMap = new Map();
+
+  // Load from main dbData.users
+  dbData.users.forEach((u: any) => {
+    if (u && (u.username || u.id)) {
+      const key = (u.username || u.id).toLowerCase();
+      userMap.set(key, {
+        id: u.id || u.numericId || `usr_${key}`,
+        username: u.username || key,
+        fullName: u.fullName || u.displayName || u.username,
+        email: u.email || `${u.username}@pardais.app`,
+        phone: u.phone || u.phoneNumber || "+92 300 0000000",
+        avatar: u.avatar || u.photoURL || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100",
+        level: u.level || u.userLevel || 1,
+        vipLevel: u.vipLevel || 0,
+        coins: typeof u.coins === "number" ? u.coins : 5000,
+        partyEnabled: u.partyEnabled !== false,
+        liveEnabled: u.liveEnabled !== false,
+        reelsEnabled: u.reelsEnabled !== false,
+        coinsFrozen: u.coinsFrozen === true,
+        isSuspended: u.isSuspended === true,
+        isBanned: u.isBanned === true,
+        isVerified: u.isVerified === true,
+        kycStatus: u.kycStatus || "not_submitted",
+        selectedFrameId: u.selectedFrameId || null,
+        deviceId: u.deviceId || "DEV-S24-PAK8821"
+      });
+    }
+  });
+
+  // Ensure current user is present
+  if (dbData.user && dbData.user.username) {
+    const key = dbData.user.username.toLowerCase();
+    const existing = userMap.get(key) || {};
+    userMap.set(key, {
+      ...existing,
+      ...dbData.user,
+      id: dbData.user.id || `usr_${key}`,
+      username: dbData.user.username,
+      partyEnabled: dbData.user.partyEnabled !== false,
+      liveEnabled: dbData.user.liveEnabled !== false,
+      reelsEnabled: dbData.user.reelsEnabled !== false,
+      coinsFrozen: dbData.user.coinsFrozen === true,
+      isSuspended: dbData.user.isSuspended === true,
+      isBanned: dbData.user.isBanned === true,
+      kycStatus: dbData.user.kycStatus || "not_submitted"
+    });
+  }
+
+  // Merge adminUsersList entries
+  dbData.adminUsersList.forEach((u: any) => {
+    if (u && (u.username || u.id)) {
+      const key = (u.username || u.id).toLowerCase();
+      const existing = userMap.get(key) || {};
+      userMap.set(key, { ...existing, ...u });
+    }
+  });
+
+  const list = Array.from(userMap.values());
+  res.json(list);
 });
 
 app.put("/api/v1/admin-users/:username", (req, res) => {
   const { username } = req.params;
-  const index = dbData.adminUsersList.findIndex((u: any) => u.username === username);
-  if (index !== -1) {
-    dbData.adminUsersList[index] = { ...dbData.adminUsersList[index], ...req.body };
-    if (username === dbData.user.username) {
-      dbData.user = { ...dbData.user, ...req.body };
-    }
-    saveDatabase();
+  const updates = req.body || {};
 
-    // Sync admin users and profile changes to Firestore
-    syncDocument("adminUsersList", username, dbData.adminUsersList[index]);
-    if (username === dbData.user.username) {
-      writeMetadata("user_profile", dbData.user);
-    }
+  if (!Array.isArray(dbData.users)) dbData.users = [];
+  if (!Array.isArray(dbData.adminUsersList)) dbData.adminUsersList = [];
+  if (!Array.isArray(dbData.auditLogs)) dbData.auditLogs = [];
 
-    res.json(dbData.adminUsersList[index]);
+  const key = username.toLowerCase();
+
+  // 1. Update in dbData.users
+  let userObj: any = null;
+  const userIndex = dbData.users.findIndex((u: any) => (u.username || "").toLowerCase() === key);
+  if (userIndex !== -1) {
+    dbData.users[userIndex] = { ...dbData.users[userIndex], ...updates };
+    userObj = dbData.users[userIndex];
+    syncDocument("users", username, dbData.users[userIndex]);
   } else {
-    res.status(404).json({ error: "Admin user not found" });
+    userObj = { username, ...updates };
+    dbData.users.push(userObj);
   }
+
+  // 2. Update in dbData.adminUsersList
+  const adminIndex = dbData.adminUsersList.findIndex((u: any) => (u.username || "").toLowerCase() === key);
+  if (adminIndex !== -1) {
+    dbData.adminUsersList[adminIndex] = { ...dbData.adminUsersList[adminIndex], ...updates };
+    syncDocument("adminUsersList", username, dbData.adminUsersList[adminIndex]);
+  } else {
+    dbData.adminUsersList.push({ username, ...updates });
+  }
+
+  // 3. Update dbData.user if current user
+  if (dbData.user && (dbData.user.username || "").toLowerCase() === key) {
+    dbData.user = { ...dbData.user, ...updates };
+    writeMetadata("user_profile", dbData.user);
+  }
+
+  // 4. Record Audit Log
+  const auditAction = updates.isBanned !== undefined ? (updates.isBanned ? "BAN_USER" : "UNBAN_USER") :
+                      updates.isSuspended !== undefined ? (updates.isSuspended ? "SUSPEND_USER" : "UNSUSPEND_USER") :
+                      updates.coinsFrozen !== undefined ? (updates.coinsFrozen ? "FREEZE_COINS" : "UNFREEZE_COINS") :
+                      updates.partyEnabled !== undefined ? "TOGGLE_PARTY_PERM" :
+                      updates.liveEnabled !== undefined ? "TOGGLE_LIVE_PERM" :
+                      updates.reelsEnabled !== undefined ? "TOGGLE_REELS_PERM" : "EDIT_USER_PROFILE";
+
+  dbData.auditLogs.unshift({
+    id: `audit_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+    timestamp: new Date().toISOString(),
+    admin: updates.adminUsername || "Super Admin",
+    action: auditAction,
+    target: username,
+    details: updates
+  });
+
+  saveDatabase();
+  res.json({ success: true, username, user: userObj });
+});
+
+// Audit Logs Endpoint
+app.get("/api/v1/admin/audit-logs", (req, res) => {
+  if (!Array.isArray(dbData.auditLogs)) dbData.auditLogs = [];
+  res.json(dbData.auditLogs);
 });
 
 // Nominated Admin Emails Management

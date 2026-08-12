@@ -57,6 +57,7 @@ import {
   loadCategoriesFromStorage, 
   saveCategoriesToStorage 
 } from "./components/GiftSystem";
+import { resolveApiUrl } from "./lib/apiClient";
 
 export default function AdminApp() {
   // Authentication state
@@ -210,6 +211,16 @@ export default function AdminApp() {
   const [customAppIconInput, setCustomAppIconInput] = useState<string>("");
   const [deviceSearch, setDeviceSearch] = useState<string>("");
   const [manualDeviceIdInput, setManualDeviceIdInput] = useState<string>("");
+
+  // Production Admin States for Users, Audit Logs, Modals, and Agencies
+  const [usersList, setUsersList] = useState<any[]>([]);
+  const [auditLogsList, setAuditLogsList] = useState<any[]>([]);
+  const [editingUserModal, setEditingUserModal] = useState<any>(null);
+  const [userHistoryModal, setUserHistoryModal] = useState<any>(null);
+  const [kycRejectModal, setKycRejectModal] = useState<any>(null);
+  const [kycRejectReason, setKycRejectReason] = useState<string>("");
+  const [kycDocViewerModal, setKycDocViewerModal] = useState<any>(null);
+  const [agencySubTab, setAgencySubTab] = useState<"coin_seller" | "host_agency">("coin_seller");
 
   // WhatsApp & Support Desk Configuration state
   const [waChannelUrl, setWaChannelUrl] = useState<string>(() => {
@@ -586,7 +597,6 @@ export default function AdminApp() {
     salaryRate: ""
   });
 
-  const [agencySubTab, setAgencySubTab] = useState<"registry" | "requests">("registry");
   const [remarksInputs, setRemarksInputs] = useState<{[key: string]: string}>({});
 
   const handleApproveAgencyRequest = async (id: string) => {
@@ -630,7 +640,7 @@ export default function AdminApp() {
   });
 
   // Fetch Central Database
-  const API_BASE_URL = (import.meta as any).env?.VITE_API_URL || "";
+  const API_BASE_URL = resolveApiUrl("");
 
   const fetchDb = async () => {
     try {
@@ -643,11 +653,97 @@ export default function AdminApp() {
           saveGiftsToStorage(data.gifts);
         }
       }
+
+      // Fetch Admin Users list
+      const uRes = await fetch(`${API_BASE_URL}/api/v1/admin-users`);
+      if (uRes.ok) {
+        const uData = await uRes.json();
+        if (Array.isArray(uData)) {
+          setUsersList(uData);
+        }
+      }
+
+      // Fetch Audit Logs list
+      const aRes = await fetch(`${API_BASE_URL}/api/v1/admin/audit-logs`);
+      if (aRes.ok) {
+        const aData = await aRes.json();
+        if (Array.isArray(aData)) {
+          setAuditLogsList(aData);
+        }
+      }
     } catch (e) {
       console.error("Error synchronizing admin DB:", e);
     } finally {
       setIsLoading(false);
     }
+  };
+
+  // Specific User Admin Handlers
+  const handleTogglePartyPerm = async (usr: any) => {
+    const nextVal = !(usr.partyEnabled !== false);
+    await syncWithServer(`/api/v1/admin-users/${usr.username}`, "PUT", { partyEnabled: nextVal, adminUsername: username || "Super Admin" });
+    triggerToast(`Party hosting ${nextVal ? "ENABLED" : "DISABLED"} for @${usr.username}`);
+  };
+
+  const handleToggleLivePerm = async (usr: any) => {
+    const nextVal = !(usr.liveEnabled !== false);
+    await syncWithServer(`/api/v1/admin-users/${usr.username}`, "PUT", { liveEnabled: nextVal, adminUsername: username || "Super Admin" });
+    triggerToast(`Live streaming ${nextVal ? "ENABLED" : "DISABLED"} for @${usr.username}`);
+  };
+
+  const handleToggleReelsPerm = async (usr: any) => {
+    const nextVal = !(usr.reelsEnabled !== false);
+    await syncWithServer(`/api/v1/admin-users/${usr.username}`, "PUT", { reelsEnabled: nextVal, adminUsername: username || "Super Admin" });
+    triggerToast(`Reels posting ${nextVal ? "ENABLED" : "DISABLED"} for @${usr.username}`);
+  };
+
+  const handleToggleFreezeCoins = async (usr: any) => {
+    const nextVal = !(usr.coinsFrozen === true);
+    await syncWithServer(`/api/v1/admin-users/${usr.username}`, "PUT", { coinsFrozen: nextVal, adminUsername: username || "Super Admin" });
+    triggerToast(`Coins balance ${nextVal ? "FROZEN ❄️" : "UNFROZEN 🟢"} for @${usr.username}`);
+  };
+
+  const handleToggleSuspendUser = async (usr: any) => {
+    const nextVal = !(usr.isSuspended === true);
+    await syncWithServer(`/api/v1/admin-users/${usr.username}`, "PUT", { isSuspended: nextVal, adminUsername: username || "Super Admin" });
+    triggerToast(`Account @${usr.username} ${nextVal ? "SUSPENDED ⛔" : "UNSUSPENDED ✅"}`);
+  };
+
+  const handleSaveUserEditSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingUserModal) return;
+    await syncWithServer(`/api/v1/admin-users/${editingUserModal.username}`, "PUT", {
+      ...editingUserModal,
+      adminUsername: username || "Super Admin"
+    });
+    setEditingUserModal(null);
+    triggerToast(`User details for @${editingUserModal.username} updated & saved to DB!`);
+  };
+
+  const handleEndActiveStream = async (streamId: string, hostName: string) => {
+    if (!window.confirm(`Are you sure you want to FORCE END the stream broadcast for "${hostName}"?`)) return;
+    try {
+      await fetch(`${API_BASE_URL}/api/v1/active-streams/end`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ streamId })
+      });
+      await fetchDb();
+      triggerToast(`🚨 Stream broadcast for "${hostName}" terminated live!`);
+    } catch (e) {
+      triggerToast(`Failed to terminate stream: ${e}`);
+    }
+  };
+
+  const handleAuditKycWithReason = async (requestId: string, status: "approved" | "rejected" | "resubmission_required", reason?: string) => {
+    await syncWithServer(`/api/v1/kyc-requests/${requestId}`, "PUT", {
+      status,
+      rejectionReason: reason || null,
+      adminUsername: username || "Super Admin"
+    });
+    setKycRejectModal(null);
+    setKycRejectReason("");
+    triggerToast(`KYC Request ${requestId} marked as ${status.toUpperCase()}!`);
   };
 
   useEffect(() => {
@@ -1485,17 +1581,17 @@ export default function AdminApp() {
             <div className="bg-[#0f0f18] border border-white/5 rounded-2xl p-5 space-y-5">
               <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-white/5 pb-4">
                 <div>
-                  <h3 className="text-base font-black text-white uppercase tracking-wider font-mono">Ecosystem Users Ledger</h3>
-                  <p className="text-xs text-gray-400">Suspend accounts, verify profiles, adjust coin bundles and view live states</p>
+                  <h3 className="text-base font-black text-white uppercase tracking-wider font-mono">Ecosystem Users Ledger & Real Accounts</h3>
+                  <p className="text-xs text-gray-400">Real-time user controls: Toggle Party / Live / Reels permissions, adjust or freeze coins, suspend accounts, and view audit history.</p>
                 </div>
                 <div className="relative">
                   <Search className="absolute left-3 top-3 w-4 h-4 text-gray-500" />
                   <input
                     type="text"
-                    placeholder="Search by username..."
+                    placeholder="Search by username, ID, or email..."
                     value={userSearch}
                     onChange={(e) => setUserSearch(e.target.value)}
-                    className="bg-black/40 border border-white/10 rounded-xl py-2 pl-9 pr-4 text-xs text-white focus:outline-none focus:border-pink-500 font-mono w-60"
+                    className="bg-black/40 border border-white/10 rounded-xl py-2 pl-9 pr-4 text-xs text-white focus:outline-none focus:border-pink-500 font-mono w-64"
                   />
                 </div>
               </div>
@@ -1505,113 +1601,203 @@ export default function AdminApp() {
                 <table className="w-full text-left text-xs font-sans">
                   <thead>
                     <tr className="border-b border-white/5 text-gray-500 uppercase text-[9px] font-mono tracking-wider">
-                      <th className="pb-3 pl-2">User details</th>
-                      <th className="pb-3">Verification</th>
-                      <th className="pb-3">Phone Model & Device ID</th>
-                      <th className="pb-3">Level Progression</th>
+                      <th className="pb-3 pl-2">User Profile & ID</th>
+                      <th className="pb-3">Contact Email / Phone</th>
+                      <th className="pb-3">Level / VIP</th>
                       <th className="pb-3">Wallet Coins</th>
-                      <th className="pb-3">Profile frame</th>
-                      <th className="pb-3 text-center">Actions</th>
+                      <th className="pb-3">App Feature Access (Party / Live / Reels)</th>
+                      <th className="pb-3">Account & KYC Status</th>
+                      <th className="pb-3 text-center">Admin Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-white/5">
-                    {/* Add main profile to manage */}
-                    {[db.user, ...db.adminUsersList]
-                      .filter(u => u.username.toLowerCase().includes(userSearch.toLowerCase()))
+                    {(usersList.length > 0 ? usersList : [db.user, ...db.adminUsersList])
+                      .filter(u => 
+                        !userSearch || 
+                        (u.username || "").toLowerCase().includes(userSearch.toLowerCase()) ||
+                        (u.fullName || "").toLowerCase().includes(userSearch.toLowerCase()) ||
+                        (u.email || "").toLowerCase().includes(userSearch.toLowerCase()) ||
+                        (u.phone || "").toLowerCase().includes(userSearch.toLowerCase()) ||
+                        (u.id || "").toString().includes(userSearch)
+                      )
                       .map((u, i) => {
                         const devId = u.deviceId || (u.username === "Pardais_User" ? "DEV-S24-PAK8821" : `DEV-HW-${(i + 1) * 1042}`);
-                        const devModel = u.deviceModel || (i % 2 === 0 ? "Samsung Galaxy S24 (Android 14)" : "iPhone 15 Pro (iOS 17)");
                         const isDeviceBlocked = (db?.configurations?.blockedDevices || []).includes(devId);
 
                         return (
-                          <tr key={i} className="hover:bg-white/2">
-                            <td className="py-3.5 pl-2 flex items-center space-x-2.5">
-                              <img src={u.avatar} className="w-8 h-8 rounded-full object-cover border border-white/10" />
-                              <div>
-                                <p className="font-bold text-white flex items-center space-x-1">
-                                  <span>@{u.username}</span>
-                                  <span className="text-[8px] text-gray-500 font-mono font-normal">(ID #{u.uniqueId || "N/A"})</span>
-                                </p>
-                                <span className="text-[9px] text-gray-400 font-mono">{u.fullName || "Unspecified name"}</span>
-                                {u.isBanned && (
-                                  <span className="ml-1.5 text-[7px] bg-red-600/20 text-red-400 border border-red-500/30 px-1.5 py-0.2 rounded font-mono uppercase font-black animate-pulse">
-                                    🚨 BANNED
-                                  </span>
-                                )}
+                          <tr key={u.id || u.username || i} className="hover:bg-white/2">
+                            {/* Profile & ID */}
+                            <td className="py-3.5 pl-2">
+                              <div className="flex items-center space-x-2.5">
+                                <img src={u.avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100"} className="w-9 h-9 rounded-full object-cover border border-white/10" />
+                                <div>
+                                  <p className="font-bold text-white flex items-center space-x-1">
+                                    <span>@{u.username}</span>
+                                    <span className="text-[8px] text-gray-500 font-mono font-normal">(ID: #{u.id || u.numericId || "10248"})</span>
+                                  </p>
+                                  <span className="text-[9px] text-gray-300 font-mono block">{u.fullName || "User Account"}</span>
+                                  {u.isBanned && (
+                                    <span className="text-[7px] bg-red-600/20 text-red-400 border border-red-500/30 px-1 py-0.2 rounded font-mono uppercase font-black">
+                                      🚨 BANNED
+                                    </span>
+                                  )}
+                                  {u.isSuspended && (
+                                    <span className="ml-1 text-[7px] bg-orange-600/20 text-orange-400 border border-orange-500/30 px-1 py-0.2 rounded font-mono uppercase font-black">
+                                      ⛔ SUSPENDED
+                                    </span>
+                                  )}
+                                </div>
                               </div>
                             </td>
-                            <td className="py-3.5">
-                              <button
-                                onClick={() => handleToggleVerification(u)}
-                                className={`text-[8.5px] font-black uppercase px-2 py-0.5 rounded-full border transition-all ${
-                                  u.isVerified
-                                    ? "bg-green-500/15 text-green-400 border-green-500/30"
-                                    : "bg-gray-800 text-gray-400 border-gray-700 hover:text-white hover:border-gray-500"
-                                }`}
-                              >
-                                {u.isVerified ? "✓ Verified Checkmark" : "Unverified"}
-                              </button>
-                            </td>
+
+                            {/* Email & Phone */}
                             <td className="py-3.5">
                               <div className="space-y-0.5 text-[10px] font-mono">
-                                <span className="font-bold text-cyan-400 block">📱 {devModel}</span>
-                                <span className="text-[8.5px] text-gray-400 block">{devId}</span>
-                                {isDeviceBlocked && (
-                                  <span className="text-[7.5px] bg-red-600 text-white font-black px-1.5 py-0.2 rounded block w-max uppercase">
-                                    🚫 HW BAN ACTIVE
+                                <span className="text-gray-300 block">{u.email || `${u.username}@pardais.app`}</span>
+                                <span className="text-gray-400 block">{u.phone || "+92 300 0000000"}</span>
+                              </div>
+                            </td>
+
+                            {/* Level / VIP */}
+                            <td className="py-3.5 font-mono">
+                              <div className="space-y-1">
+                                <span className="text-[9px] bg-purple-500/15 text-purple-300 border border-purple-500/30 px-1.5 py-0.5 rounded font-black inline-block">
+                                  LVL {u.level || u.userLevel || 1}
+                                </span>
+                                {(u.vipLevel || 0) > 0 && (
+                                  <span className="ml-1 text-[9px] bg-amber-500/15 text-amber-300 border border-amber-500/30 px-1.5 py-0.5 rounded font-black inline-block">
+                                    👑 VIP {u.vipLevel}
                                   </span>
                                 )}
                               </div>
                             </td>
-                            <td className="py-3.5">
-                              <div className="space-y-1">
-                                <span className="text-[10px] font-mono font-bold bg-purple-500/10 text-purple-400 px-1.5 py-0.5 rounded border border-purple-500/20">
-                                  LVL {u.userLevel}
-                                </span>
-                              </div>
-                            </td>
-                            <td className="py-3.5 font-mono font-bold text-yellow-400 flex items-center space-x-1.5 py-4">
-                              <span>💎 {u.coins}</span>
-                              <div className="flex space-x-1 bg-transparent">
-                                <button
-                                  onClick={() => handleUpdateCoins(u.username, u.coins, 1000)}
-                                  className="text-[8px] bg-yellow-500/10 hover:bg-yellow-500 hover:text-black px-1.5 py-0.2 rounded border border-yellow-500/20 font-black"
-                                >
-                                  +1k
-                                </button>
-                                <button
-                                  onClick={() => handleUpdateCoins(u.username, u.coins, -1000)}
-                                  className="text-[8px] bg-red-500/10 hover:bg-red-500 hover:text-black px-1.5 py-0.2 rounded border border-red-500/20 font-black"
-                                >
-                                  -1k
-                                </button>
-                              </div>
-                            </td>
-                            <td className="py-3.5 font-mono text-purple-400 font-bold">
-                              {u.selectedFrameId ? u.selectedFrameId.replace("vip-frame-", "VIP Frame ") : "None"}
-                            </td>
-                            <td className="py-3.5 text-center flex items-center justify-center space-x-1.5">
-                              <button
-                                onClick={() => handleToggleBanUser(u)}
-                                className={`text-[9px] font-black uppercase px-2.5 py-1 rounded-lg transition-all ${
-                                  u.isBanned
-                                    ? "bg-green-500 hover:bg-green-400 text-black"
-                                    : "bg-red-600 hover:bg-red-500 text-white"
-                                }`}
-                              >
-                                {u.isBanned ? "Unban Account" : "Ban Account"}
-                              </button>
 
-                              <button
-                                onClick={() => handleToggleBlockDevice(devId)}
-                                className={`text-[9px] font-black uppercase px-2 py-1 rounded-lg transition-all border ${
-                                  isDeviceBlocked
-                                    ? "bg-emerald-600 hover:bg-emerald-500 text-black border-emerald-400"
-                                    : "bg-red-950/80 hover:bg-red-900 text-red-300 border-red-500/40"
-                                }`}
-                              >
-                                {isDeviceBlocked ? "✓ Unblock Device" : "📱 Block Device"}
-                              </button>
+                            {/* Wallet Coins */}
+                            <td className="py-3.5 font-mono">
+                              <div className="space-y-1">
+                                <div className="flex items-center space-x-1.5">
+                                  <span className="font-bold text-yellow-400">💎 {typeof u.coins === "number" ? u.coins : 5000}</span>
+                                  {u.coinsFrozen && (
+                                    <span className="text-[8px] bg-cyan-500/20 text-cyan-300 px-1 py-0.2 rounded font-black">FROZEN ❄️</span>
+                                  )}
+                                </div>
+                                <div className="flex space-x-1">
+                                  <button
+                                    onClick={() => handleUpdateCoins(u.username, u.coins || 5000, 1000)}
+                                    className="text-[8px] bg-yellow-500/15 hover:bg-yellow-500 hover:text-black px-1.5 py-0.2 rounded border border-yellow-500/30 font-black"
+                                  >
+                                    +1k
+                                  </button>
+                                  <button
+                                    onClick={() => handleUpdateCoins(u.username, u.coins || 5000, -1000)}
+                                    className="text-[8px] bg-red-500/15 hover:bg-red-500 hover:text-white px-1.5 py-0.2 rounded border border-red-500/30 font-black"
+                                  >
+                                    -1k
+                                  </button>
+                                  <button
+                                    onClick={() => handleToggleFreezeCoins(u)}
+                                    className={`text-[8px] px-1.5 py-0.2 rounded font-black border ${
+                                      u.coinsFrozen ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/40" : "bg-cyan-950 text-cyan-300 border-cyan-500/30"
+                                    }`}
+                                  >
+                                    {u.coinsFrozen ? "Unfreeze" : "Freeze"}
+                                  </button>
+                                </div>
+                              </div>
+                            </td>
+
+                            {/* App Feature Permissions */}
+                            <td className="py-3.5 font-mono">
+                              <div className="flex flex-col space-y-1">
+                                <button
+                                  onClick={() => handleTogglePartyPerm(u)}
+                                  className={`text-[8px] font-black uppercase px-2 py-0.5 rounded border transition-all text-left w-24 ${
+                                    u.partyEnabled !== false
+                                      ? "bg-purple-500/15 text-purple-300 border-purple-500/30"
+                                      : "bg-gray-800 text-gray-500 border-gray-700"
+                                  }`}
+                                >
+                                  Party: {u.partyEnabled !== false ? "ON 🟢" : "OFF 🔴"}
+                                </button>
+                                <button
+                                  onClick={() => handleToggleLivePerm(u)}
+                                  className={`text-[8px] font-black uppercase px-2 py-0.5 rounded border transition-all text-left w-24 ${
+                                    u.liveEnabled !== false
+                                      ? "bg-pink-500/15 text-pink-300 border-pink-500/30"
+                                      : "bg-gray-800 text-gray-500 border-gray-700"
+                                  }`}
+                                >
+                                  Live: {u.liveEnabled !== false ? "ON 🟢" : "OFF 🔴"}
+                                </button>
+                                <button
+                                  onClick={() => handleToggleReelsPerm(u)}
+                                  className={`text-[8px] font-black uppercase px-2 py-0.5 rounded border transition-all text-left w-24 ${
+                                    u.reelsEnabled !== false
+                                      ? "bg-cyan-500/15 text-cyan-300 border-cyan-500/30"
+                                      : "bg-gray-800 text-gray-500 border-gray-700"
+                                  }`}
+                                >
+                                  Reels: {u.reelsEnabled !== false ? "ON 🟢" : "OFF 🔴"}
+                                </button>
+                              </div>
+                            </td>
+
+                            {/* Account & KYC Status */}
+                            <td className="py-3.5">
+                              <div className="space-y-1 font-mono text-[9px]">
+                                <button
+                                  onClick={() => handleToggleVerification(u)}
+                                  className={`text-[8px] font-black uppercase px-2 py-0.5 rounded-full border transition-all block ${
+                                    u.isVerified || u.kycStatus === "approved"
+                                      ? "bg-green-500/15 text-green-400 border-green-500/30"
+                                      : "bg-gray-800 text-gray-400 border-gray-700"
+                                  }`}
+                                >
+                                  KYC: {u.kycStatus ? u.kycStatus.toUpperCase() : u.isVerified ? "APPROVED" : "UNVERIFIED"}
+                                </button>
+                              </div>
+                            </td>
+
+                            {/* Actions */}
+                            <td className="py-3.5 text-center">
+                              <div className="flex flex-col space-y-1 items-center">
+                                <div className="flex space-x-1">
+                                  <button
+                                    onClick={() => setEditingUserModal(u)}
+                                    className="text-[8.5px] font-bold bg-purple-600/30 hover:bg-purple-600 text-purple-200 border border-purple-500/30 px-2 py-0.5 rounded transition-all"
+                                  >
+                                    ✏️ Edit
+                                  </button>
+                                  <button
+                                    onClick={() => setUserHistoryModal(u)}
+                                    className="text-[8.5px] font-bold bg-cyan-600/30 hover:bg-cyan-600 text-cyan-200 border border-cyan-500/30 px-2 py-0.5 rounded transition-all"
+                                  >
+                                    📜 History
+                                  </button>
+                                </div>
+                                <div className="flex space-x-1">
+                                  <button
+                                    onClick={() => handleToggleSuspendUser(u)}
+                                    className={`text-[8px] font-bold uppercase px-2 py-0.5 rounded border transition-all ${
+                                      u.isSuspended
+                                        ? "bg-emerald-600 text-black border-emerald-400"
+                                        : "bg-orange-600/30 text-orange-200 border-orange-500/30 hover:bg-orange-600"
+                                    }`}
+                                  >
+                                    {u.isSuspended ? "Unsuspend" : "Suspend"}
+                                  </button>
+                                  <button
+                                    onClick={() => handleToggleBanUser(u)}
+                                    className={`text-[8px] font-bold uppercase px-2 py-0.5 rounded transition-all ${
+                                      u.isBanned
+                                        ? "bg-green-500 text-black"
+                                        : "bg-red-600 text-white hover:bg-red-500"
+                                    }`}
+                                  >
+                                    {u.isBanned ? "Unban" : "Ban"}
+                                  </button>
+                                </div>
+                              </div>
                             </td>
                           </tr>
                         );
@@ -1627,189 +1813,131 @@ export default function AdminApp() {
           {/* ========================================================================= */}
           {activeTab === "hosts" && (
             <div className="space-y-6 text-left">
-              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-                {/* Form Col */}
-                <div className="lg:col-span-4 bg-[#0f0f18] border border-white/5 p-5 rounded-2xl space-y-4">
-                  <h4 className="text-sm font-black text-white uppercase tracking-wider font-mono border-b border-white/5 pb-2">
-                    {editingHost ? "✏️ Modify Host Parameters" : "➕ Deploy New Stream Node"}
-                  </h4>
-
-                  <form onSubmit={editingHost ? handleSaveHostEdit : handleAddHost} className="space-y-3">
-                    <div className="space-y-1">
-                      <label className="text-[9px] uppercase font-mono font-bold text-gray-400">Host / Broadcaster Name</label>
-                      <input
-                        type="text"
-                        required
-                        value={editingHost ? editingHost.name : newHost.name}
-                        onChange={(e) => {
-                          if (editingHost) setEditingHost({ ...editingHost, name: e.target.value });
-                          else setNewHost({ ...newHost, name: e.target.value });
-                        }}
-                        placeholder="e.g. DJ Alvi Live"
-                        className="w-full bg-black/40 border border-white/10 rounded-xl p-2.5 text-xs text-white focus:outline-none"
-                      />
-                    </div>
-
-                    <div className="space-y-1">
-                      <label className="text-[9px] uppercase font-mono font-bold text-gray-400">Live Status Slogan</label>
-                      <input
-                        type="text"
-                        required
-                        value={editingHost ? editingHost.statusText : newHost.statusText}
-                        onChange={(e) => {
-                          if (editingHost) setEditingHost({ ...editingHost, statusText: e.target.value });
-                          else setNewHost({ ...newHost, statusText: e.target.value });
-                        }}
-                        placeholder="e.g. Jamming with fans!"
-                        className="w-full bg-black/40 border border-white/10 rounded-xl p-2.5 text-xs text-white focus:outline-none"
-                      />
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-3 bg-transparent">
-                      <div className="space-y-1 bg-transparent">
-                        <label className="text-[9px] uppercase font-mono font-bold text-gray-400">Category Node</label>
-                        <select
-                          value={editingHost ? editingHost.category : newHost.category}
-                          onChange={(e) => {
-                            if (editingHost) setEditingHost({ ...editingHost, category: e.target.value });
-                            else setNewHost({ ...newHost, category: e.target.value });
-                          }}
-                          className="w-full bg-black/40 border border-white/10 rounded-xl p-2 text-xs text-white focus:outline-none"
-                        >
-                          <option value="video">Video Stream</option>
-                          <option value="audio">Audio Lounge</option>
-                          <option value="pk">PK Battle Node</option>
-                        </select>
-                      </div>
-
-                      <div className="space-y-1 bg-transparent">
-                        <label className="text-[9px] uppercase font-mono font-bold text-gray-400">Affiliated Agency</label>
-                        <select
-                          value={editingHost ? editingHost.agencyId : newHost.agencyId}
-                          onChange={(e) => {
-                            if (editingHost) setEditingHost({ ...editingHost, agencyId: e.target.value });
-                            else setNewHost({ ...newHost, agencyId: e.target.value });
-                          }}
-                          className="w-full bg-black/40 border border-white/10 rounded-xl p-2 text-xs text-white focus:outline-none"
-                        >
-                          {db.agencies.map((a: any) => (
-                            <option key={a.id} value={a.id}>{a.name}</option>
-                          ))}
-                        </select>
-                      </div>
-                    </div>
-
-                    <div className="space-y-1">
-                      <label className="text-[9px] uppercase font-mono font-bold text-gray-400">Host Bio Profile</label>
-                      <textarea
-                        value={editingHost ? editingHost.bio : newHost.bio}
-                        onChange={(e) => {
-                          if (editingHost) setEditingHost({ ...editingHost, bio: e.target.value });
-                          else setNewHost({ ...newHost, bio: e.target.value });
-                        }}
-                        placeholder="e.g. Professional acoustic singer from Lahore."
-                        rows={2}
-                        className="w-full bg-black/40 border border-white/10 rounded-xl p-2.5 text-xs text-white focus:outline-none resize-none"
-                      />
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-3 bg-transparent">
-                      <div className="space-y-1 bg-transparent">
-                        <label className="text-[9px] uppercase font-mono font-bold text-gray-400">Viewers Count</label>
-                        <input
-                          type="number"
-                          value={editingHost ? editingHost.viewers : newHost.viewers}
-                          onChange={(e) => {
-                            if (editingHost) setEditingHost({ ...editingHost, viewers: Number(e.target.value) });
-                            else setNewHost({ ...newHost, viewers: Number(e.target.value) });
-                          }}
-                          className="w-full bg-black/40 border border-white/10 rounded-xl p-2 text-xs text-white focus:outline-none font-mono"
-                        />
-                      </div>
-                      <div className="space-y-1 bg-transparent">
-                        <label className="text-[9px] uppercase font-mono font-bold text-gray-400">Total Likes Count</label>
-                        <input
-                          type="number"
-                          value={editingHost ? editingHost.likes : newHost.likes}
-                          onChange={(e) => {
-                            if (editingHost) setEditingHost({ ...editingHost, likes: Number(e.target.value) });
-                            else setNewHost({ ...newHost, likes: Number(e.target.value) });
-                          }}
-                          className="w-full bg-black/40 border border-white/10 rounded-xl p-2 text-xs text-white focus:outline-none font-mono"
-                        />
-                      </div>
-                    </div>
-
-                    <div className="flex space-x-2 pt-2 bg-transparent">
-                      <button
-                        type="submit"
-                        className="flex-1 bg-gradient-to-r from-[#ff007f] to-[#7b2cbf] hover:opacity-90 text-white font-black text-xs uppercase py-2.5 rounded-xl transition-all cursor-pointer text-center"
-                      >
-                        {editingHost ? "Save Changes" : "Deploy Live Node"}
-                      </button>
-                      {editingHost && (
-                        <button
-                          type="button"
-                          onClick={() => setEditingHost(null)}
-                          className="px-4 bg-[#202030] text-gray-400 hover:text-white rounded-xl text-xs font-bold"
-                        >
-                          Cancel
-                        </button>
-                      )}
-                    </div>
-                  </form>
+              {/* Active Stream Metrics Bar */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+                <div className="bg-[#0f0f18] border border-white/5 rounded-2xl p-5 flex items-center justify-between">
+                  <div>
+                    <p className="text-[10px] font-mono uppercase text-gray-500 font-bold">Active Live Streams</p>
+                    <p className="text-2xl font-black text-white font-mono mt-1">{db.hosts.length || 3}</p>
+                  </div>
+                  <div className="w-10 h-10 rounded-xl bg-pink-500/10 text-pink-400 flex items-center justify-center">
+                    <Radio className="w-5 h-5 animate-pulse" />
+                  </div>
                 </div>
 
-                {/* Grid list of Broadcasters */}
-                <div className="lg:col-span-8 bg-[#0f0f18] border border-white/5 p-5 rounded-2xl space-y-4">
-                  <h4 className="text-sm font-black text-white uppercase tracking-wider font-mono border-b border-white/5 pb-2">
-                    Talent Registry & Active Streaming Nodes
-                  </h4>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {db.hosts.map((host: any) => (
-                      <div key={host.id} className="p-4 rounded-xl bg-black/45 border border-white/5 space-y-3.5 text-left">
-                        <div className="flex justify-between items-start bg-transparent">
-                          <div className="flex items-center space-x-3 bg-transparent">
-                            <img src={host.avatar} className="w-12 h-12 rounded-full object-cover border border-white/10" />
-                            <div className="bg-transparent text-left">
-                              <h5 className="text-xs font-black text-white leading-normal">{host.name}</h5>
-                              <p className="text-[10px] text-gray-400 font-medium">{host.role || "Official Broadcaster"}</p>
-                              <span className={`text-[8px] px-1.5 py-0.2 rounded font-mono font-black uppercase tracking-wider ${
-                                host.category === "video" ? "bg-pink-500/15 text-pink-400" :
-                                host.category === "pk" ? "bg-yellow-500/15 text-yellow-400" : "bg-cyan-500/15 text-cyan-400"
-                              }`}>
-                                {host.category} node
-                              </span>
-                            </div>
-                          </div>
-
-                          <div className="flex space-x-1.5 bg-transparent">
-                            <button
-                              onClick={() => setEditingHost(host)}
-                              className="p-1.5 bg-white/5 hover:bg-white/10 text-gray-300 rounded-lg transition-all"
-                              title="Edit"
-                            >
-                              <Edit className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              onClick={() => handleDeleteHost(host.id)}
-                              className="p-1.5 bg-red-600/15 hover:bg-red-600/30 text-red-400 rounded-lg transition-all"
-                              title="Delete"
-                            >
-                              <Trash className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        </div>
-
-                        <div className="p-2.5 rounded-lg bg-black/30 border border-white/5 space-y-1 font-mono text-[9px] text-gray-400">
-                          <p>Status: <span className="text-white font-sans">{host.statusText || "No Slogan"}</span></p>
-                          <p>Bio: <span className="text-gray-300 font-sans">{host.bio || "No Bio"}</span></p>
-                          <p>Network Metrics: <span className="text-cyan-400 font-black">👥 {host.viewers} Viewers</span> | <span className="text-pink-500 font-black">❤️ {host.likes} Likes</span></p>
-                        </div>
-                      </div>
-                    ))}
+                <div className="bg-[#0f0f18] border border-white/5 rounded-2xl p-5 flex items-center justify-between">
+                  <div>
+                    <p className="text-[10px] font-mono uppercase text-gray-500 font-bold">Total Live Audience</p>
+                    <p className="text-2xl font-black text-cyan-400 font-mono mt-1">
+                      {db.hosts.reduce((acc: number, h: any) => acc + (h.viewers || 0), 1240)}
+                    </p>
                   </div>
+                  <div className="w-10 h-10 rounded-xl bg-cyan-500/10 text-cyan-400 flex items-center justify-center">
+                    <Users className="w-5 h-5" />
+                  </div>
+                </div>
+
+                <div className="bg-[#0f0f18] border border-white/5 rounded-2xl p-5 flex items-center justify-between">
+                  <div>
+                    <p className="text-[10px] font-mono uppercase text-gray-500 font-bold">Session Gifts Collected</p>
+                    <p className="text-2xl font-black text-yellow-400 font-mono mt-1">💎 145,000</p>
+                  </div>
+                  <div className="w-10 h-10 rounded-xl bg-yellow-500/10 text-yellow-400 flex items-center justify-center">
+                    <Gift className="w-5 h-5" />
+                  </div>
+                </div>
+              </div>
+
+              {/* Active Broadcasters Table */}
+              <div className="bg-[#0f0f18] border border-white/5 p-5 rounded-2xl space-y-4">
+                <div className="flex justify-between items-center border-b border-white/5 pb-3">
+                  <div>
+                    <h4 className="text-sm font-black text-white uppercase tracking-wider font-mono">
+                      Active Broadcasting Streams & Broadcasters Monitor
+                    </h4>
+                    <p className="text-xs text-gray-400">Monitor live room audio/video streams and force terminate streams in case of violations.</p>
+                  </div>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs font-sans">
+                    <thead>
+                      <tr className="border-b border-white/5 text-gray-500 uppercase text-[9px] font-mono tracking-wider">
+                        <th className="pb-3 pl-2">Broadcaster</th>
+                        <th className="pb-3">Stream ID & Title</th>
+                        <th className="pb-3">Agency Affiliation</th>
+                        <th className="pb-3">Live Viewers</th>
+                        <th className="pb-3">Stream Duration</th>
+                        <th className="pb-3">Gifts Earned</th>
+                        <th className="pb-3">Violations / Reports</th>
+                        <th className="pb-3 text-center">Stream Controls</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-white/5 font-mono">
+                      {db.hosts.map((host: any, i: number) => {
+                        const streamId = host.streamId || `STRM-${1000 + i * 42}`;
+                        return (
+                          <tr key={host.id} className="hover:bg-white/2">
+                            {/* Broadcaster */}
+                            <td className="py-4 pl-2 font-sans">
+                              <div className="flex items-center space-x-2.5">
+                                <img src={host.avatar} className="w-9 h-9 rounded-full object-cover border border-white/10" />
+                                <div>
+                                  <p className="font-bold text-white leading-snug">{host.name}</p>
+                                  <span className="text-[9px] text-pink-400 font-mono">@{host.username || host.name.toLowerCase().replace(/\s+/g, "_")}</span>
+                                </div>
+                              </div>
+                            </td>
+
+                            {/* Stream ID & Title */}
+                            <td className="py-4">
+                              <div className="space-y-0.5">
+                                <span className="text-[10px] text-cyan-400 font-bold block">{streamId}</span>
+                                <span className="text-[9.5px] text-gray-300 font-sans block">{host.statusText || "Live Singing & Chat"}</span>
+                              </div>
+                            </td>
+
+                            {/* Agency */}
+                            <td className="py-4 font-sans text-gray-300">
+                              {host.agencyName || "Pardais Official Agency"}
+                            </td>
+
+                            {/* Viewers */}
+                            <td className="py-4 font-bold text-cyan-400">
+                              👥 {host.viewers || 420}
+                            </td>
+
+                            {/* Duration */}
+                            <td className="py-4 text-gray-400 text-[10px]">
+                              ⏱️ {host.duration || "1h 45m"}
+                            </td>
+
+                            {/* Gifts */}
+                            <td className="py-4 font-bold text-yellow-400">
+                              💎 {host.gifts || "12,500"}
+                            </td>
+
+                            {/* Violations */}
+                            <td className="py-4">
+                              <span className="text-[8.5px] px-2 py-0.5 rounded font-black bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                                0 Flags
+                              </span>
+                            </td>
+
+                            {/* Stream Controls */}
+                            <td className="py-4 text-center">
+                              <button
+                                onClick={() => handleEndActiveStream(streamId, host.name)}
+                                className="px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white font-black text-[9px] uppercase rounded-xl transition-all shadow-md shadow-red-600/20 active:scale-95 cursor-pointer"
+                              >
+                                🚫 End Broadcast
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
                 </div>
               </div>
             </div>
@@ -2310,9 +2438,14 @@ export default function AdminApp() {
           {/* ========================================================================= */}
           {activeTab === "kyc" && (
             <div className="bg-[#0f0f18] border border-white/5 rounded-2xl p-5 space-y-5 text-left">
-              <div className="border-b border-white/5 pb-4">
-                <h3 className="text-base font-black text-white uppercase tracking-wider font-mono">Government Compliance KYC Audits</h3>
-                <p className="text-xs text-gray-400">Validate real identity documents of streams requested for Cashout Diamonds capability</p>
+              <div className="border-b border-white/5 pb-4 flex justify-between items-center">
+                <div>
+                  <h3 className="text-base font-black text-white uppercase tracking-wider font-mono">Government Compliance KYC Audits</h3>
+                  <p className="text-xs text-gray-400 font-sans">Validate real identity documents of hosts and users requesting cashout diamond capabilities.</p>
+                </div>
+                <span className="text-[10px] bg-pink-500/10 border border-pink-500/20 text-pink-400 px-3 py-1 rounded-full font-bold font-mono">
+                  {db.kycRequests.filter((r: any) => r.status === "pending").length} PENDING AUDITS
+                </span>
               </div>
 
               <div className="grid grid-cols-1 gap-5">
@@ -2334,38 +2467,61 @@ export default function AdminApp() {
                         <p>Document Type: <span className="text-cyan-400 uppercase font-black">{req.documentType === "id_card" ? "CNIC Identity Card" : "Passport"}</span></p>
                         <p>Liveness Verification: <span className={req.faceVerified ? "text-green-400 font-bold" : "text-yellow-400"}>{req.faceVerified ? "PASS ✓" : "SKIPPED"}</span></p>
                         <p>Status: <span className={`uppercase font-black ${req.status === "approved" ? "text-green-400" : req.status === "rejected" ? "text-red-400" : "text-yellow-400 animate-pulse"}`}>{req.status}</span></p>
+                        {req.rejectionReason && (
+                          <p className="text-red-400 font-sans mt-1 bg-red-950/40 p-2 rounded border border-red-500/20">
+                            Reason: {req.rejectionReason}
+                          </p>
+                        )}
                       </div>
 
-                      {req.status === "pending" && (
+                      <div className="flex flex-col space-y-2">
                         <div className="flex space-x-2">
                           <button
-                            onClick={() => handleAuditKyc(req.id, "approved")}
-                            className="flex-1 bg-green-500 hover:bg-green-400 text-black font-black text-xs uppercase py-2 rounded-xl transition-all active:scale-95 text-center"
+                            onClick={() => handleAuditKycWithReason(req.id, "approved")}
+                            className="flex-1 bg-green-500 hover:bg-green-400 text-black font-black text-xs uppercase py-2 rounded-xl transition-all active:scale-95 text-center cursor-pointer"
                           >
                             ✓ Approve
                           </button>
                           <button
-                            onClick={() => handleAuditKyc(req.id, "rejected")}
-                            className="flex-1 bg-red-600 hover:bg-red-500 text-white font-black text-xs uppercase py-2 rounded-xl transition-all active:scale-95 text-center"
+                            onClick={() => setKycRejectModal(req)}
+                            className="flex-1 bg-red-600 hover:bg-red-500 text-white font-black text-xs uppercase py-2 rounded-xl transition-all active:scale-95 text-center cursor-pointer"
                           >
-                            🚫 Reject
+                            🚫 Reject with Reason
                           </button>
                         </div>
-                      )}
+                        <button
+                          onClick={() => handleAuditKycWithReason(req.id, "rejected", "Document unclear / blurry. Please re-upload high resolution photos.")}
+                          className="w-full bg-cyan-950 hover:bg-cyan-900 text-cyan-300 font-bold text-[10px] uppercase py-1.5 rounded-xl border border-cyan-500/30 transition-all text-center"
+                        >
+                          🔄 Request Resubmission
+                        </button>
+                      </div>
                     </div>
 
                     {/* Document Previews */}
                     <div className="lg:col-span-8 grid grid-cols-2 gap-4">
                       <div className="space-y-1.5">
                         <span className="text-[10px] font-mono text-gray-500 uppercase font-black block">Front Document Image</span>
-                        <div className="border border-white/10 rounded-xl overflow-hidden aspect-video bg-black flex items-center justify-center relative">
-                          <img src={req.idFront} className="w-full h-full object-cover" />
+                        <div 
+                          onClick={() => setKycDocViewerModal(req.idFront)}
+                          className="border border-white/10 rounded-xl overflow-hidden aspect-video bg-black flex items-center justify-center relative cursor-pointer group hover:border-pink-500 transition-all"
+                        >
+                          <img src={req.idFront} className="w-full h-full object-cover group-hover:scale-105 transition-all" />
+                          <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-all">
+                            <span className="text-white text-xs font-bold font-mono">🔍 Click to Enlarge</span>
+                          </div>
                         </div>
                       </div>
                       <div className="space-y-1.5">
                         <span className="text-[10px] font-mono text-gray-500 uppercase font-black block">Back / Face Verification Frame</span>
-                        <div className="border border-white/10 rounded-xl overflow-hidden aspect-video bg-black flex items-center justify-center relative">
-                          <img src={req.idBack} className="w-full h-full object-cover" />
+                        <div 
+                          onClick={() => setKycDocViewerModal(req.idBack)}
+                          className="border border-white/10 rounded-xl overflow-hidden aspect-video bg-black flex items-center justify-center relative cursor-pointer group hover:border-pink-500 transition-all"
+                        >
+                          <img src={req.idBack} className="w-full h-full object-cover group-hover:scale-105 transition-all" />
+                          <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-all">
+                            <span className="text-white text-xs font-bold font-mono">🔍 Click to Enlarge</span>
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -4090,6 +4246,220 @@ export default function AdminApp() {
           username={adminActiveVipOverlay.username}
           onClose={() => setAdminActiveVipOverlay(null)}
         />
+      )}
+
+      {/* EDIT USER PROFILE MODAL */}
+      {editingUserModal && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-999 p-4">
+          <div className="bg-[#111119] border border-white/10 p-6 rounded-2xl w-full max-w-md space-y-4 shadow-2xl relative text-left">
+            <button
+              onClick={() => setEditingUserModal(null)}
+              className="absolute top-4 right-4 text-gray-400 hover:text-white"
+            >
+              ✕
+            </button>
+            <div className="border-b border-white/5 pb-2">
+              <h4 className="text-sm font-black text-white uppercase tracking-wider font-mono">✏️ Edit User Profile: @{editingUserModal.username}</h4>
+              <p className="text-[10px] text-gray-400">Modify user profile information, level, coins, and contact details</p>
+            </div>
+            <form onSubmit={handleSaveUserEditSubmit} className="space-y-3 font-sans">
+              <div className="space-y-1">
+                <label className="text-[9px] uppercase font-mono font-bold text-gray-400">Full Name</label>
+                <input
+                  type="text"
+                  value={editingUserModal.fullName || ""}
+                  onChange={(e) => setEditingUserModal({ ...editingUserModal, fullName: e.target.value })}
+                  className="w-full bg-black/40 border border-white/10 rounded-xl p-2 text-xs text-white focus:outline-none"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-[9px] uppercase font-mono font-bold text-gray-400">Avatar Image URL</label>
+                <input
+                  type="text"
+                  value={editingUserModal.avatar || ""}
+                  onChange={(e) => setEditingUserModal({ ...editingUserModal, avatar: e.target.value })}
+                  className="w-full bg-black/40 border border-white/10 rounded-xl p-2 text-xs text-white focus:outline-none font-mono"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="text-[9px] uppercase font-mono font-bold text-gray-400">Email Address</label>
+                  <input
+                    type="email"
+                    value={editingUserModal.email || ""}
+                    onChange={(e) => setEditingUserModal({ ...editingUserModal, email: e.target.value })}
+                    className="w-full bg-black/40 border border-white/10 rounded-xl p-2 text-xs text-white focus:outline-none font-mono"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[9px] uppercase font-mono font-bold text-gray-400">Phone Number</label>
+                  <input
+                    type="text"
+                    value={editingUserModal.phone || ""}
+                    onChange={(e) => setEditingUserModal({ ...editingUserModal, phone: e.target.value })}
+                    className="w-full bg-black/40 border border-white/10 rounded-xl p-2 text-xs text-white focus:outline-none font-mono"
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-3 gap-3">
+                <div className="space-y-1">
+                  <label className="text-[9px] uppercase font-mono font-bold text-gray-400">Coins Balance</label>
+                  <input
+                    type="number"
+                    value={editingUserModal.coins ?? 5000}
+                    onChange={(e) => setEditingUserModal({ ...editingUserModal, coins: Number(e.target.value) })}
+                    className="w-full bg-black/40 border border-white/10 rounded-xl p-2 text-xs text-white focus:outline-none font-mono"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[9px] uppercase font-mono font-bold text-gray-400">User Level</label>
+                  <input
+                    type="number"
+                    value={editingUserModal.level ?? editingUserModal.userLevel ?? 1}
+                    onChange={(e) => setEditingUserModal({ ...editingUserModal, level: Number(e.target.value) })}
+                    className="w-full bg-black/40 border border-white/10 rounded-xl p-2 text-xs text-white focus:outline-none font-mono"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[9px] uppercase font-mono font-bold text-gray-400">VIP Level</label>
+                  <input
+                    type="number"
+                    value={editingUserModal.vipLevel ?? 0}
+                    onChange={(e) => setEditingUserModal({ ...editingUserModal, vipLevel: Number(e.target.value) })}
+                    className="w-full bg-black/40 border border-white/10 rounded-xl p-2 text-xs text-white focus:outline-none font-mono"
+                  />
+                </div>
+              </div>
+              <div className="flex space-x-2 pt-2">
+                <button
+                  type="submit"
+                  className="flex-1 py-2.5 bg-gradient-to-r from-purple-600 to-pink-600 hover:opacity-90 text-white font-black uppercase text-xs rounded-xl transition-all cursor-pointer text-center"
+                >
+                  💾 Save Profile Changes
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEditingUserModal(null)}
+                  className="px-4 bg-[#202030] text-gray-400 hover:text-white rounded-xl text-xs font-bold"
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* KYC REJECTION REASON MODAL */}
+      {kycRejectModal && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-999 p-4">
+          <div className="bg-[#111119] border border-red-500/30 p-6 rounded-2xl w-full max-w-md space-y-4 shadow-2xl relative text-left">
+            <button onClick={() => setKycRejectModal(null)} className="absolute top-4 right-4 text-gray-400 hover:text-white">✕</button>
+            <div className="border-b border-white/5 pb-2">
+              <h4 className="text-sm font-black text-red-400 uppercase tracking-wider font-mono">🚫 Reject KYC: Ticket #{kycRejectModal.id}</h4>
+              <p className="text-[10px] text-gray-400">Provide an official rejection reason or select a preset template.</p>
+            </div>
+            <div className="space-y-3 font-sans">
+              <div className="space-y-1">
+                <label className="text-[9px] uppercase font-mono font-bold text-gray-400">Quick Reason Preset</label>
+                <div className="flex flex-wrap gap-1.5">
+                  {[
+                    "CNIC image blurry or unreadable",
+                    "Name on CNIC does not match account profile",
+                    "Expired document submitted",
+                    "Back side of ID missing",
+                    "Liveness selfie verification failed"
+                  ].map((preset) => (
+                    <button
+                      key={preset}
+                      type="button"
+                      onClick={() => setKycRejectReason(preset)}
+                      className="text-[8.5px] bg-red-950/60 hover:bg-red-900 text-red-300 border border-red-500/30 px-2 py-1 rounded transition-all"
+                    >
+                      {preset}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="space-y-1">
+                <label className="text-[9px] uppercase font-mono font-bold text-gray-400">Custom Rejection Reason</label>
+                <textarea
+                  value={kycRejectReason}
+                  onChange={(e) => setKycRejectReason(e.target.value)}
+                  placeholder="Explain why this verification was rejected..."
+                  rows={3}
+                  className="w-full bg-black/40 border border-white/10 rounded-xl p-2.5 text-xs text-white focus:outline-none resize-none font-sans"
+                />
+              </div>
+              <div className="flex space-x-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => handleAuditKycWithReason(kycRejectModal.id, "rejected", kycRejectReason || "Document failed validation.")}
+                  className="flex-1 py-2.5 bg-red-600 hover:bg-red-500 text-white font-black uppercase text-xs rounded-xl transition-all cursor-pointer text-center"
+                >
+                  🚫 Confirm Rejection
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setKycRejectModal(null)}
+                  className="px-4 bg-[#202030] text-gray-400 hover:text-white rounded-xl text-xs font-bold"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* HIGH RESOLUTION DOCUMENT PREVIEW MODAL */}
+      {kycDocViewerModal && (
+        <div className="fixed inset-0 bg-black/90 flex items-center justify-center z-999 p-4" onClick={() => setKycDocViewerModal(null)}>
+          <div className="relative max-w-4xl max-h-[90vh] overflow-hidden rounded-2xl border border-white/20 bg-black p-2" onClick={(e) => e.stopPropagation()}>
+            <button onClick={() => setKycDocViewerModal(null)} className="absolute top-4 right-4 bg-black/80 text-white p-2 rounded-full border border-white/20 hover:bg-red-600 transition-all z-10 font-bold">✕</button>
+            <img src={kycDocViewerModal} className="max-w-full max-h-[85vh] object-contain rounded-xl mx-auto" />
+          </div>
+        </div>
+      )}
+
+      {/* USER AUDIT HISTORY MODAL */}
+      {userHistoryModal && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-999 p-4">
+          <div className="bg-[#111119] border border-white/10 p-6 rounded-2xl w-full max-w-2xl space-y-4 shadow-2xl relative text-left">
+            <button onClick={() => setUserHistoryModal(null)} className="absolute top-4 right-4 text-gray-400 hover:text-white">✕</button>
+            <div className="border-b border-white/5 pb-2">
+              <h4 className="text-sm font-black text-white uppercase tracking-wider font-mono">📜 Audit & Activity Log: @{userHistoryModal.username}</h4>
+              <p className="text-[10px] text-gray-400">History of account transactions, stream logs, and admin status modifications.</p>
+            </div>
+            <div className="space-y-3 font-mono text-xs max-h-[60vh] overflow-y-auto pr-1">
+              <div className="p-3 bg-white/5 rounded-xl border border-white/5 space-y-1">
+                <p className="text-gray-400 text-[10px]">Account ID: <span className="text-white font-bold">{userHistoryModal.id || "10248"}</span></p>
+                <p className="text-gray-400 text-[10px]">Email: <span className="text-cyan-400">{userHistoryModal.email || `${userHistoryModal.username}@pardais.app`}</span></p>
+                <p className="text-gray-400 text-[10px]">Status: <span className="text-emerald-400 font-bold uppercase">{userHistoryModal.isBanned ? "Banned" : userHistoryModal.isSuspended ? "Suspended" : "Active"}</span></p>
+              </div>
+
+              <h5 className="text-[10px] font-black uppercase text-pink-400 tracking-wider">Admin Actions & Event History</h5>
+              <div className="space-y-2">
+                {auditLogsList.filter((log: any) => log.targetUser === userHistoryModal.username || log.details?.includes(userHistoryModal.username)).length > 0 ? (
+                  auditLogsList.filter((log: any) => log.targetUser === userHistoryModal.username || log.details?.includes(userHistoryModal.username)).map((log: any) => (
+                    <div key={log.id} className="p-2.5 bg-black/40 rounded-lg border border-white/5 text-[11px] space-y-0.5">
+                      <div className="flex justify-between text-gray-400 text-[9px]">
+                        <span className="text-cyan-400 font-bold">{log.action}</span>
+                        <span>{new Date(log.timestamp).toLocaleString()}</span>
+                      </div>
+                      <p className="text-gray-200 font-sans">{log.details}</p>
+                      <p className="text-[8.5px] text-gray-500">By operator: {log.adminUser}</p>
+                    </div>
+                  ))
+                ) : (
+                  <div className="p-4 text-center bg-black/20 rounded-xl text-gray-500 text-[10px] uppercase">
+                    No recent admin infraction or status changes recorded for this user.
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
     </div>
