@@ -8,7 +8,7 @@ export interface MusicTrack {
   cover: string;
 }
 
-export const MOCK_TRACKS: MusicTrack[] = [
+export const PARDAIS_MUSIC_TRACKS: MusicTrack[] = [
   {
     id: "track-1",
     title: "Sufi Mystic Whistle",
@@ -64,3 +64,5 @@ export const MOCK_TRACKS: MusicTrack[] = [
     cover: "https://images.unsplash.com/photo-1514525253161-7a46d19cd819?auto=format&fit=crop&w=150&h=150&q=80"
   }
 ];
+
+export const MOCK_TRACKS = PARDAIS_MUSIC_TRACKS;

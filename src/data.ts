@@ -53,14 +53,4 @@ export const DAILY_MISSIONS = [
   { id: "m-5", title: "Share Pardais Party host stream with friends", xpReward: 50, coinsReward: 25, status: "Pending", current: 0, target: 1 }
 ];
 
-export const STATIC_COMMENTS_POOL = [
-  "SubhanAllah bohot pyaari aawaaz hai Sahar! 😍",
-  "Guys PK support karo fast!! ⚡⚡",
-  "Rose gift bhejo sab log family goal complete karna hai!",
-  "Nice bio and stream quality is perfect! 🤩",
-  "Aadaab! Kaise hain sab log?",
-  "Love from Lahore! Keep rocking Pardais Party! 💕",
-  "Is this sound coming clearly? Let me know host.",
-  "Zain bhai kya entry maari hai, unbeatable!",
-  "Mera double tap check karo, work kar raha hai screen pe."
-];
+export const STATIC_COMMENTS_POOL: string[] = [];

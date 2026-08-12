@@ -20,13 +20,51 @@ if (typeof window !== "undefined") {
   const originalConsoleError = console.error;
   const originalConsoleWarn = console.warn;
 
-  console.error = function (...args: any[]) {
-    const msg = args.map(arg => {
-      if (arg instanceof Error) {
-        return `${arg.message} ${arg.stack || ""}`;
+  // Helper function to safely stringify or format error arguments without circular DOM structure crashes
+  const safeFormatArg = (arg: any): string => {
+    if (arg === null || arg === undefined) return "";
+    if (typeof arg === "string" || typeof arg === "number" || typeof arg === "boolean") {
+      return String(arg);
+    }
+    if (arg instanceof Error) {
+      return `${arg.name || "Error"}: ${arg.message} ${arg.stack || ""}`;
+    }
+    if (typeof arg === "object") {
+      if ('target' in arg || 'currentTarget' in arg || 'nativeEvent' in arg || arg instanceof Element || (arg as any).nodeType) {
+        return `[DOM/Event Object: ${(arg as any).type || (arg as any).nodeName || 'Element'}]`;
       }
-      return String(arg || "");
-    }).join(" ").toLowerCase();
+      try {
+        const seen = new WeakSet();
+        return JSON.stringify(arg, (key, value) => {
+          if (typeof value === "object" && value !== null) {
+            if (seen.has(value) || value instanceof Element || (value as any).nodeType) {
+              return "[Circular/DOM]";
+            }
+            seen.add(value);
+          }
+          return value;
+        });
+      } catch (e) {
+        return String(arg);
+      }
+    }
+    return String(arg);
+  };
+
+  console.error = function (...args: any[]) {
+    const msg = args.map(safeFormatArg).join(" ").toLowerCase();
+
+    if (
+      msg.includes("circular structure") ||
+      msg.includes("has no supported sources") ||
+      msg.includes("play retry error")
+    ) {
+      originalConsoleWarn.apply(console, [
+        "[Pardais Party - Media Note] Handled media element source/player notice:",
+        ...args.map(safeFormatArg)
+      ]);
+      return;
+    }
 
     if (
       msg.includes("firestore") && 
@@ -35,7 +73,7 @@ if (typeof window !== "undefined") {
       // Gracefully log as a warning/info in development rather than a system-critical error
       originalConsoleWarn.apply(console, [
         "[Pardais Party - Firebase Status] Firestore quota reached. Pardais Party is running securely with local fallback cache.",
-        ...args
+        ...args.map(safeFormatArg)
       ]);
       return;
     }
@@ -54,11 +92,16 @@ if (typeof window !== "undefined") {
     ) {
       originalConsoleWarn.apply(console, [
         "[Pardais Party - RTC Gateway Note] Agora RTC connection note:",
-        ...args
+        ...args.map(safeFormatArg)
       ]);
       return;
     }
-    originalConsoleError.apply(console, args);
+    originalConsoleError.apply(console, args.map(arg => {
+      if (arg && typeof arg === "object" && ('target' in arg || 'currentTarget' in arg || arg instanceof Element)) {
+        return safeFormatArg(arg);
+      }
+      return arg;
+    }));
   };
 
   // Prevent background unhandled rejections for Firestore streams & WebRTC / Media load errors from crashing the UI
@@ -66,6 +109,8 @@ if (typeof window !== "undefined") {
     const reason = event.reason;
     const msg = String(reason?.message || reason?.stack || reason?.code || reason?.name || reason || "").toLowerCase();
     if (
+      msg.includes("circular structure") ||
+      msg.includes("has no supported sources") ||
       (msg.includes("firestore") && (msg.includes("resource_exhausted") || msg.includes("quota") || msg.includes("resource-exhausted") || msg.includes("code: 8") || msg.includes("code=resource-exhausted"))) ||
       msg.includes("p2pchannel") ||
       msg.includes("startp2pconnection") ||
@@ -90,6 +135,8 @@ if (typeof window !== "undefined") {
   window.onerror = function (message, source, lineno, colno, error) {
     const msg = String(message || error?.message || error?.stack || "").toLowerCase();
     if (
+      msg.includes("circular structure") ||
+      msg.includes("has no supported sources") ||
       (msg.includes("firestore") && (msg.includes("resource_exhausted") || msg.includes("quota") || msg.includes("resource-exhausted") || msg.includes("code: 8") || msg.includes("code=resource-exhausted"))) ||
       msg.includes("p2pchannel") ||
       msg.includes("startp2pconnection") ||

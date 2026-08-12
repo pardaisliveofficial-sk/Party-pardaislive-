@@ -56,81 +56,7 @@ app.use(express.json());
 const DB_PATH = path.join(process.cwd(), "pardais_live_db.json");
 
 const DEFAULT_DEMO_HOSTS: any[] = [];
-const DEFAULT_DEMO_PARTIES: any[] = [
-  {
-    id: "party-101",
-    title: "🔥 Pardais Official Audio Lounge (12 Seats)",
-    hostUsername: "pardais_official",
-    hostAvatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&h=150&q=80",
-    category: "Music",
-    participantCount: 4,
-    maxCapacity: 12,
-    isPublic: true,
-    password: "",
-    language: "Urdu / Hindi",
-    description: "Welcome to Pardais Official 12-Seat Voice Lounge! Chat, listen to music, and make new friends! 🎙️✨",
-    status: "active",
-    connectedViewers: [
-      { userId: "pardais_official", username: "pardais_official", avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&h=150&q=80", level: 10, vipLevel: 5 },
-      { userId: "sara_khan", username: "sara_khan", avatar: "https://images.unsplash.com/photo-1517841905240-472988babdf9?auto=format&fit=crop&w=150&h=150&q=80", level: 5, vipLevel: 2 },
-      { userId: "ali_raza", username: "ali_raza", avatar: "https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?auto=format&fit=crop&w=150&h=150&q=80", level: 8, vipLevel: 3 },
-      { userId: "zoya_star", username: "zoya_star", avatar: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=150&h=150&q=80", level: 12, vipLevel: 6 }
-    ],
-    seats: [
-      { id: 1, name: "pardais_official", avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&h=150&q=80", isMuted: false, isLocked: false },
-      { id: 2, name: "sara_khan", avatar: "https://images.unsplash.com/photo-1517841905240-472988babdf9?auto=format&fit=crop&w=150&h=150&q=80", isMuted: false, isLocked: false },
-      { id: 3, name: "ali_raza", avatar: "https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?auto=format&fit=crop&w=150&h=150&q=80", isMuted: false, isLocked: false },
-      { id: 4, name: "zoya_star", avatar: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=150&h=150&q=80", isMuted: true, isLocked: false },
-      { id: 5, name: null, avatar: null, isMuted: false, isLocked: false },
-      { id: 6, name: null, avatar: null, isMuted: false, isLocked: false },
-      { id: 7, name: null, avatar: null, isMuted: false, isLocked: false },
-      { id: 8, name: null, avatar: null, isMuted: false, isLocked: false },
-      { id: 9, name: null, avatar: null, isMuted: false, isLocked: false },
-      { id: 10, name: null, avatar: null, isMuted: false, isLocked: false },
-      { id: 11, name: null, avatar: null, isMuted: false, isLocked: false },
-      { id: 12, name: null, avatar: null, isMuted: false, isLocked: false }
-    ],
-    comments: [
-      { id: "c1", username: "System", message: "🎙️ Welcome to Pardais Official Audio Lounge! Enjoy 12-seat high quality audio chat.", isSystem: true, timestamp: "12:00 PM" },
-      { id: "c2", username: "pardais_official", message: "Assalam o Alaikum everyone! Welcome to the party! 🎉", isSystem: false, timestamp: "12:01 PM" }
-    ]
-  },
-  {
-    id: "party-102",
-    title: "🎶 Late Night Poetry & Music Lounge",
-    hostUsername: "bilal_vibe",
-    hostAvatar: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=150&h=150&q=80",
-    category: "Poetry & Music",
-    participantCount: 2,
-    maxCapacity: 12,
-    isPublic: true,
-    password: "",
-    language: "Urdu",
-    description: "Late night relaxed vibes, acoustic songs, and Urdu poetry! All welcome to take a seat 💖",
-    status: "active",
-    connectedViewers: [
-      { userId: "bilal_vibe", username: "bilal_vibe", avatar: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=150&h=150&q=80", level: 6, vipLevel: 1 },
-      { userId: "aamna_rose", username: "aamna_rose", avatar: "https://images.unsplash.com/photo-1524504388940-b1c1722653e1?auto=format&fit=crop&w=150&h=150&q=80", level: 4, vipLevel: 1 }
-    ],
-    seats: [
-      { id: 1, name: "bilal_vibe", avatar: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=150&h=150&q=80", isMuted: false, isLocked: false },
-      { id: 2, name: "aamna_rose", avatar: "https://images.unsplash.com/photo-1524504388940-b1c1722653e1?auto=format&fit=crop&w=150&h=150&q=80", isMuted: false, isLocked: false },
-      { id: 3, name: null, avatar: null, isMuted: false, isLocked: false },
-      { id: 4, name: null, avatar: null, isMuted: false, isLocked: false },
-      { id: 5, name: null, avatar: null, isMuted: false, isLocked: false },
-      { id: 6, name: null, avatar: null, isMuted: false, isLocked: false },
-      { id: 7, name: null, avatar: null, isMuted: false, isLocked: false },
-      { id: 8, name: null, avatar: null, isMuted: false, isLocked: false },
-      { id: 9, name: null, avatar: null, isMuted: false, isLocked: false },
-      { id: 10, name: null, avatar: null, isMuted: false, isLocked: false },
-      { id: 11, name: null, avatar: null, isMuted: false, isLocked: false },
-      { id: 12, name: null, avatar: null, isMuted: false, isLocked: false }
-    ],
-    comments: [
-      { id: "c1", username: "System", message: "🎙️ Welcome to Late Night Poetry & Music Lounge!", isSystem: true, timestamp: "12:05 PM" }
-    ]
-  }
-];
+const DEFAULT_DEMO_PARTIES: any[] = [];
 
 // Define dbData as a reference pointing directly to the real-time replicated Firestore cache
 let dbData: any = dbDataCache;
@@ -2134,14 +2060,17 @@ const getActiveLiveSessions = () => {
   }
   const now = Date.now();
 
-  // Mark stale sessions as ended
+  // Mark stale sessions as ended (>45s)
   dbData.hosts.forEach((h: any) => {
     if (!h) return;
     const isLiveFlag = h.isLive === true || h.status === "LIVE" || h.status === "live";
     if (isLiveFlag) {
-      const lastActive = typeof h.lastSeen === "number" ? h.lastSeen : (h.updatedAt ? new Date(h.updatedAt).getTime() : 0);
-      if (!lastActive || (now - lastActive > 20000)) {
-        console.log(`[LIVE SERVER] Session ${h.id} (@${h.hostUsername || h.name}) heartbeat expired (>20s). Marking as ENDED.`);
+      const lastActive = Math.max(
+        typeof h.lastSeen === "number" ? h.lastSeen : 0,
+        h.updatedAt ? new Date(h.updatedAt).getTime() : 0
+      );
+      if (!lastActive || (now - lastActive > 45000)) {
+        console.log(`[LIVE SERVER] Session ${h.id} (@${h.hostUsername || h.name}) heartbeat expired (>45s). Marking as ENDED.`);
         h.isLive = false;
         h.status = "ENDED";
         h.endedAt = new Date().toISOString();
@@ -2154,8 +2083,11 @@ const getActiveLiveSessions = () => {
     if (!h) return false;
     if (h.isLive !== true && h.status !== "LIVE" && h.status !== "live") return false;
     if (h.status === "ENDED" || h.status === "ended" || h.status === "offline") return false;
-    const lastActive = typeof h.lastSeen === "number" ? h.lastSeen : (h.updatedAt ? new Date(h.updatedAt).getTime() : 0);
-    return lastActive > 0 && (now - lastActive <= 20000);
+    const lastActive = Math.max(
+      typeof h.lastSeen === "number" ? h.lastSeen : 0,
+      h.updatedAt ? new Date(h.updatedAt).getTime() : 0
+    );
+    return lastActive > 0 && (now - lastActive <= 45000);
   });
 
   // Deduplicate: ONE USER = MAXIMUM ONE ACTIVE LIVE SESSION
@@ -2316,9 +2248,12 @@ app.put("/api/v1/hosts/:id", (req, res) => {
     if (existing.likes !== undefined && (updateData.likes === undefined || updateData.likes < existing.likes)) {
       updateData.likes = existing.likes;
     }
-    // Safely preserve last gift/like/join events if omitted
+    // Safely preserve last gift/like/join events and giftEventQueue if omitted
     if (updateData.lastGiftEvent === undefined && existing.lastGiftEvent) {
       updateData.lastGiftEvent = existing.lastGiftEvent;
+    }
+    if (updateData.giftEventQueue === undefined && existing.giftEventQueue) {
+      updateData.giftEventQueue = existing.giftEventQueue;
     }
     if (updateData.lastLikeEvent === undefined && existing.lastLikeEvent) {
       updateData.lastLikeEvent = existing.lastLikeEvent;
@@ -2327,7 +2262,7 @@ app.put("/api/v1/hosts/:id", (req, res) => {
       updateData.lastJoinEvent = existing.lastJoinEvent;
     }
 
-    dbData.hosts[index] = { ...existing, ...updateData, updatedAt: new Date().toISOString() };
+    dbData.hosts[index] = { ...existing, ...updateData, lastSeen: Date.now(), updatedAt: new Date().toISOString() };
     syncHostPkScores(dbData.hosts[index]);
     saveDatabase();
     syncDocument("hosts", dbData.hosts[index].id, dbData.hosts[index]);
@@ -2342,6 +2277,7 @@ app.put("/api/v1/hosts/:id", (req, res) => {
       connectedViewers: [],
       comments: [],
       ...req.body,
+      lastSeen: Date.now(),
       updatedAt: new Date().toISOString()
     };
     dbData.hosts.push(newHost);
@@ -2358,7 +2294,7 @@ app.post("/api/v1/hosts/:id/heartbeat", (req, res) => {
     dbData.hosts[index].lastSeen = Date.now();
     dbData.hosts[index].updatedAt = new Date().toISOString();
     syncDocument("hosts", dbData.hosts[index].id, dbData.hosts[index]);
-    return res.json({ success: true, lastSeen: dbData.hosts[index].lastSeen });
+    return res.json({ success: true, lastSeen: dbData.hosts[index].lastSeen, host: dbData.hosts[index] });
   }
   return res.status(404).json({ error: "Host stream not found" });
 });
@@ -2372,7 +2308,7 @@ app.post("/api/v1/live/heartbeat", (req, res) => {
     dbData.hosts[index].lastSeen = Date.now();
     dbData.hosts[index].updatedAt = new Date().toISOString();
     syncDocument("hosts", dbData.hosts[index].id, dbData.hosts[index]);
-    return res.json({ success: true, lastSeen: dbData.hosts[index].lastSeen });
+    return res.json({ success: true, lastSeen: dbData.hosts[index].lastSeen, host: dbData.hosts[index] });
   }
   return res.status(404).json({ error: "Host stream not found" });
 });
@@ -2876,52 +2812,6 @@ app.post("/api/v1/pk/invite", (req, res) => {
 
   activePkInvites[inviteId] = newInvite;
   console.log(`[PK SERVER SUCCESS] Host @${fromUsername} (Lv.${finalFromLevel}) invited @${toUsername} (Lv.${finalToLevel}) (${isPk ? "PK Battle" : "Co-Host"}) (Channel: ${channelName}, InviteId: ${inviteId})`);
-
-  // If invited target host is a bot/demo host (not online human presence), auto-accept after 2.5s for testing
-  const targetPresence = onlineUserPresence[normTo];
-  const isDemo = hostTo?.isDemoHost || !targetPresence || normTo.includes("captain") || normTo.includes("rose") || normTo.includes("demo") || normTo.includes("host_");
-  if (isDemo) {
-    setTimeout(() => {
-      if (activePkInvites[inviteId] && activePkInvites[inviteId].status === "pending") {
-        activePkInvites[inviteId].status = "accepted";
-        const sessionId = newInvite.liveSessionId;
-        const pkMatchId = `pkm_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-        activePkSessions[sessionId] = {
-          id: sessionId,
-          pkMatchId,
-          liveSessionId: sessionId,
-          channelName: newInvite.channelName,
-          hostA: {
-            username: fromUsername,
-            userId: fromUserId || fromUsername,
-            avatar: finalFromAvatar,
-            level: finalFromLevel,
-            fans: finalFromFans,
-            score: 0
-          },
-          hostB: {
-            username: toUsername,
-            userId: finalToUserId,
-            avatar: finalToAvatar,
-            level: finalToLevel,
-            fans: finalToFans,
-            score: 0
-          },
-          hostAQualifyingScore: 0,
-          hostBQualifyingScore: 0,
-          userTapContributions: {},
-          status: "connected",
-          pkState: isPk ? "pk_countdown" : "1v1_connected",
-          pkActive: false,
-          duration: 180,
-          timer: 180,
-          startedAt: Date.now(),
-          winner: null
-        };
-        getSynchronizedPkSession(activePkSessions[sessionId]);
-      }
-    }, 2500);
-  }
 
   res.status(201).json(newInvite);
 });
@@ -3543,15 +3433,7 @@ app.get("/api/v1/parties", (req, res) => {
   if (!Array.isArray(dbData.parties)) {
     dbData.parties = [];
   }
-  let activeParties = dbData.parties.filter((p: any) => p && p.status !== "ended");
-  if (activeParties.length === 0) {
-    DEFAULT_DEMO_PARTIES.forEach((dp: any) => {
-      if (!dbData.parties.some((existing: any) => existing.id === dp.id)) {
-        dbData.parties.push({ ...dp });
-      }
-    });
-    activeParties = dbData.parties.filter((p: any) => p && p.status !== "ended");
-  }
+  const activeParties = dbData.parties.filter((p: any) => p && p.status !== "ended");
   res.json(activeParties);
 });
 
@@ -3563,13 +3445,6 @@ app.get("/api/v1/parties/:id", (req, res) => {
   const party = dbData.parties.find((p: any) => p && p.id === id);
   if (party) {
     return res.json(party);
-  }
-  // Check demo parties fallback
-  const demoParty = DEFAULT_DEMO_PARTIES.find((dp: any) => dp.id === id);
-  if (demoParty) {
-    dbData.parties.push({ ...demoParty });
-    saveDatabase();
-    return res.json(demoParty);
   }
   return res.status(404).json({ error: "Party Room not found" });
 });
@@ -4783,7 +4658,31 @@ setInterval(() => {
 
 app.get("/api/v1/notifications", async (req, res) => {
   await cleanupExpiredNotifications();
-  res.json(dbData.notifications || []);
+  const { username, userId } = req.query || {};
+  const notifs = dbData.notifications || [];
+  
+  if (!username && !userId) {
+    return res.json(notifs);
+  }
+
+  const uStr = username ? String(username).toLowerCase() : "";
+  const uidStr = userId ? String(userId) : "";
+
+  const filtered = notifs.filter((n: any) => {
+    if (!n) return false;
+    // Global announcements / system broadcasts
+    if (n.isGlobal === true || n.targetUsername === "all" || (!n.targetUsername && !n.targetUserId && !n.userId)) {
+      return true;
+    }
+    // Specific targeted notifications
+    if (uStr && n.targetUsername && String(n.targetUsername).toLowerCase() === uStr) return true;
+    if (uStr && n.username && String(n.username).toLowerCase() === uStr) return true;
+    if (uidStr && n.targetUserId && String(n.targetUserId) === uidStr) return true;
+    if (uidStr && n.userId && String(n.userId) === uidStr) return true;
+    return false;
+  });
+
+  res.json(filtered);
 });
 
 app.post("/api/v1/notifications", async (req, res) => {
@@ -4804,11 +4703,51 @@ app.post("/api/v1/notifications", async (req, res) => {
   res.status(201).json(newNotif);
 });
 
+app.post("/api/v1/notifications/:id/read", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const notif = (dbData.notifications || []).find((n: any) => String(n.id) === String(id));
+    if (notif) {
+      notif.isNew = false;
+      saveDatabase();
+      await syncDocument("notifications", String(notif.id), notif);
+      return res.json({ success: true, notification: notif });
+    }
+    res.status(404).json({ error: "Notification not found" });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to mark notification as read" });
+  }
+});
+
+app.delete("/api/v1/notifications/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const index = (dbData.notifications || []).findIndex((n: any) => String(n.id) === String(id));
+    if (index !== -1) {
+      const removed = dbData.notifications.splice(index, 1)[0];
+      saveDatabase();
+      await deleteDocument("notifications", String(id));
+      return res.json({ success: true, removed });
+    }
+    res.status(404).json({ error: "Notification not found" });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to delete notification" });
+  }
+});
+
 app.post("/api/v1/notifications/read-all", async (req, res) => {
   try {
+    const { username, userId } = req.body || req.query || {};
     const notifs = dbData.notifications || [];
+    const uStr = username ? String(username).toLowerCase() : "";
+    const uidStr = userId ? String(userId) : "";
+
     for (const item of notifs) {
-      if (item.isNew) {
+      let isForUser = !uStr && !uidStr;
+      if (uStr && ((item.targetUsername && String(item.targetUsername).toLowerCase() === uStr) || item.isGlobal)) isForUser = true;
+      if (uidStr && (item.targetUserId && String(item.targetUserId) === uidStr)) isForUser = true;
+
+      if (isForUser && item.isNew) {
         item.isNew = false;
         await syncDocument("notifications", String(item.id), item);
       }
@@ -4823,15 +4762,35 @@ app.post("/api/v1/notifications/read-all", async (req, res) => {
 
 app.post("/api/v1/notifications/clear", async (req, res) => {
   try {
-    const notifs = [...(dbData.notifications || [])];
-    dbData.notifications = [];
-    saveDatabase();
-    for (const item of notifs) {
-      if (item.id) {
-        await deleteDocument("notifications", String(item.id));
+    const { username, userId } = req.body || req.query || {};
+    const notifs = dbData.notifications || [];
+    const uStr = username ? String(username).toLowerCase() : "";
+    const uidStr = userId ? String(userId) : "";
+
+    if (!uStr && !uidStr) {
+      dbData.notifications = [];
+      saveDatabase();
+      for (const item of notifs) {
+        if (item.id) await deleteDocument("notifications", String(item.id));
       }
+    } else {
+      const remaining: any[] = [];
+      for (const item of notifs) {
+        let isForUser = false;
+        if (uStr && item.targetUsername && String(item.targetUsername).toLowerCase() === uStr) isForUser = true;
+        if (uidStr && item.targetUserId && String(item.targetUserId) === uidStr) isForUser = true;
+
+        if (isForUser) {
+          if (item.id) await deleteDocument("notifications", String(item.id));
+        } else {
+          remaining.push(item);
+        }
+      }
+      dbData.notifications = remaining;
+      saveDatabase();
     }
-    res.json({ success: true, message: "All notifications cleared" });
+
+    res.json({ success: true, message: "Notifications cleared" });
   } catch (error) {
     console.error("Error clearing notifications:", error);
     res.status(500).json({ error: "Failed to clear notifications" });
@@ -5593,33 +5552,46 @@ async function startServer() {
   });
 }
 
-// Periodic background cleaner for ghost users in party room seats
+// Periodic background cleaner for ghost users in party room seats and offline hosts
 setInterval(() => {
-  if (!dbData.parties || !Array.isArray(dbData.parties)) return;
   const now = Date.now();
   let changed = false;
 
-  dbData.parties.forEach((party: any) => {
-    if (!party.seats || party.status === "ended") return;
-    const lastSeen = party.lastSeen || {};
-
-    party.seats.forEach((seat: any) => {
-      if (seat.name) {
-        const username = seat.name;
-        const lastTs = lastSeen[username];
-        
-        // If seat occupant hasn't sent a heartbeat for more than 12 seconds
-        if (lastTs && (now - lastTs > 12000)) {
-          console.log(`[PARDAIS-PARTY AUTO-PRUNE] Seat occupant ${username} on Seat ${seat.id} in party ${party.id} timed out. Clearing seat.`);
-          seat.name = null;
-          seat.avatar = null;
-          seat.isMuted = false;
-          delete lastSeen[username];
-          changed = true;
-        }
+  // Auto-prune offline host streams (heartbeat stale > 15s)
+  if (Array.isArray(dbData.hosts)) {
+    dbData.hosts.forEach((h: any) => {
+      if (h && h.isLive && h.lastSeen && (now - h.lastSeen > 15000)) {
+        console.log(`[PARDAIS-PARTY AUTO-PRUNE] Host stream ${h.id} (${h.name || h.hostUsername}) timed out after 15s. Marking stream ended.`);
+        h.isLive = false;
+        h.status = "ENDED";
+        changed = true;
       }
     });
-  });
+  }
+
+  if (dbData.parties && Array.isArray(dbData.parties)) {
+    dbData.parties.forEach((party: any) => {
+      if (!party.seats || party.status === "ended") return;
+      const lastSeen = party.lastSeen || {};
+
+      party.seats.forEach((seat: any) => {
+        if (seat.name) {
+          const username = seat.name;
+          const lastTs = lastSeen[username];
+          
+          // If seat occupant hasn't sent a heartbeat for more than 12 seconds
+          if (lastTs && (now - lastTs > 12000)) {
+            console.log(`[PARDAIS-PARTY AUTO-PRUNE] Seat occupant ${username} on Seat ${seat.id} in party ${party.id} timed out. Clearing seat.`);
+            seat.name = null;
+            seat.avatar = null;
+            seat.isMuted = false;
+            delete lastSeen[username];
+            changed = true;
+          }
+        }
+      });
+    });
+  }
 
   if (changed) {
     saveDatabase();

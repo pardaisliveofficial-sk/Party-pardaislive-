@@ -58,6 +58,7 @@ export interface UserProfile {
   agencyId: string | null;
   isVerified: boolean;
   isBanned: boolean;
+  isGuest?: boolean;
   twoFactorEnabled: boolean;
   fullName?: string;
   name?: string;

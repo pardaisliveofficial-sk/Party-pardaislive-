@@ -545,7 +545,9 @@ const ReelVideoPlayer: React.FC<ReelVideoPlayerProps> = ({
           onCanPlay={() => setIsLoading(false)}
           onLoadedData={() => setIsLoading(false)}
           onError={(e) => {
-            console.error(`[PARDAIS-PARTY PLAYER] Native HTML5 video error event on "${activeUrl}":`, e);
+            const errCode = (e.currentTarget as HTMLVideoElement)?.error?.code || 0;
+            const errMsg = (e.currentTarget as HTMLVideoElement)?.error?.message || "Source or format unavailable";
+            console.warn(`[PARDAIS-PARTY PLAYER] Native HTML5 video error note (code: ${errCode}, msg: "${errMsg}") on "${activeUrl}"`);
             
             const backends = [
               "https://vjs.zencdn.net/v/oceans.mp4",
@@ -2541,7 +2543,7 @@ export default function App() {
     };
 
     sendSoloLiveHeartbeat();
-    const interval = setInterval(sendSoloLiveHeartbeat, 10000);
+    const interval = setInterval(sendSoloLiveHeartbeat, 5000);
     return () => clearInterval(interval);
   }, [clientView, user]);
   const [promotionBanners, setPromotionBanners] = useState<any[]>([]);
@@ -3537,7 +3539,7 @@ export default function App() {
   ]);
 
   // Dynamic Live Streams State
-  const [liveStreamsList, setLiveStreamsList] = useState<HostProfile[]>(MOCK_HOSTS);
+  const [liveStreamsList, setLiveStreamsList] = useState<HostProfile[]>([]);
 
   // Couple Rankings State & Boosts (Declared after liveStreamsList to avoid TDZ errors)
   const [coupleBoosts, setCoupleBoosts] = useState<Record<string, number>>(() => {
@@ -3620,30 +3622,93 @@ export default function App() {
   }, [liveStreamsList, user, coupleBoosts]);
 
   // Dynamic Notifications Inbox State
-  const [appNotifications, setAppNotifications] = useState<Array<{ id: number; title: string; text: string; time: string; isNew: boolean; userAvatar?: string; type?: string; timestamp?: string }>>([]);
+  const [appNotifications, setAppNotifications] = useState<Array<{ id: number; title: string; text: string; time: string; isNew: boolean; userAvatar?: string; type?: string; timestamp?: string; targetUsername?: string; actionType?: string; actionId?: string; partyId?: string }>>([]);
+  const [activeToastNotif, setActiveToastNotif] = useState<any | null>(null);
+  const [notifCategoryFilter, setNotifCategoryFilter] = useState<"all" | "wallet" | "social" | "system">("all");
+
+  // Audio synthesizer chime for incoming notifications
+  const playNotificationChime = () => {
+    try {
+      const AudioCtxClass = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioCtxClass) return;
+      const ctx = new AudioCtxClass();
+      const now = ctx.currentTime;
+      
+      const osc1 = ctx.createOscillator();
+      const osc2 = ctx.createOscillator();
+      const gain = ctx.createGain();
+
+      osc1.type = "sine";
+      osc2.type = "sine";
+
+      osc1.frequency.setValueAtTime(587.33, now); // D5
+      osc2.frequency.setValueAtTime(880.00, now + 0.08); // A5
+
+      gain.gain.setValueAtTime(0, now);
+      gain.gain.linearRampToValueAtTime(0.18, now + 0.04);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
+
+      osc1.connect(gain);
+      osc2.connect(gain);
+      gain.connect(ctx.destination);
+
+      osc1.start(now);
+      osc1.stop(now + 0.15);
+      osc2.start(now + 0.08);
+      osc2.stop(now + 0.35);
+    } catch (e) {}
+  };
 
   // Helper to trigger and save a real notification to Firestore via Express API
-  const createNotification = async (title: string, text: string, type: string, userAvatar?: string) => {
+  const createNotification = async (
+    title: string, 
+    text: string, 
+    type: string, 
+    targetUsername?: string, 
+    actionType?: string, 
+    actionId?: string, 
+    userAvatar?: string
+  ) => {
     try {
+      const payload = {
+        title,
+        text,
+        type,
+        targetUsername: targetUsername || user?.username || "all",
+        actionType,
+        actionId,
+        userAvatar: userAvatar || user?.avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80",
+        timestamp: new Date().toISOString()
+      };
       const response = await fetch("/api/v1/notifications", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          title,
-          text,
-          type,
-          userAvatar: userAvatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80",
-          timestamp: new Date().toISOString()
-        })
+        body: JSON.stringify(payload)
       });
       if (response.ok) {
         const newNotif = await response.json();
-        setAppNotifications(prev => [newNotif, ...prev]);
+        setAppNotifications(prev => [newNotif, ...prev.filter(n => n.id !== newNotif.id)]);
+        // Play chime and trigger toast for current user
+        if (!targetUsername || targetUsername === "all" || targetUsername === user?.username) {
+          playNotificationChime();
+          setActiveToastNotif(newNotif);
+          setHasUnreadNotifications(true);
+        }
       }
     } catch (err) {
       console.error("Error creating notification:", err);
     }
   };
+
+  // Auto-dismiss floating toast notification after 5 seconds
+  useEffect(() => {
+    if (activeToastNotif) {
+      const timer = setTimeout(() => {
+        setActiveToastNotif(null);
+      }, 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [activeToastNotif]);
 
   // System Configuration States
   const [isSystemMaintenance, setIsSystemMaintenance] = useState<boolean>(() => {
@@ -3826,13 +3891,22 @@ export default function App() {
 
     processedGiftEventIdsRef.current.add(eventId);
 
+    const sender = giftEvt.senderUsername || giftEvt.sender || "User";
+    const giftName = giftEvt.giftName || "Gift";
+    const giftIcon = giftEvt.giftIcon || "🎁";
+    const count = giftEvt.count || 1;
+    const recipient = giftEvt.recipient || "Host";
+
+    // Trigger Global Gift Banner for ALL viewers and host in the room!
+    triggerGlobalGiftBanner(sender, giftName, `${giftIcon} x${count}`, recipient);
+
     // Real-time Toast Overlay
     const newToast = {
       id: "toast-" + eventId,
-      username: giftEvt.senderUsername,
-      giftName: giftEvt.giftName,
-      giftIcon: giftEvt.giftIcon,
-      count: giftEvt.count || 1,
+      username: sender,
+      giftName: giftName,
+      giftIcon: giftIcon,
+      count: count,
       avatar: giftEvt.senderAvatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=100&q=80"
     };
     setUserLiveGiftToasts(prev => [newToast, ...prev.slice(0, 1)]);
@@ -3843,15 +3917,15 @@ export default function App() {
     // Enqueue gift item for full 60FPS WebM GiftAnimationEngine on all devices in the room!
     const animItem = {
       id: eventId,
-      sender: giftEvt.senderUsername,
-      recipient: giftEvt.recipient || "Host",
-      comboCount: giftEvt.count || 1,
+      sender: sender,
+      recipient: recipient,
+      comboCount: count,
       gift: {
         id: giftEvt.giftId || "g-gift",
-        name: giftEvt.giftName || "Gift",
+        name: giftName,
         cost: giftEvt.totalCost || 100,
-        icon: giftEvt.giftIcon || "🎁",
-        animationFile: giftEvt.animationFile || giftEvt.videoUrl || giftEvt.animationUrl || giftEvt.giftIcon || "🎁",
+        icon: giftIcon,
+        animationFile: giftEvt.animationFile || giftEvt.videoUrl || giftEvt.animationUrl || giftIcon,
         videoUrl: giftEvt.videoUrl || giftEvt.animationUrl || giftEvt.animationFile || "",
         animationUrl: giftEvt.animationUrl || giftEvt.videoUrl || giftEvt.animationFile || "",
         animationFormat: giftEvt.animationFormat || "webm",
@@ -3861,7 +3935,7 @@ export default function App() {
       }
     };
     setGiftQueue(prev => [...prev, animItem]);
-  }, []);
+  }, [triggerGlobalGiftBanner]);
   const userLiveMessagesRef = useRef<ChatMessage[]>([]);
   const [userLiveMessages, _setUserLiveMessages] = useState<ChatMessage[]>([]);
   const setUserLiveMessages = (val: ChatMessage[] | ((prev: ChatMessage[]) => ChatMessage[])) => {
@@ -5046,6 +5120,7 @@ export default function App() {
           statusText: prepLiveTitle || "Live Stream Active",
           isLive: true,
           status: "live",
+          lastSeen: Date.now(),
           updatedAt: new Date().toISOString()
         })
       })
@@ -5089,18 +5164,20 @@ export default function App() {
             }
           }
           // Process incoming live gifts sent by viewers
-          if (data.giftEventQueue && Array.isArray(data.giftEventQueue)) {
-            data.giftEventQueue.forEach((evt: any) => processIncomingGiftEvent(evt));
-          } else if (data.lastGiftEvent && data.lastGiftEvent.timestamp > lastHostGiftEventTimestamp.current) {
-            lastHostGiftEventTimestamp.current = data.lastGiftEvent.timestamp;
-            processIncomingGiftEvent(data.lastGiftEvent);
-            setUserLiveCoinsEarned(prev => prev + (data.lastGiftEvent.totalCost || 0));
+          const giftQueue = data.giftEventQueue || data.host?.giftEventQueue;
+          const lastGift = data.lastGiftEvent || data.host?.lastGiftEvent;
+          if (giftQueue && Array.isArray(giftQueue)) {
+            giftQueue.forEach((evt: any) => processIncomingGiftEvent(evt));
+          } else if (lastGift && lastGift.timestamp > lastHostGiftEventTimestamp.current) {
+            lastHostGiftEventTimestamp.current = lastGift.timestamp;
+            processIncomingGiftEvent(lastGift);
+            setUserLiveCoinsEarned(prev => prev + (lastGift.totalCost || 0));
 
             if (userLivePkActive) {
-              if (data.lastGiftEvent.targetHostSide === "hostB") {
-                setUserLivePkScoreOther(prev => prev + (data.lastGiftEvent.totalCost || 0));
+              if (lastGift.targetHostSide === "hostB") {
+                setUserLivePkScoreOther(prev => prev + (lastGift.totalCost || 0));
               } else {
-                setUserLivePkScoreMy(prev => prev + (data.lastGiftEvent.totalCost || 0));
+                setUserLivePkScoreMy(prev => prev + (lastGift.totalCost || 0));
               }
             }
           }
@@ -5487,10 +5564,14 @@ export default function App() {
       }
 
       // 8. Fetch notifications
-      fetch("/api/v1/notifications")
-        .then(res => res.json())
+      const initialNotifUrl = `/api/v1/notifications?username=${encodeURIComponent(user?.username || "")}&userId=${encodeURIComponent(user?.id || "")}`;
+      fetch(initialNotifUrl)
+        .then(res => res.ok ? res.json() : [])
         .then(data => {
-          if (Array.isArray(data)) setAppNotifications(data);
+          if (Array.isArray(data)) {
+            setAppNotifications(data);
+            setHasUnreadNotifications(data.some(n => n.isNew));
+          }
         })
         .catch(err => console.error("Error loading notifications:", err));
 
@@ -5556,6 +5637,11 @@ export default function App() {
 
     fetchInitial();
 
+    // Reset stream ended ref on view/party change
+    if (clientView === "party-room" || clientView === "viewer-live" || clientView === "user-live") {
+      streamEndedHandledRef.current = false;
+    }
+
     // Polling interval for real-time synchronization with Admin dashboard actions (every 3 seconds)
     const pollInterval = setInterval(() => {
       fetch("/api/v1/config")
@@ -5574,7 +5660,7 @@ export default function App() {
             setPartiesList(data);
             if (activePartyId) {
               const activeP = data.find((p: any) => p.id === activePartyId);
-              if (activeP) {
+              if (activeP && activeP.status !== "ended") {
                 if (activeP.giftEventQueue && Array.isArray(activeP.giftEventQueue)) {
                   activeP.giftEventQueue.forEach((evt: any) => processIncomingGiftEvent(evt));
                 } else if (activeP.lastGiftEvent && activeP.lastGiftEvent.timestamp > lastPartyGiftEventTimestamp.current) {
@@ -5591,6 +5677,17 @@ export default function App() {
                       activeP.lastJoinEvent.vipLevel || 0
                     );
                   }
+                }
+              } else if (clientView === "party-room") {
+                // Party room ended or host offline
+                if (!streamEndedHandledRef.current) {
+                  streamEndedHandledRef.current = true;
+                  setShowStreamEndedCard(true);
+                  setTimeout(() => {
+                    setShowStreamEndedCard(false);
+                    setActivePartyId(null);
+                    setClientView("feed");
+                  }, 1800);
                 }
               }
             }
@@ -5679,10 +5776,42 @@ export default function App() {
         })
         .catch(() => {});
 
-      fetch("/api/v1/notifications")
+      const periodicNotifUrl = `/api/v1/notifications?username=${encodeURIComponent(user?.username || "")}&userId=${encodeURIComponent(user?.id || "")}`;
+      fetch(periodicNotifUrl)
         .then(res => res.ok ? res.json() : null)
         .then(data => {
-          if (Array.isArray(data)) setAppNotifications(data);
+          if (Array.isArray(data)) {
+            setAppNotifications(prev => {
+              const prevIds = new Set((prev || []).map(n => n.id));
+              const newlyArrived = data.filter(n => n.isNew && !prevIds.has(n.id));
+
+              if (newlyArrived.length > 0) {
+                const latest = newlyArrived[0];
+                if (notifSettings.sound !== false) {
+                  playNotificationChime();
+                }
+                setActiveToastNotif(latest);
+                setHasUnreadNotifications(true);
+
+                if (
+                  notifSettings.push !== false &&
+                  typeof window !== "undefined" &&
+                  "Notification" in window &&
+                  Notification.permission === "granted"
+                ) {
+                  try {
+                    new Notification(latest.title || "Pardais Alert", {
+                      body: latest.text,
+                      icon: latest.userAvatar || "/icon.png"
+                    });
+                  } catch (e) {}
+                }
+              }
+
+              setHasUnreadNotifications(data.some(n => n.isNew));
+              return data;
+            });
+          }
         })
         .catch(() => {});
 
@@ -6056,50 +6185,7 @@ export default function App() {
     
     alert("Kamyabi se 24-hour story lag gayi hai! 🎉");
 
-    // Simulate an automatic reaction and reply from other hosts after 6 seconds to feel completely interactive!
-    setTimeout(() => {
-      const mockUsers = [
-        { name: "Alina Malik", username: "alina_malik", avatar: "https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=150&q=80" },
-        { name: "Malik Saad", username: "malik_saad", avatar: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=150&q=80" },
-        { name: "Arooj Queen", username: "arooj_queen", avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80" }
-      ];
-      const randomUser = mockUsers[Math.floor(Math.random() * mockUsers.length)];
-      const randomReactionEmoji = ["❤️", "🔥", "🙌", "👏", "😍"][Math.floor(Math.random() * 5)];
-      const randomReplies = [
-        "Wah! Bht pyari story hai! 💖",
-        "Zabardast! Main abhi free ho k live ata hun! 🔥",
-        "Kamaal ho gaya! 👍",
-        "Beautiful look! Keep it up!",
-        "Nice screen setup! 😊 Slot open rkhna!"
-      ];
-      const randomReplyText = randomReplies[Math.floor(Math.random() * randomReplies.length)];
-
-      setStories(currentStories => {
-        return currentStories.map(s => {
-          if (s.id === `story_${now}`) {
-            const hasReacted = s.reactions.some(r => r.username === randomUser.username);
-            const nextReactions = hasReacted ? s.reactions : [...s.reactions, { username: randomUser.username, emoji: randomReactionEmoji }];
-            const nextReplies = [
-              ...s.replies,
-              {
-                id: `reply_auto_${Date.now()}`,
-                username: randomUser.username,
-                fullName: randomUser.name,
-                avatar: randomUser.avatar,
-                text: randomReplyText,
-                createdAt: Date.now()
-              }
-            ];
-            return {
-              ...s,
-              reactions: nextReactions,
-              replies: nextReplies
-            };
-          }
-          return s;
-        });
-      });
-    }, 6000);
+    // Story successfully published
   };
 
   const handleLikeStory = (storyId: string) => {
@@ -6645,6 +6731,12 @@ export default function App() {
       };
     });
 
+    // Trigger real-time notifications for gift transaction
+    createNotification("🎁 Gift Sent!", `You sent ${count}x ${gift.name} (${totalCost} coins) to @${resolvedRecipientName}`, "Gifts", user.username, "wallet");
+    if (resolvedRecipientName && resolvedRecipientName !== user.username) {
+      createNotification("🎁 Gift Received!", `@${user.username} sent you ${count}x ${gift.name}!`, "Gifts", resolvedRecipientName, "party", activePartyId || activeHost?.id, user.avatar);
+    }
+
     // Perform secure backend transaction call
     try {
       const resp = await fetch("/api/v1/gifts/send", {
@@ -6788,18 +6880,24 @@ export default function App() {
     };
     setChatMessages(prev => [...prev, giftSysMsg]);
 
-    // Trigger premium global banner ("gifting ki broad patti") on all screens for big/any gift
-    triggerGlobalGiftBanner(user.username, gift.name, `${gift.icon} x${count}`, recipientName);
-
-    // Add to the Advanced Gifting Sequential Queue
-    const newAnim = {
-      id: `anim-${Date.now()}-${Math.random()}`,
-      sender: user.username,
+    // Process gift locally via processIncomingGiftEvent so sender sees banner & animation once with requestId
+    processIncomingGiftEvent({
+      eventId: requestId,
+      senderUsername: user.username,
       recipient: recipientName,
-      gift,
-      comboCount: count
-    };
-    setGiftQueue(prev => [...prev, newAnim]);
+      giftId: gift.id,
+      giftName: gift.name,
+      giftIcon: gift.icon,
+      count: count,
+      totalCost: totalCost,
+      animationFile: gift.animationFile || (gift as any).videoUrl || (gift as any).animationUrl || gift.icon,
+      videoUrl: (gift as any).videoUrl || (gift as any).animationUrl || gift.animationFile || "",
+      animationUrl: (gift as any).animationUrl || (gift as any).videoUrl || gift.animationFile || "",
+      animationFormat: gift.animationFormat || "webm",
+      animationDuration: gift.animationDuration || 8,
+      animationDisplayType: gift.animationDisplayType || "full",
+      type: gift.type || "3d"
+    });
 
     // Handle Legacy Luxury / 3D Full Screen Animation Effects if not playing from queue
     if (gift.type === GiftType.LUXURY || gift.type === GiftType.THREE_D) {
@@ -7140,6 +7238,9 @@ export default function App() {
     };
 
     console.log("[LIVE GO-LIVE PUBLISHED] Registering host live stream on backend:", newHostData);
+
+    // Optimistically update local React live streams list so card renders immediately
+    setLiveStreamsList(prev => [newHostData, ...prev.filter(h => h.id !== hostId && h.hostUsername !== user.username)]);
 
     fetch("/api/v1/hosts", {
       method: "POST",
@@ -8034,6 +8135,11 @@ export default function App() {
             return [data, ...filtered];
           });
           setActivePartyId(data.id);
+          fetch(`/api/v1/parties/${data.id}/heartbeat`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ username: validHost })
+          }).catch(() => {});
         }
       }
     } catch (e) {
@@ -8325,10 +8431,6 @@ export default function App() {
       setUploadReelStep("details");
     }
   };
-
-  const currentPkg = selectedPaymentPackage || (onlinePackages && onlinePackages.length > 0 ? onlinePackages[0] : { id: 'pkg-1', coins: 1000, originalPrice: 100, discount: 0 });
-  const safeCountry = selectedCurrencyCountry || COUNTRIES_CURRENCIES[0];
-  const costObj = getCoinsCostInCurrency(currentPkg.coins || 0, safeCountry, currentPkg.discount || 0);
 
   return (
     <div className="min-h-screen bg-[#0b0c10] text-[#c5c6c7] font-sans flex flex-col items-center justify-center p-0 sm:p-4">
@@ -9189,9 +9291,9 @@ export default function App() {
                             // Only active live streams
                             if (host.isLive === false || host.status === "ended" || host.status === "offline" || host.status === "ENDED") return false;
 
-                            // Realtime Heartbeat check on client (25s threshold)
+                            // Realtime Heartbeat check on client (45s threshold for non-demo hosts)
                             const lastActive = typeof host.lastSeen === "number" ? host.lastSeen : (host.updatedAt ? new Date(host.updatedAt).getTime() : 0);
-                            if (lastActive > 0 && Date.now() - lastActive > 25000) return false;
+                            if (!host.isDemoHost && lastActive > 0 && Date.now() - lastActive > 45000) return false;
 
                             // Only hide host's card if host is actively broadcasting inside their own user-live broadcast screen
                             const myUsername = (user.username || "").toLowerCase();
@@ -9760,7 +9862,10 @@ export default function App() {
                               giftId: gift.id,
                               count,
                               recipient: actualTargetName,
-                              targetHostSide: "hostA"
+                              targetHostSide: "hostA",
+                              partyId: party.id,
+                              roomId: party.id,
+                              hostId: party.hostUsername || party.id
                             })
                           });
                           if (resp.ok) {
@@ -9856,18 +9961,24 @@ export default function App() {
                           console.error("Error logging party gift comment:", err);
                         }
 
-                        // Trigger global gift banner ("gifting ki broad patti") on all screens
-                        triggerGlobalGiftBanner(user.username, gift.name, `${giftIconChar} x${count}`, actualTargetName);
-
-                        // Add to Advanced Gifting Sequential Queue for full screen 60FPS animation player
-                        const newAnim = {
-                          id: `anim-${Date.now()}-${Math.random()}`,
-                          sender: user.username,
+                        // Process gift locally via processIncomingGiftEvent so sender sees banner & animation once with requestId
+                        processIncomingGiftEvent({
+                          eventId: requestId,
+                          senderUsername: user.username,
                           recipient: actualTargetName,
-                          gift,
-                          comboCount: count
-                        };
-                        setGiftQueue(prev => [...prev, newAnim]);
+                          giftId: gift.id,
+                          giftName: gift.name,
+                          giftIcon: giftIconChar,
+                          count: count,
+                          totalCost: totalCost,
+                          animationFile: gift.animationFile || (gift as any).videoUrl || (gift as any).animationUrl || giftIconChar,
+                          videoUrl: (gift as any).videoUrl || (gift as any).animationUrl || gift.animationFile || "",
+                          animationUrl: (gift as any).animationUrl || (gift as any).videoUrl || gift.animationFile || "",
+                          animationFormat: gift.animationFormat || "webm",
+                          animationDuration: gift.animationDuration || 8,
+                          animationDisplayType: gift.animationDisplayType || "full",
+                          type: gift.type || "3d"
+                        });
 
                         // Handle Legacy Luxury / 3D Full Screen Animation Effects
                         if (gift.type === GiftType.LUXURY || gift.type === GiftType.THREE_D) {
@@ -10233,7 +10344,7 @@ export default function App() {
                                 partyId={party.id}
                                 channelName={`party-${party.id}`}
                                 userRole={isHostOfRoom ? "host" : (mySeatedSeat ? "speaker" : "listener")}
-                                isMuted={mySeatedSeat ? mySeatedSeat.isMuted : (isHostOfRoom ? false : true)}
+                                isMuted={mySeatedSeat ? mySeatedSeat.isMuted === true : (isHostOfRoom ? false : true)}
                                 username={user.username}
                                 avatar={user.avatar}
                               />
@@ -10692,17 +10803,23 @@ export default function App() {
                             </form>
 
                             {/* Mic Toggle Button */}
-                            {mySeatedSeat ? (
+                            {mySeatedSeat || isHostOfRoom ? (
                               <button
-                                onClick={() => handlePartyToggleMute(party.id, mySeatedSeat.id)}
+                                onClick={() => {
+                                  if (mySeatedSeat) {
+                                    handlePartyToggleMute(party.id, mySeatedSeat.id);
+                                  } else {
+                                    handlePartyToggleMute(party.id, 1);
+                                  }
+                                }}
                                 className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 border transition-all cursor-pointer shadow-lg active:scale-90 ${
-                                  mySeatedSeat.isMuted
+                                  (mySeatedSeat ? mySeatedSeat.isMuted === true : false)
                                     ? "bg-red-950/80 text-red-400 border-red-500/50"
                                     : "bg-gradient-to-r from-amber-400 via-yellow-500 to-amber-600 text-black border-amber-200 shadow-[0_0_12px_rgba(245,158,11,0.5)] animate-pulse"
                                 }`}
-                                title={mySeatedSeat.isMuted ? "Unmute Microphone" : "Mute Microphone"}
+                                title={(mySeatedSeat ? mySeatedSeat.isMuted === true : false) ? "Unmute Microphone" : "Mute Microphone"}
                               >
-                                <span className="text-sm">{mySeatedSeat.isMuted ? "🎙️⃠" : "🎙️"}</span>
+                                <span className="text-sm">{(mySeatedSeat ? mySeatedSeat.isMuted === true : false) ? "🎙️⃠" : "🎙️"}</span>
                               </button>
                             ) : (
                               <button
@@ -13931,8 +14048,7 @@ export default function App() {
                           {isAuthorizedAdmin(user) && (
                             <div 
                               onClick={() => {
-                                window.history.pushState({}, "", "/admin");
-                                window.dispatchEvent(new Event("popstate"));
+                                window.location.href = "/admin.html";
                               }}
                               className="bg-gradient-to-r from-pink-950/40 via-[#1e1e2d] to-purple-950/40 p-3.5 rounded-xl border border-pink-500/40 hover:border-pink-400 shadow-xl cursor-pointer group transition-all duration-200 active:scale-[0.98] flex items-center justify-between"
                             >
@@ -23699,8 +23815,24 @@ export default function App() {
                         return (now - ts) <= 24 * 3600 * 1000;
                       });
 
-                      const groups = groupNotifications(nonExpiredNotifs);
-                      const hasAnyNotifications = nonExpiredNotifs.length > 0;
+                      // Category Filtering
+                      const categoryFilteredNotifs = nonExpiredNotifs.filter(n => {
+                        if (notifCategoryFilter === "all") return true;
+                        const t = String(n.type || n.actionType || "");
+                        if (notifCategoryFilter === "wallet") {
+                          return t === "Gifts" || t === "Coin Transactions" || t === "Wallet Updates" || t === "recharge";
+                        }
+                        if (notifCategoryFilter === "social") {
+                          return t === "New Followers" || t === "Likes" || t === "Comments";
+                        }
+                        if (notifCategoryFilter === "system") {
+                          return t === "Admin Announcements" || t === "Agency Events" || t === "Live Events" || t === "System";
+                        }
+                        return true;
+                      });
+
+                      const groups = groupNotifications(categoryFilteredNotifs);
+                      const hasAnyNotifications = categoryFilteredNotifs.length > 0;
 
                       const getIconForType = (type?: string) => {
                         switch (type) {
@@ -23728,6 +23860,16 @@ export default function App() {
                         }
                       };
 
+                      const handleDeleteNotif = async (e: React.MouseEvent, id: number) => {
+                        e.stopPropagation();
+                        setAppNotifications(prev => prev.filter(n => n.id !== id));
+                        try {
+                          await fetch(`/api/v1/notifications/${id}`, { method: "DELETE" });
+                        } catch (err) {
+                          console.error("Failed to delete notification:", err);
+                        }
+                      };
+
                       const renderNotificationItem = (notif: any) => {
                         const icon = getIconForType(notif.type);
                         const badgeStyle = getBgColorForType(notif.type);
@@ -23738,14 +23880,27 @@ export default function App() {
                           if (isUnread) {
                             setAppNotifications(prev => prev.map(n => n.id === notif.id ? { ...n, isNew: false } : n));
                             try {
-                              await fetch(`/api/v1/notifications`, {
-                                method: "POST",
-                                headers: { "Content-Type": "application/json" },
-                                body: JSON.stringify({ ...notif, isNew: false })
-                              });
+                              await fetch(`/api/v1/notifications/${notif.id}/read`, { method: "POST" });
                             } catch (e) {
                               console.error("Error marking as read", e);
                             }
+                          }
+
+                          // Smart Interactive Routing
+                          const nType = notif.actionType || notif.type;
+                          if (nType === "Gifts" || nType === "Coin Transactions" || nType === "Wallet Updates" || nType === "recharge") {
+                            setClientView("wallet");
+                          } else if (nType === "Live Events" || nType === "party") {
+                            if (notif.partyId || notif.actionId) {
+                              setActivePartyId(notif.partyId || notif.actionId);
+                              setClientView("party-room");
+                            } else {
+                              setClientView("feed");
+                            }
+                          } else if (nType === "Agency Events") {
+                            setClientView("profile");
+                          } else {
+                            setClientView("feed");
                           }
                         };
 
@@ -23763,7 +23918,7 @@ export default function App() {
                           <div
                             key={notif.id}
                             onClick={handleItemClick}
-                            className={`flex items-start space-x-3 p-3 rounded-xl border transition-all cursor-pointer select-none ${
+                            className={`group relative flex items-start space-x-3 p-3 rounded-xl border transition-all cursor-pointer select-none ${
                               isUnread 
                                 ? "bg-[#ff007f]/5 border-[#ff007f]/30 hover:bg-[#ff007f]/10 shadow-sm" 
                                 : "bg-[#12121a] border-[#1e1e2d] hover:bg-white/5"
@@ -23778,7 +23933,7 @@ export default function App() {
                               </span>
                             </div>
 
-                            <div className="flex-1 min-w-0">
+                            <div className="flex-1 min-w-0 pr-6">
                               <div className="flex items-center space-x-1.5 bg-transparent">
                                 <p className={`text-[10px] font-extrabold truncate ${isUnread ? "text-[#ff007f]" : "text-white"}`}>{notif.title}</p>
                                 {isUnread && (
@@ -23788,8 +23943,16 @@ export default function App() {
                               <p className="text-[9px] text-gray-300 leading-relaxed mt-0.5">{notif.text}</p>
                             </div>
 
-                            <div className="text-right shrink-0">
+                            <div className="flex flex-col items-end shrink-0 space-y-1">
                               <span className="text-[7.5px] font-mono text-gray-500 font-bold">{formatTime(notif.timestamp)}</span>
+                              <button
+                                type="button"
+                                onClick={(e) => handleDeleteNotif(e, notif.id)}
+                                className="opacity-0 group-hover:opacity-100 p-1 text-gray-500 hover:text-red-400 hover:bg-red-500/10 rounded transition-all cursor-pointer"
+                                title="Delete Notification"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </button>
                             </div>
                           </div>
                         );
@@ -23841,7 +24004,11 @@ export default function App() {
                                       onClick={async () => {
                                         setShowNotifMenu(false);
                                         try {
-                                          const res = await fetch("/api/v1/notifications/read-all", { method: "POST" });
+                                          const res = await fetch("/api/v1/notifications/read-all", { 
+                                            method: "POST",
+                                            headers: { "Content-Type": "application/json" },
+                                            body: JSON.stringify({ username: user.username, userId: user.id })
+                                          });
                                           if (res.ok) {
                                             setAppNotifications(prev => prev.map(n => ({ ...n, isNew: false })));
                                             setHasUnreadNotifications(false);
@@ -23861,13 +24028,16 @@ export default function App() {
                                       type="button"
                                       onClick={async () => {
                                         setShowNotifMenu(false);
-                                        if (confirm("Are you sure you want to delete all notifications from Firestore?")) {
+                                        if (confirm("Are you sure you want to clear your notifications?")) {
                                           try {
-                                            const res = await fetch("/api/v1/notifications/clear", { method: "POST" });
+                                            const res = await fetch("/api/v1/notifications/clear", { 
+                                              method: "POST",
+                                              headers: { "Content-Type": "application/json" },
+                                              body: JSON.stringify({ username: user.username, userId: user.id })
+                                            });
                                             if (res.ok) {
                                               setAppNotifications([]);
                                               setHasUnreadNotifications(false);
-                                              alert("Safely deleted all notifications from Firestore!");
                                             }
                                           } catch (e) {
                                             console.error("Failed to clear", e);
@@ -23895,6 +24065,54 @@ export default function App() {
                                 </>
                               )}
                             </div>
+                          </div>
+
+                          {/* Notification Category Tabs */}
+                          <div className="bg-[#12121c] px-3 py-2 border-b border-[#2a2a3a] flex items-center space-x-1.5 overflow-x-auto shrink-0 scrollbar-none">
+                            <button
+                              type="button"
+                              onClick={() => setNotifCategoryFilter("all")}
+                              className={`px-3 py-1 rounded-full text-[9px] font-black uppercase font-mono tracking-wider shrink-0 transition-all cursor-pointer ${
+                                notifCategoryFilter === "all"
+                                  ? "bg-gradient-to-r from-[#ff007f] to-purple-600 text-white shadow-md"
+                                  : "bg-[#181826] text-gray-400 hover:text-white border border-[#2a2a3a]"
+                              }`}
+                            >
+                              All ({nonExpiredNotifs.length})
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setNotifCategoryFilter("wallet")}
+                              className={`px-3 py-1 rounded-full text-[9px] font-black uppercase font-mono tracking-wider shrink-0 transition-all cursor-pointer ${
+                                notifCategoryFilter === "wallet"
+                                  ? "bg-gradient-to-r from-amber-500 to-yellow-600 text-black font-black shadow-md"
+                                  : "bg-[#181826] text-gray-400 hover:text-white border border-[#2a2a3a]"
+                              }`}
+                            >
+                              🎁 Gifts & Coins
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setNotifCategoryFilter("social")}
+                              className={`px-3 py-1 rounded-full text-[9px] font-black uppercase font-mono tracking-wider shrink-0 transition-all cursor-pointer ${
+                                notifCategoryFilter === "social"
+                                  ? "bg-gradient-to-r from-blue-500 to-indigo-600 text-white shadow-md"
+                                  : "bg-[#181826] text-gray-400 hover:text-white border border-[#2a2a3a]"
+                              }`}
+                            >
+                              👤 Social
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setNotifCategoryFilter("system")}
+                              className={`px-3 py-1 rounded-full text-[9px] font-black uppercase font-mono tracking-wider shrink-0 transition-all cursor-pointer ${
+                                notifCategoryFilter === "system"
+                                  ? "bg-gradient-to-r from-pink-500 to-rose-600 text-white shadow-md"
+                                  : "bg-[#181826] text-gray-400 hover:text-white border border-[#2a2a3a]"
+                              }`}
+                            >
+                              📢 System
+                            </button>
                           </div>
 
                           {/* Main Scroll Area */}
@@ -25245,8 +25463,7 @@ export default function App() {
                                 <button
                                   type="button"
                                   onClick={() => {
-                                    window.history.pushState({}, "", "/admin");
-                                    window.dispatchEvent(new Event("popstate"));
+                                    window.location.href = "/admin.html";
                                     setShowSettingsDrawer(false);
                                   }}
                                   className="flex-1 bg-gradient-to-r from-purple-700 to-pink-600 hover:from-purple-600 hover:to-pink-500 text-white font-black text-[8.5px] uppercase py-2 rounded-xl transition-all shadow-md active:scale-95 flex items-center justify-center space-x-1 cursor-pointer"
@@ -29445,6 +29662,68 @@ export default function App() {
                     )}
 
                     {/* ===================================================================== */}
+                    {/* 🔔 REAL-TIME FLOATING TOAST BANNER */}
+                    {/* ===================================================================== */}
+                    {activeToastNotif && (
+                      <div 
+                        onClick={() => {
+                          if (activeToastNotif.isNew) {
+                            fetch(`/api/v1/notifications/${activeToastNotif.id}/read`, { method: "POST" }).catch(() => {});
+                            setAppNotifications(prev => prev.map(n => n.id === activeToastNotif.id ? { ...n, isNew: false } : n));
+                          }
+                          const nType = activeToastNotif.actionType || activeToastNotif.type;
+                          if (nType === "Gifts" || nType === "Coin Transactions" || nType === "Wallet Updates" || nType === "recharge") {
+                            setClientView("wallet");
+                          } else if (nType === "Live Events" || nType === "party") {
+                            if (activeToastNotif.partyId) {
+                              setActivePartyId(activeToastNotif.partyId);
+                              setClientView("party-room");
+                            } else {
+                              setClientView("feed");
+                            }
+                          } else {
+                            setClientView("notifications");
+                          }
+                          setActiveToastNotif(null);
+                        }}
+                        className="fixed top-4 left-1/2 -translate-x-1/2 z-[9999] w-[92%] max-w-sm bg-[#161622]/95 backdrop-blur-md border border-[#ff007f]/50 rounded-2xl shadow-[0_10px_30px_rgba(255,0,127,0.35)] p-3 flex items-center space-x-3 text-left cursor-pointer transition-all hover:scale-[1.02]"
+                      >
+                        <div className="relative shrink-0">
+                          <div className="w-10 h-10 rounded-full overflow-hidden border border-pink-500/50 shadow-md">
+                            <img 
+                              src={activeToastNotif.userAvatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80"} 
+                              className="w-full h-full object-cover" 
+                              alt="Avatar"
+                              referrerPolicy="no-referrer"
+                            />
+                          </div>
+                          <span className="absolute -bottom-1 -right-1 text-[10px] bg-[#ff007f] text-white w-4 h-4 rounded-full flex items-center justify-center font-bold shadow">
+                            🔔
+                          </span>
+                        </div>
+
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center justify-between">
+                            <h5 className="text-[11px] font-black text-white truncate uppercase font-mono tracking-wider">{activeToastNotif.title || "Notification"}</h5>
+                            <span className="text-[8px] text-pink-400 font-bold font-mono ml-1">NOW</span>
+                          </div>
+                          <p className="text-[9.5px] text-gray-200 truncate mt-0.5 font-sans leading-tight">{activeToastNotif.text}</p>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setActiveToastNotif(null);
+                          }}
+                          className="p-1 rounded-full text-gray-400 hover:text-white hover:bg-white/10 shrink-0 cursor-pointer"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+                    )}
+
+                    {/* ===================================================================== */}
                     {/* ⚙️ INBOX NOTIFICATION SETTINGS DRAWER MODAL */}
                     {/* ===================================================================== */}
                     {showNotifSettingsDrawer && (
@@ -29469,6 +29748,8 @@ export default function App() {
                           {/* Toggle Options */}
                           <div className="space-y-2 text-left bg-transparent">
                             {[
+                              { key: "sound", label: "🔊 Sound Alerts", desc: "Play audio chime on incoming notifications" },
+                              { key: "push", label: "📱 Browser Push", desc: "Receive native push alerts on desktop & mobile" },
                               { key: "followers", label: "👤 New Followers", desc: "Get notified when someone follows you" },
                               { key: "likes", label: "💖 Likes & Reactions", desc: "Get notified when people like your reels or profile" },
                               { key: "comments", label: "💬 Comments", desc: "Get notified on comment replies & posts" },
@@ -29936,6 +30217,31 @@ export default function App() {
         <GiftHistoryModal onClose={() => setShowGiftHistoryModal(false)} user={user} />
       )}
 
+      {/* 🌟 GLOBAL BROADCAST GIFT BANNER (PATTI) OVERLAY ON ALL SCREENS */}
+      {globalGiftBanner && (
+        <div className="fixed top-[70px] left-0 right-0 z-[99999] flex justify-center px-3 pointer-events-none select-none animate-slide-in-right">
+          <div className="w-full max-w-[280px] bg-gradient-to-r from-purple-900/95 via-pink-600/95 to-amber-500/90 border border-yellow-400/60 rounded-full px-3.5 py-1.5 flex items-center justify-between shadow-[0_0_20px_rgba(234,179,8,0.7)] backdrop-blur-md relative overflow-hidden animate-pulse">
+            {/* Glowing gold rays in background */}
+            <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(253,224,71,0.25)_0%,transparent_70%)] animate-pulse" />
+            
+            <div className="flex items-center space-x-2 min-w-0 relative z-10">
+              <span className="text-sm animate-bounce shrink-0">🎁</span>
+              <div className="text-left min-w-0">
+                <p className="text-[7.5px] font-bold text-yellow-300 uppercase tracking-widest leading-none">GLOBAL BROADCAST</p>
+                <p className="text-[9.5px] font-black text-white truncate leading-tight drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)]">
+                  <span className="text-[#66fcf1]">@{globalGiftBanner.sender}</span>
+                  <span className="text-gray-100 font-medium"> sent </span>
+                  <span className="text-yellow-200 font-black">{globalGiftBanner.giftName} {globalGiftBanner.giftIcon}</span>
+                  <span className="text-gray-100 font-medium"> to </span>
+                  <span className="text-[#ff007f] font-black">@{globalGiftBanner.recipient}</span>
+                </p>
+              </div>
+            </div>
+            <span className="text-sm animate-spin-slow shrink-0 relative z-10 ml-1">{globalGiftBanner.giftIcon}</span>
+          </div>
+        </div>
+      )}
+
       {/* 🔴 STREAM ENDED BROADCAST CARD OVERLAY */}
       {showStreamEndedCard && (
         <div className="fixed inset-0 z-[9999] bg-black/85 backdrop-blur-md flex items-center justify-center p-4 animate-fade-in select-none">
@@ -29950,6 +30256,31 @@ export default function App() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* 🎡 PARTY GAMES MODAL */}
+      {showPartyGamesModal && (
+        <PartyGamesModal
+          user={user}
+          setUser={setUser}
+          onClose={() => setShowPartyGamesModal(false)}
+          setTransactions={setTransactions}
+          onSendRoomMessage={(msg: string) => {
+            if (activePartyId) {
+              fetch(`/api/v1/parties/${activePartyId}/comments`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ message: msg, username: user.username, avatar: user.avatar })
+              }).catch(() => {});
+            } else if (activeHost?.id) {
+              fetch(`/api/v1/hosts/${activeHost.id}/comments`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ message: msg, username: user.username, avatar: user.avatar })
+              }).catch(() => {});
+            }
+          }}
+        />
       )}
 
       {/* 🎙️ CREATE PARTY ROOM MODAL */}
@@ -30461,6 +30792,12 @@ export default function App() {
 
       {/* 💳 Online Payment Checkout Modal (Google Pay, Cards, EasyPaisa, JazzCash, Bank) */}
       {showCardPaymentModal && (
+        (() => {
+          const currentPkg = selectedPaymentPackage || (onlinePackages && onlinePackages.length > 0 ? onlinePackages[0] : { id: 'pkg-1', coins: 1000, originalPrice: 100, discount: 0 });
+          const safeCountry = selectedCurrencyCountry || COUNTRIES_CURRENCIES[0];
+          const costObj = getCoinsCostInCurrency(currentPkg.coins || 0, safeCountry, currentPkg.discount || 0);
+
+          return (
             <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-[9999] flex items-center justify-center p-4 overflow-y-auto animate-fadeIn">
               <div className="bg-[#12121a] border border-[#ff007f]/30 rounded-2xl p-5 w-full max-w-sm text-center relative shadow-2xl space-y-4 my-auto">
                 <button
@@ -30624,17 +30961,17 @@ export default function App() {
                                   orderId,
                                   username: user?.username || 'Pardais_User',
                                   userId: user?.uniqueId || user?.uid,
-                                  amount: selectedRechargePkg?.price || 10,
-                                  coins: selectedRechargePkg?.coins || 10000,
+                                  amount: currentPkg?.price || costObj.pkrBase || 10,
+                                  coins: currentPkg?.coins || 10000,
                                   paymentMethod: cardMethod
                                 })
                               });
                               if (res.ok) {
                                 setUser(prev => ({
                                   ...prev,
-                                  coins: prev.coins + (selectedRechargePkg?.coins || 10000)
+                                  coins: prev.coins + (currentPkg?.coins || 10000)
                                 }));
-                                alert();
+                                alert('Card Payment Approved!');
                                 setShowCardPaymentModal(false);
                               } else {
                                 setPaymentErrorModalMsg('Card payment gateway authorization failed. Please try again.');
@@ -30655,6 +30992,8 @@ export default function App() {
                 )}
               </div>
             </div>
+          );
+        })()
       )}
 
       {/* ========================================= */}
@@ -30694,14 +31033,22 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => { setSelectedAuthMethod("email"); setLoginError(""); setLoginSuccessMsg(""); }}
-                className={selectedAuthMethod === "email" ? "bg-[#00f5ff]/20 text-[#00f5ff]" : "text-white/60"}
+                className={`py-2 text-xs font-bold rounded-lg transition-all ${
+                  selectedAuthMethod === "email"
+                    ? "bg-gradient-to-r from-[#7b2cbf] to-[#00f5ff] text-white shadow-md"
+                    : "text-gray-400 hover:text-white"
+                }`}
               >
                 Email OTP
               </button>
               <button
                 type="button"
                 onClick={() => { setSelectedAuthMethod("google"); setLoginError(""); setLoginSuccessMsg(""); }}
-                className={selectedAuthMethod === "google" ? "bg-[#00f5ff]/20 text-[#00f5ff]" : "text-white/60"}
+                className={`py-2 text-xs font-bold rounded-lg transition-all ${
+                  selectedAuthMethod === "google"
+                    ? "bg-gradient-to-r from-[#7b2cbf] to-[#00f5ff] text-white shadow-md"
+                    : "text-gray-400 hover:text-white"
+                }`}
               >
                 Google Auth
               </button>
@@ -30778,7 +31125,7 @@ export default function App() {
                   onClick={handleGoogleSignIn}
                   className="w-full h-11 bg-white text-gray-900 font-bold rounded-2xl text-xs flex items-center justify-center space-x-2 hover:bg-gray-100 active:scale-[0.98] transition-all shadow-xl border border-gray-200 cursor-pointer"
                 >
-                  <FcGoogle className="w-5 h-5" />
+                  <Globe className="w-5 h-5 text-indigo-600" />
                   <span>Sign In with Google</span>
                 </button>
               </div>
@@ -30798,7 +31145,6 @@ export default function App() {
           </div>
         </div>
       )}
-
     </div>
   );
 }

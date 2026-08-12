@@ -1414,33 +1414,41 @@ export const GiftAnimationEngine: React.FC<GiftAnimationEngineProps> = ({
   const { sender, recipient, gift, comboCount } = currentGift || {};
   const displayType = gift?.animationDisplayType || "full";
   const format = (gift?.animationFormat || "").toLowerCase();
-  const animFile = gift?.animationFile || gift?.videoUrl || gift?.animationUrl || gift?.icon;
-  const rawVideoUrl = gift?.videoUrl || gift?.animationUrl || (typeof gift?.animationFile === 'string' && (gift.animationFile.startsWith('http') || gift.animationFile.startsWith('data:') || gift.animationFile.startsWith('blob:') || gift.animationFile.endsWith('.mp4') || gift.animationFile.endsWith('.webm') || gift.animationFile.endsWith('.gif')) ? gift.animationFile : "");
+
+  // Validate strictly if string is a real playable URL / Data URI / Blob
+  const isValidUrlOrMedia = (url: any): boolean => {
+    if (typeof url !== "string") return false;
+    const str = url.trim();
+    if (str.length < 5) return false;
+    return (
+      str.startsWith("http://") ||
+      str.startsWith("https://") ||
+      str.startsWith("data:video") ||
+      str.startsWith("data:application") ||
+      str.startsWith("blob:") ||
+      str.endsWith(".mp4") ||
+      str.endsWith(".webm") ||
+      str.includes(".mp4?") ||
+      str.includes(".webm?")
+    );
+  };
+
+  const rawVideoUrl = gift?.videoUrl || gift?.animationUrl || (typeof gift?.animationFile === 'string' && isValidUrlOrMedia(gift.animationFile) ? gift.animationFile : "");
   const giftCost = gift?.cost || gift?.coins || 10;
   const giftIcon = gift?.icon || gift?.emoji || "🎁";
 
-  const videoSource = rawVideoUrl || (typeof animFile === 'string' ? animFile : "");
+  const videoSource = isValidUrlOrMedia(rawVideoUrl) ? rawVideoUrl : "";
 
   // Detect whether videoSource is a valid playable video URL / Data URI / Blob
   const isVideoFormat = format === "mp4" || format === "webm";
-  const isVideoUrl = typeof videoSource === "string" && (
-    videoSource.startsWith("http://") ||
-    videoSource.startsWith("https://") ||
-    videoSource.startsWith("data:video") ||
-    videoSource.startsWith("data:application") ||
-    videoSource.startsWith("blob:") ||
-    videoSource.endsWith(".webm") ||
-    videoSource.endsWith(".mp4") ||
-    videoSource.includes(".webm?") ||
-    videoSource.includes(".mp4?")
-  );
+  const isVideoUrl = isValidUrlOrMedia(videoSource);
 
   const isPlayableVideoUrl = !videoError && Boolean(videoSource && (isVideoFormat || isVideoUrl));
 
   // Detect whether source is an Animated GIF
   const isGif = !isPlayableVideoUrl && (
     format === "gif" || 
-    (typeof videoSource === "string" && (videoSource.endsWith(".gif") || videoSource.startsWith("data:image/gif")))
+    (typeof rawVideoUrl === "string" && (rawVideoUrl.endsWith(".gif") || rawVideoUrl.startsWith("data:image/gif")))
   );
 
   // Auto-trigger video playback with unmuted attempt on component mount
@@ -1451,11 +1459,13 @@ export const GiftAnimationEngine: React.FC<GiftAnimationEngineProps> = ({
       const playPromise = videoRef.current.play();
       if (playPromise !== undefined) {
         playPromise.catch(err => {
-          console.warn("Unmuted video autoplay restricted, falling back to muted video:", err);
+          const msg = err instanceof Error ? err.message : String(err || "Autoplay restricted");
+          console.warn("[GiftSystem] Unmuted video autoplay restricted, falling back to muted video:", msg);
           if (videoRef.current) {
             videoRef.current.muted = true;
-            videoRef.current.play().catch(e => {
-              console.error("Video play retry error:", e);
+            videoRef.current.play().catch(retryErr => {
+              const retryMsg = retryErr instanceof Error ? retryErr.message : String(retryErr || "Play retry failed");
+              console.warn("[GiftSystem] Video play retry note:", retryMsg);
               setVideoError(true);
             });
           }
@@ -1484,6 +1494,7 @@ export const GiftAnimationEngine: React.FC<GiftAnimationEngineProps> = ({
     giftIcon === "🎆"
   );
 
+  const animFile = gift?.animationFile || gift?.animationUrl || gift?.videoUrl;
   const isSvga = !isPlayableVideoUrl && !isGif && (format === "svga" || (animFile && typeof animFile === 'string' && animFile.endsWith(".svga")));
   const isSmallEmojiOnly = !isPlayableVideoUrl && !isGif && !isSvga && !isLionGift && !isSpiceGift && !isFireworksGift && giftCost >= 10 && giftCost <= 500;
 
@@ -1554,7 +1565,8 @@ export const GiftAnimationEngine: React.FC<GiftAnimationEngineProps> = ({
               preload="auto"
               onEnded={handleFinish}
               onError={(e) => {
-                console.warn("Gift Video playback error, falling back to 3D display:", e);
+                const src = (e.currentTarget as HTMLVideoElement)?.currentSrc || (e.currentTarget as HTMLVideoElement)?.src || "";
+                console.warn("[GiftSystem] Gift Video playback notice for source:", src || "invalid media source");
                 setVideoError(true);
               }}
               className="w-full h-full max-h-[70vh] max-w-[95vw] object-contain pointer-events-none relative z-20 drop-shadow-[0_0_40px_rgba(255,215,0,0.8)]"

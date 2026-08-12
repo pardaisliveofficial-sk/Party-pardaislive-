@@ -7,14 +7,21 @@ export const resolveApiUrl = (path: string): string => {
     return path;
   }
 
+  // In standard browser environment, prefer same-origin relative path so requests hit local server directly
+  if (
+    typeof window !== "undefined" &&
+    window.location &&
+    window.location.origin &&
+    window.location.origin !== "null" &&
+    !window.location.origin.startsWith("file:") &&
+    !window.location.origin.startsWith("capacitor:")
+  ) {
+    return path.startsWith("/") ? path : `/${path}`;
+  }
+
   const envApiUrl = (import.meta as any).env?.VITE_API_URL;
   if (envApiUrl && typeof envApiUrl === "string" && envApiUrl.trim().length > 0) {
     const base = envApiUrl.trim().replace(/\/+$/, "");
-    return `${base}${path.startsWith("/") ? path : `/${path}`}`;
-  }
-
-  if (typeof window !== "undefined" && window.location.origin && window.location.origin !== "null" && !window.location.origin.startsWith("file:") && !window.location.origin.startsWith("capacitor:")) {
-    const base = window.location.origin;
     return `${base}${path.startsWith("/") ? path : `/${path}`}`;
   }
 

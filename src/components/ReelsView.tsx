@@ -178,7 +178,9 @@ const ReelVideoPlayer: React.FC<ReelVideoPlayerProps> = ({
           onCanPlay={() => setIsLoading(false)}
           onLoadedData={() => setIsLoading(false)}
           onError={(e) => {
-            console.error(`[PARDAIS-PARTY PLAYER] Native HTML5 video error event on "${activeUrl}":`, e);
+            const errCode = (e.currentTarget as HTMLVideoElement)?.error?.code || 0;
+            const errMsg = (e.currentTarget as HTMLVideoElement)?.error?.message || "Source or format unavailable";
+            console.warn(`[PARDAIS-PARTY PLAYER] Native HTML5 video error note (code: ${errCode}, msg: "${errMsg}") on "${activeUrl}"`);
             
             const backends = [
               "https://vjs.zencdn.net/v/oceans.mp4",
