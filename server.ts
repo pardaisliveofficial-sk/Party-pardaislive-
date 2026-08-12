@@ -5472,15 +5472,11 @@ app.post("/api/v1/reels/upload-video", s3MulterUpload.single("video"), async (re
 
       console.log(`[PARDAIS-PARTY R2] [UPLOAD-VIDEO] Transmitting binary buffer to Cloudflare R2 S3 API...`);
       
-      // Allow production video uploads enough time to complete on real mobile/web networks.
-      // The previous 3-second artificial timeout caused uploads to fail/abort before R2
-      // could finish receiving larger video files.
-      const R2_UPLOAD_TIMEOUT_MS = 10 * 60 * 1000;
+      // Allow production video uploads enough time to reach R2 over mobile/Wi-Fi.
+      // The old 3-second race aborted normal multi-megabyte reels.
       await Promise.race([
         client.send(putCommand),
-        new Promise((_, reject) =>
-          setTimeout(() => reject(new Error(`R2 upload timeout after ${R2_UPLOAD_TIMEOUT_MS / 1000}s`)), R2_UPLOAD_TIMEOUT_MS)
-        )
+        new Promise((_, reject) => setTimeout(() => reject(new Error("R2 upload timeout after 10 minutes")), 10 * 60 * 1000))
       ]);
       
       console.log(`[PARDAIS-PARTY R2] [UPLOAD-VIDEO] SUCCESS: Binary written to R2 storage bucket "${bucketName}"`);

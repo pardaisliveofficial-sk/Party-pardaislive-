@@ -51,21 +51,12 @@ export const resolveApiUrl = (path: string): string => {
     return `${PRODUCTION_API_BASE}${cleanPath}`;
   }
 
-  // All production builds (Web + Capacitor/Android) must use the same
-  // centralized production API. Do not fall back to the web origin: that
-  // causes multipart Reel uploads to hit the frontend host instead of the
-  // Railway production API and results in network/abort errors.
+  // Pardais Party uses one centralized production API on both Web and Android.
+  // Never fall back to the current web origin for /api routes.
   const envApiUrl = (import.meta as any).env?.VITE_API_URL;
-  const configuredBase = typeof envApiUrl === "string" && envApiUrl.trim().length > 0
+  const base = typeof envApiUrl === "string" && envApiUrl.trim()
     ? envApiUrl.trim().replace(/\/+$/, "")
     : PRODUCTION_API_BASE;
-
-  // Prefer the known production endpoint even if an old/stale VITE_API_URL
-  // was baked into a previous Web/AI-Studio build.
-  const base = configuredBase.includes("api.pardaisparty.soulverseapps.com")
-    ? configuredBase
-    : PRODUCTION_API_BASE;
-
   return `${base}${cleanPath}`;
 };
 
@@ -137,28 +128,10 @@ export const removeAuthToken = (): void => {
   localStorage.removeItem("pardais_auth_token");
 };
 
-// Refresh or acquire guest session token from backend
-export const refreshSession = async (userInfo?: { username?: string; uid?: string }): Promise<string | null> => {
-  try {
-    const url = resolveApiUrl("/api/v1/auth/guest-login");
-    const res = await window.fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(userInfo || {})
-    });
-
-    if (res.ok) {
-      const data = await res.json();
-      if (data.token && typeof data.token === "string") {
-        setAuthToken(data.token);
-        console.log("[PARDAIS-PARTY API CLIENT] Successfully acquired/refreshed application session token.");
-        return data.token;
-      }
-    }
-  } catch (err) {
-    console.warn("[PARDAIS-PARTY API CLIENT] Session refresh failed:", err);
-  }
-  return null;
+// Do not create guest sessions automatically.
+// A valid session must come from Email OTP or Google authentication.
+export const refreshSession = async (): Promise<string | null> => {
+  return getAuthToken();
 };
 
 // Shared Authenticated Fetch wrapper
@@ -179,7 +152,7 @@ export const authenticatedFetch = async (
 
   let token = getAuthToken();
   if (!token && retryCount === 0) {
-    token = await refreshSession(userInfoForRefresh);
+    token = await refreshSession();
   }
   let headers: HeadersInit = init?.headers ? { ...init.headers } : {};
 
@@ -204,7 +177,7 @@ export const authenticatedFetch = async (
     // Handle 401 Session Expired -> Try single session refresh if retryCount === 0
     if (response.status === 401 && retryCount === 0) {
       console.warn("[PARDAIS-PARTY API CLIENT] 401 Unauthorized received. Attempting session refresh...");
-      const newToken = await refreshSession(userInfoForRefresh);
+      const newToken = await refreshSession();
       if (newToken) {
         // Retry once with refreshed token
         return authenticatedFetch(input, init, userInfoForRefresh, 1);

@@ -30,7 +30,138 @@
       }
     </script>
     <script type="module" src="/src/main.tsx"></script>
-  </body>
+  
+<style id="pardais-auth-gate-style">
+#pardais-auth-gate{position:fixed;inset:0;z-index:2147483647;background:linear-gradient(135deg,#080811,#17102b,#071b2f);display:flex;align-items:center;justify-content:center;padding:20px;box-sizing:border-box;font-family:system-ui,-apple-system,sans-serif;color:#fff}
+#pardais-auth-card{width:min(430px,100%);background:rgba(20,18,31,.98);border:1px solid rgba(255,0,153,.55);border-radius:24px;padding:28px;box-sizing:border-box;text-align:center;box-shadow:0 20px 70px rgba(0,0,0,.6)}
+#pardais-auth-card h1{font-size:27px;margin:8px 0 10px;font-weight:800}
+#pardais-auth-card p{color:#aaa5b5;font-size:14px}
+#pardais-auth-card input{width:100%;box-sizing:border-box;padding:13px 14px;border-radius:12px;border:1px solid #3b3747;background:#0d0c13;color:#fff;outline:none;font-size:15px;margin-top:8px}
+#pardais-auth-card button{padding:13px 16px;border:0;border-radius:12px;background:linear-gradient(90deg,#ff0b8a,#9b30ff);color:#fff;font-weight:800;cursor:pointer}
+#pardais-auth-email-row{display:flex;gap:8px;margin-top:10px}
+#pardais-auth-email-row input{margin-top:0;flex:1}
+#pardais-auth-email-row button{white-space:nowrap}
+#pardais-auth-msg{margin-top:12px;color:#ff8fbc;font-size:13px;min-height:18px}
+#pardais-auth-or{color:#777185;margin:14px 0}
+#pardais-auth-setup button{width:100%;margin-top:12px}
+</style>
+<div id="pardais-auth-gate">
+  <div id="pardais-auth-card">
+    <div style="font-size:40px">🎉</div>
+    <h1 id="pardais-auth-title">Welcome to Pardais Party</h1>
+    <p id="pardais-auth-subtitle">Sign in or create your account to continue.</p>
+    <div id="pardais-auth-login">
+      <div id="pardais-google-button" style="display:flex;justify-content:center;min-height:44px"></div>
+      <div id="pardais-auth-or">OR</div>
+      <div id="pardais-auth-email-row">
+        <input id="pardais-email" type="email" placeholder="Email address" autocomplete="email">
+        <button id="pardais-send">Send code</button>
+      </div>
+      <div id="pardais-otp-row" style="display:none;gap:8px;margin-top:10px">
+        <input id="pardais-otp" placeholder="Verification code" inputmode="numeric">
+        <button id="pardais-verify">Continue</button>
+      </div>
+    </div>
+    <div id="pardais-auth-setup" style="display:none">
+      <p>Account created. Set your profile details now; you can change them later.</p>
+      <input id="pardais-name" placeholder="Your name" autocomplete="name">
+      <input id="pardais-avatar" placeholder="Profile photo URL (optional)">
+      <button id="pardais-save-profile">Continue to Pardais Party</button>
+    </div>
+    <div id="pardais-auth-msg"></div>
+  </div>
+</div>
+<script>
+(function(){
+  const API="https://api.pardaisparty.soulverseapps.com";
+  const gate=document.getElementById("pardais-auth-gate");
+  const msg=document.getElementById("pardais-auth-msg");
+  const login=document.getElementById("pardais-auth-login");
+  const setup=document.getElementById("pardais-auth-setup");
+  const email=document.getElementById("pardais-email");
+  const otp=document.getElementById("pardais-otp");
+  const setMsg=(x)=>msg.textContent=x||"";
+  const token=()=>localStorage.getItem("pardais_auth_token");
+  const saveToken=(t)=>localStorage.setItem("pardais_auth_token",t);
+  async function post(path,body){
+    const r=await fetch(API+path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok) throw new Error(d.error||d.message||"Request failed");
+    return d;
+  }
+  function finish(d){
+    if(d.token) saveToken(d.token);
+    const u=d.user||{};
+    window.__pardaisAuthenticatedUser=u;
+    if(d.isNewUser && !u.fullName){
+      login.style.display="none"; setup.style.display="block";
+      document.getElementById("pardais-name").value=u.fullName||u.displayName||"";
+      document.getElementById("pardais-avatar").value=u.avatar||"";
+      document.getElementById("pardais-auth-title").textContent="Complete your profile";
+      document.getElementById("pardais-auth-subtitle").textContent="Your Google name and photo are already available. You can change them later.";
+      return;
+    }
+    gate.remove();
+  }
+  async function restore(){
+    const t=token();
+    if(!t) return;
+    try{
+      const r=await fetch(API+"/api/v1/auth/me",{headers:{Authorization:"Bearer "+t}});
+      if(!r.ok) throw new Error();
+      const d=await r.json();
+      window.__pardaisAuthenticatedUser=d.user;
+      gate.remove();
+    }catch(e){localStorage.removeItem("pardais_auth_token");}
+  }
+  document.getElementById("pardais-send").onclick=async()=>{
+    try{
+      setMsg(""); if(!email.value.includes("@")) throw new Error("Enter a valid email address.");
+      document.getElementById("pardais-send").disabled=true;
+      await post("/api/v1/auth/send-email-otp",{email:email.value.trim()});
+      document.getElementById("pardais-otp-row").style.display="flex";
+      setMsg("Verification code sent to your email.");
+    }catch(e){setMsg(e.message)}finally{document.getElementById("pardais-send").disabled=false}
+  };
+  document.getElementById("pardais-verify").onclick=async()=>{
+    try{
+      setMsg("");
+      const d=await post("/api/v1/auth/verify-email-otp",{email:email.value.trim(),otp:otp.value.trim()});
+      finish(d);
+    }catch(e){setMsg(e.message)}
+  };
+  document.getElementById("pardais-save-profile").onclick=async()=>{
+    try{
+      setMsg("");
+      const name=document.getElementById("pardais-name").value.trim();
+      const avatar=document.getElementById("pardais-avatar").value.trim();
+      if(!name) throw new Error("Enter your name.");
+      const r=await fetch(API+"/api/v1/auth/setup-profile",{method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+token()},body:JSON.stringify({fullName:name,avatar:avatar||undefined})});
+      const out=await r.json(); if(!r.ok) throw new Error(out.error||"Profile save failed");
+      finish({token:token(),user:out.user});
+    }catch(e){setMsg(e.message)}
+  };
+  function initGoogle(){
+    if(!window.google||!google.accounts||!google.accounts.id)return;
+    google.accounts.id.initialize({
+      client_id:"496371999211-2mj9mog2lobpbgbcuv3gbi3d4m0meefr.apps.googleusercontent.com",
+      auto_select:false,
+      callback:async function(response){
+        try{
+          setMsg("Signing in with Google…");
+          const p=JSON.parse(atob(response.credential.split(".")[1].replace(/-/g,"+").replace(/_/g,"/")));
+          const d=await post("/api/v1/auth/google-login",{uid:p.sub,email:p.email,displayName:p.name,photoURL:p.picture});
+          finish(d);
+        }catch(e){setMsg(e.message)}
+      }
+    });
+    google.accounts.id.renderButton(document.getElementById("pardais-google-button"),{theme:"filled_black",size:"large",width:330,text:"continue_with"});
+  }
+  const gs=document.createElement("script"); gs.src="https://accounts.google.com/gsi/client"; gs.async=true; gs.defer=true; gs.onload=initGoogle; document.head.appendChild(gs);
+  restore();
+})();
+</script>
+</body>
 </html>
 
 
