@@ -738,27 +738,58 @@ app.post("/api/v1/auth/send-email-otp", async (req, res) => {
   // Send real email via nodemailer if SMTP transport is set up
   try {
     if (process.env.SMTP_USER) {
-      const transporter = nodemailer.createTransport({
-        host: process.env.SMTP_HOST || "smtp.gmail.com",
-        port: Number(process.env.SMTP_PORT) || 587,
-        secure: process.env.SMTP_SECURE === "true",
-        auth: {
-          user: process.env.SMTP_USER,
-          pass: process.env.SMTP_PASS
-        }
-      });
+      const smtpUser = String(process.env.SMTP_USER || "").trim();
+      const smtpPass = String(process.env.SMTP_PASS || "").trim();
+      const configuredHost = String(process.env.SMTP_HOST || "smtp.gmail.com").trim();
+      const smtpPort = Number(process.env.SMTP_PORT) || 587;
+      const smtpSecure = String(process.env.SMTP_SECURE || "false").trim().toLowerCase() === "true";
 
-      await transporter.sendMail({
-        from: `"Pardais Party" <${process.env.SMTP_USER}>`,
-        to: cleanEmail,
-        subject: "Your Pardais Party Email Verification OTP Code",
-        html: `<div style="font-family: Arial, sans-serif; padding: 20px; background: #0f0f18; color: #ffffff; border-radius: 12px;">
+      // Try the configured Gmail SMTP hostname first, then Google's legacy
+      // gmail hostname as a DNS fallback. This helps when a hosting provider
+      // temporarily cannot resolve smtp.gmail.com.
+      const smtpHosts = Array.from(new Set([configuredHost, "smtp.googlemail.com"]));
+      let delivered = false;
+      let lastEmailError: unknown = null;
+
+      for (const smtpHost of smtpHosts) {
+        try {
+          const transporter = nodemailer.createTransport({
+            host: smtpHost,
+            port: smtpPort,
+            secure: smtpSecure,
+            auth: {
+              user: smtpUser,
+              pass: smtpPass
+            },
+            connectionTimeout: 15000,
+            greetingTimeout: 15000,
+            socketTimeout: 20000
+          });
+
+          await transporter.sendMail({
+            from: `"Pardais Party" <${smtpUser}>`,
+            to: cleanEmail,
+            subject: "Your Pardais Party Email Verification OTP Code",
+            html: `<div style="font-family: Arial, sans-serif; padding: 20px; background: #0f0f18; color: #ffffff; border-radius: 12px;">
           <h2 style="color: #ff007f;">Pardais Party Email Verification</h2>
           <p>Your 6-digit verification code is:</p>
           <div style="font-size: 32px; font-weight: bold; letter-spacing: 6px; color: #00f5ff; margin: 20px 0;">${otp}</div>
           <p style="color: #8888aa; font-size: 12px;">This code will expire in 10 minutes. If you did not request this, please ignore.</p>
         </div>`
-      });
+          });
+
+          delivered = true;
+          console.log(`[PARDAIS PARTY EMAIL] SMTP delivery successful via ${smtpHost}`);
+          break;
+        } catch (hostErr) {
+          lastEmailError = hostErr;
+          console.warn(`[PARDAIS PARTY EMAIL] SMTP host failed (${smtpHost}):`, hostErr);
+        }
+      }
+
+      if (!delivered) {
+        console.warn("[PARDAIS PARTY EMAIL] All SMTP hosts failed:", lastEmailError);
+      }
     }
   } catch (emailErr) {
     console.warn("[PARDAIS PARTY EMAIL] SMTP transport warning:", emailErr);
