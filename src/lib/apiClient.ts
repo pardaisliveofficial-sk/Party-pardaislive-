@@ -51,13 +51,22 @@ export const resolveApiUrl = (path: string): string => {
     return `${PRODUCTION_API_BASE}${cleanPath}`;
   }
 
+  // All production builds (Web + Capacitor/Android) must use the same
+  // centralized production API. Do not fall back to the web origin: that
+  // causes multipart Reel uploads to hit the frontend host instead of the
+  // Railway production API and results in network/abort errors.
   const envApiUrl = (import.meta as any).env?.VITE_API_URL;
-  if (envApiUrl && typeof envApiUrl === "string" && envApiUrl.trim().length > 0) {
-    const base = envApiUrl.trim().replace(/\/+$/, "");
-    return `${base}${cleanPath}`;
-  }
+  const configuredBase = typeof envApiUrl === "string" && envApiUrl.trim().length > 0
+    ? envApiUrl.trim().replace(/\/+$/, "")
+    : PRODUCTION_API_BASE;
 
-  return cleanPath;
+  // Prefer the known production endpoint even if an old/stale VITE_API_URL
+  // was baked into a previous Web/AI-Studio build.
+  const base = configuredBase.includes("api.pardaisparty.soulverseapps.com")
+    ? configuredBase
+    : PRODUCTION_API_BASE;
+
+  return `${base}${cleanPath}`;
 };
 
 // Global fetch interceptor to guarantee relative API requests resolve to production API base on Android APK
@@ -210,44 +219,5 @@ export const authenticatedFetch = async (
       statusText: "Service Unavailable",
       headers: { "Content-Type": "application/json" }
     });
-  }
-};
-
-/**
- * Upload a Reel video through the production API.
- * Uses fetch/FormData (Capacitor/WebView friendly) and a long AbortController
- * timeout so large mobile videos are not cancelled prematurely.
- */
-export const uploadReelVideo = async (
-  file: File | Blob,
-  userId: string,
-  onProgress?: (percent: number) => void,
-): Promise<any> => {
-  const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), 10 * 60 * 1000);
-
-  try {
-    const formData = new FormData();
-    formData.append("video", file, file instanceof File ? file.name : `Pardais_Reel_${Date.now()}.mp4`);
-    formData.append("userId", userId || "anonymous");
-
-    onProgress?.(0);
-
-    const response = await authenticatedFetch("/api/v1/reels/upload-video", {
-      method: "POST",
-      body: formData,
-      signal: controller.signal,
-    }, { uid: userId });
-
-    const data = await response.json().catch(() => ({}));
-
-    if (!response.ok || !data.success) {
-      throw new Error(data.error || `Reel upload failed (HTTP ${response.status})`);
-    }
-
-    onProgress?.(100);
-    return data;
-  } finally {
-    window.clearTimeout(timeout);
   }
 };
