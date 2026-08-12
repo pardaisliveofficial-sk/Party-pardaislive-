@@ -148,10 +148,10 @@ export const LEVEL_TIERS: LevelTier[] = [
 ];
 
 /**
- * Official SEHR LIVE Level Progression Cumulative Coin Thresholds (Levels 1–100)
+ * Official PARDAIS PARTY Level Progression Cumulative Coin Thresholds (Levels 1–100)
  * Max level is strictly 100. (Level 100 = 100 Billion Cumulative Coins)
  */
-export const SEHR_LIVE_LEVEL_THRESHOLDS: number[] = [
+export const PARDAIS_PARTY_LEVEL_THRESHOLDS: number[] = [
   500,           // L1
   2000,          // L2 (2K)
   5000,          // L3 (5K)
@@ -254,6 +254,8 @@ export const SEHR_LIVE_LEVEL_THRESHOLDS: number[] = [
   100000000000   // L100 (100B MAX)
 ];
 
+export const SEHR_LIVE_LEVEL_THRESHOLDS = PARDAIS_PARTY_LEVEL_THRESHOLDS;
+
 export function getLevelTier(level: number): LevelTier {
   const safeLevel = Number.isNaN(Number(level)) ? 1 : Math.max(1, Math.floor(Number(level) || 1));
   const rounded = Math.min(safeLevel, 100);
@@ -266,7 +268,7 @@ export function getLevelTier(level: number): LevelTier {
  */
 export function getCoinsForLevel(levelInput: number, _baseCoins?: number, _formula?: string): number {
   const safeLvl = Math.max(1, Math.min(100, Math.floor(Number(levelInput) || 1)));
-  return SEHR_LIVE_LEVEL_THRESHOLDS[safeLvl - 1] || 0;
+  return PARDAIS_PARTY_LEVEL_THRESHOLDS[safeLvl - 1] || 0;
 }
 
 /**
@@ -311,7 +313,7 @@ export function getProgressionFromCoins(coinsInput: number, _baseCoins?: number,
   coinsNeeded: number;
 } {
   const coins = Number.isNaN(Number(coinsInput)) ? 0 : Math.max(0, Number(coinsInput) || 0);
-  const MAX_COINS = SEHR_LIVE_LEVEL_THRESHOLDS[99]; // 100 Billion
+  const MAX_COINS = PARDAIS_PARTY_LEVEL_THRESHOLDS[99]; // 100 Billion
 
   if (coins >= MAX_COINS) {
     return {
@@ -325,8 +327,8 @@ export function getProgressionFromCoins(coinsInput: number, _baseCoins?: number,
   }
 
   let level = 1;
-  for (let i = 0; i < SEHR_LIVE_LEVEL_THRESHOLDS.length; i++) {
-    if (coins >= SEHR_LIVE_LEVEL_THRESHOLDS[i]) {
+  for (let i = 0; i < PARDAIS_PARTY_LEVEL_THRESHOLDS.length; i++) {
+    if (coins >= PARDAIS_PARTY_LEVEL_THRESHOLDS[i]) {
       level = i + 1;
     } else {
       break;
@@ -347,8 +349,8 @@ export function getProgressionFromCoins(coinsInput: number, _baseCoins?: number,
     };
   }
 
-  const thisLevelStartCoins = level === 1 ? 0 : SEHR_LIVE_LEVEL_THRESHOLDS[level - 2];
-  const nextLevelStartCoins = SEHR_LIVE_LEVEL_THRESHOLDS[level - 1];
+  const thisLevelStartCoins = level === 1 ? 0 : PARDAIS_PARTY_LEVEL_THRESHOLDS[level - 2];
+  const nextLevelStartCoins = PARDAIS_PARTY_LEVEL_THRESHOLDS[level - 1];
 
   const range = Math.max(1, nextLevelStartCoins - thisLevelStartCoins);
   const earnedInThisLevel = Math.max(0, coins - thisLevelStartCoins);
