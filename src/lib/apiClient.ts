@@ -212,3 +212,42 @@ export const authenticatedFetch = async (
     });
   }
 };
+
+/**
+ * Upload a Reel video through the production API.
+ * Uses fetch/FormData (Capacitor/WebView friendly) and a long AbortController
+ * timeout so large mobile videos are not cancelled prematurely.
+ */
+export const uploadReelVideo = async (
+  file: File | Blob,
+  userId: string,
+  onProgress?: (percent: number) => void,
+): Promise<any> => {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 10 * 60 * 1000);
+
+  try {
+    const formData = new FormData();
+    formData.append("video", file, file instanceof File ? file.name : `Pardais_Reel_${Date.now()}.mp4`);
+    formData.append("userId", userId || "anonymous");
+
+    onProgress?.(0);
+
+    const response = await authenticatedFetch("/api/v1/reels/upload-video", {
+      method: "POST",
+      body: formData,
+      signal: controller.signal,
+    }, { uid: userId });
+
+    const data = await response.json().catch(() => ({}));
+
+    if (!response.ok || !data.success) {
+      throw new Error(data.error || `Reel upload failed (HTTP ${response.status})`);
+    }
+
+    onProgress?.(100);
+    return data;
+  } finally {
+    window.clearTimeout(timeout);
+  }
+};

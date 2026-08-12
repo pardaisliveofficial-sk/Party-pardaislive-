@@ -5414,6 +5414,13 @@ const s3MulterUpload = multer({
 
 // Production video upload endpoint to Cloudflare R2
 app.post("/api/v1/reels/upload-video", s3MulterUpload.single("video"), async (req, res) => {
+  // Mobile/Capacitor video uploads can legitimately take several minutes.
+  // Do not let Node/Express terminate the request while the video is being
+  // transferred to Railway and then Cloudflare R2.
+  const UPLOAD_TIMEOUT_MS = 10 * 60 * 1000;
+  req.setTimeout(UPLOAD_TIMEOUT_MS);
+  res.setTimeout(UPLOAD_TIMEOUT_MS);
+
   console.log("[PARDAIS-PARTY R2] [UPLOAD-VIDEO] ====== UPLOAD TRANSACTION STARTED ======");
 
   try {
@@ -5472,10 +5479,16 @@ app.post("/api/v1/reels/upload-video", s3MulterUpload.single("video"), async (re
 
       console.log(`[PARDAIS-PARTY R2] [UPLOAD-VIDEO] Transmitting binary buffer to Cloudflare R2 S3 API...`);
       
-      // Enforce 3-second timeout race for R2 connection/upload
+      // Allow enough time for real mobile video uploads.
+      // The previous 3-second race could abort otherwise-valid Reel uploads.
       await Promise.race([
         client.send(putCommand),
-        new Promise((_, reject) => setTimeout(() => reject(new Error("R2 upload timeout after 3000ms")), 3000))
+        new Promise((_, reject) =>
+          setTimeout(
+            () => reject(new Error(`R2 upload timeout after ${UPLOAD_TIMEOUT_MS / 1000}s`)),
+            UPLOAD_TIMEOUT_MS
+          )
+        )
       ]);
       
       console.log(`[PARDAIS-PARTY R2] [UPLOAD-VIDEO] SUCCESS: Binary written to R2 storage bucket "${bucketName}"`);
