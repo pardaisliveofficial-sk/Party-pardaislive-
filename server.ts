@@ -3,7 +3,6 @@ import path from "path";
 import dotenv from "dotenv";
 import fs from "fs";
 import sharp from "sharp";
-import nodemailer from "nodemailer";
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 import multer from "multer";
 import { createServer as createViteServer } from "vite";
@@ -717,47 +716,15 @@ app.post("/api/v1/auth/google-login", (req, res) => {
 });
 
 // 2. Dispatch Email Verification OTP Code
-// Gmail SMTP on some Railway deployments can fail hostname DNS resolution.
-// We resolve the SMTP hostname over DNS-over-HTTPS and connect to the returned
-// IPv4 address while preserving the TLS server name for certificate validation.
-async function resolveSmtpIpv4(hostname: string): Promise<string[]> {
-  const providers = [
-    `https://dns.google/resolve?name=${encodeURIComponent(hostname)}&type=A`,
-    `https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(hostname)}&type=A`
-  ];
-  for (const url of providers) {
-    try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 4000);
-      const response = await fetch(url, {
-        headers: { accept: "application/dns-json" },
-        signal: controller.signal
-      });
-      clearTimeout(timer);
-      if (!response.ok) continue;
-      const data = await response.json() as any;
-      const ips = Array.isArray(data.Answer)
-        ? data.Answer
-            .filter((a: any) => a && a.type === 1 && typeof a.data === "string")
-            .map((a: any) => a.data)
-        : [];
-      if (ips.length) return [...new Set(ips)];
-    } catch (err) {
-      console.warn(`[PARDAIS PARTY EMAIL] DoH lookup failed for ${hostname}:`, err instanceof Error ? err.message : err);
-    }
-  }
-  return [];
-}
-
+// Email delivery uses the Resend HTTPS API instead of SMTP. This avoids
+// Railway's outbound SMTP port restrictions and keeps the OTP logic unchanged.
 async function sendPardaisPartyOtpEmail(to: string, otp: string): Promise<void> {
-  const smtpUser = process.env.SMTP_USER?.trim();
-  const smtpPass = process.env.SMTP_PASS?.trim();
-  const smtpHost = (process.env.SMTP_HOST || "smtp.gmail.com").trim();
-  const smtpPort = Number(process.env.SMTP_PORT || 587);
-  const smtpSecure = String(process.env.SMTP_SECURE || "false").toLowerCase() === "true";
+  const resendApiKey = process.env.RESEND_API_KEY?.trim();
+  const fromEmail = (process.env.RESEND_FROM_EMAIL || "onboarding@resend.dev").trim();
+  const fromName = (process.env.RESEND_FROM_NAME || "Pardais Party").trim();
 
-  if (!smtpUser || !smtpPass) {
-    throw new Error("SMTP_USER or SMTP_PASS is missing");
+  if (!resendApiKey) {
+    throw new Error("RESEND_API_KEY is missing");
   }
 
   const html = `<div style="font-family: Arial, sans-serif; padding: 20px; background: #0f0f18; color: #ffffff; border-radius: 12px;">
@@ -767,63 +734,42 @@ async function sendPardaisPartyOtpEmail(to: string, otp: string): Promise<void> 
     <p style="color: #8888aa; font-size: 12px;">This code will expire in 10 minutes. If you did not request this, please ignore.</p>
   </div>`;
 
-  const targets: Array<{ host: string; port: number; secure: boolean; servername?: string }> = [];
-  const addTarget = (host: string, port: number, secure: boolean, servername?: string) => {
-    if (!targets.some(t => t.host === host && t.port === port)) targets.push({ host, port, secure, servername });
-  };
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15000);
 
-  // First retain the normal configuration.
-  addTarget(smtpHost, smtpPort, smtpSecure, smtpHost);
-
-  // If Railway cannot resolve the hostname, use Google/Cloudflare DoH to get IPv4 addresses.
-  // The TLS SNI/certificate hostname remains smtp.gmail.com (or configured SMTP_HOST).
-  const ips = await resolveSmtpIpv4(smtpHost);
-  for (const ip of ips.slice(0, 4)) {
-    addTarget(ip, 587, false, smtpHost);
-    addTarget(ip, 465, true, smtpHost);
-  }
-
-  // Gmail commonly exposes the same SMTP service as smtp.googlemail.com.
-  if (smtpHost === "smtp.gmail.com") {
-    const altHost = "smtp.googlemail.com";
-    const altIps = await resolveSmtpIpv4(altHost);
-    for (const ip of altIps.slice(0, 4)) {
-      addTarget(ip, 587, false, altHost);
-      addTarget(ip, 465, true, altHost);
-    }
-  }
-
-  let lastError: unknown = new Error("No SMTP targets available");
-  for (const target of targets) {
-    try {
-      console.log(`[PARDAIS PARTY EMAIL] Trying SMTP ${target.host}:${target.port}${target.servername ? ` (SNI ${target.servername})` : ""}`);
-      const transporter = nodemailer.createTransport({
-        host: target.host,
-        port: target.port,
-        secure: target.secure,
-        ...(target.servername ? { tls: { servername: target.servername } } : {}),
-        auth: { user: smtpUser, pass: smtpPass },
-        connectionTimeout: 8000,
-        greetingTimeout: 8000,
-        socketTimeout: 12000
-      });
-
-      await transporter.sendMail({
-        from: `"Pardais Party" <${smtpUser}>`,
-        to,
+  try {
+    const response = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${resendApiKey}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        from: `${fromName} <${fromEmail}>`,
+        to: [to],
         subject: "Your Pardais Party Email Verification OTP Code",
         html
-      });
+      }),
+      signal: controller.signal
+    });
 
-      console.log(`[PARDAIS PARTY EMAIL] SMTP delivery succeeded for ${to}`);
-      return;
-    } catch (err) {
-      lastError = err;
-      console.warn(`[PARDAIS PARTY EMAIL] SMTP target failed ${target.host}:${target.port}:`, err instanceof Error ? err.message : err);
+    const bodyText = await response.text();
+    let body: any = {};
+    try {
+      body = bodyText ? JSON.parse(bodyText) : {};
+    } catch {
+      body = { raw: bodyText };
     }
-  }
 
-  throw lastError instanceof Error ? lastError : new Error(String(lastError));
+    if (!response.ok) {
+      const resendMessage = body?.message || body?.error || body?.name || `HTTP ${response.status}`;
+      throw new Error(`Resend API error ${response.status}: ${resendMessage}`);
+    }
+
+    console.log(`[PARDAIS PARTY EMAIL] Resend accepted OTP email for ${to} (id: ${body?.id || "unknown"})`);
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 app.post("/api/v1/auth/send-email-otp", async (req, res) => {
@@ -852,7 +798,7 @@ app.post("/api/v1/auth/send-email-otp", async (req, res) => {
     });
   } catch (emailErr) {
     // Do not pretend the email was sent when SMTP actually failed.
-    console.error("[PARDAIS PARTY EMAIL] SMTP delivery failed:", emailErr instanceof Error ? emailErr.message : emailErr);
+    console.error("[PARDAIS PARTY EMAIL] Resend delivery failed:", emailErr instanceof Error ? emailErr.message : emailErr);
     return res.status(502).json({
       success: false,
       error: "Verification email could not be delivered. Please try again."
