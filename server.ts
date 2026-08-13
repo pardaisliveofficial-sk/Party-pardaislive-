@@ -3,7 +3,7 @@ import path from "path";
 import dotenv from "dotenv";
 import fs from "fs";
 import sharp from "sharp";
-import { S3Client, PutObjectCommand, GetObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
+import { S3Client, PutObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
 import multer from "multer";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
@@ -5605,85 +5605,47 @@ Do not wrap your answer in quotes or add metadata. Speak as the host directly.`;
 
 
 // Public playback proxy for R2 reels.
-// This avoids relying on the R2 custom domain being publicly readable.
-// HTML5 <video> needs HTTP Range support, so the endpoint streams the exact
-// requested object and preserves byte ranges.
-app.get("/api/v1/reels/media/*", async (req: any, res: any) => {
+// Uses the same R2 object URL for every viewer and supports HTTP Range requests.
+app.use("/api/v1/reels/media", async (req: any, res: any) => {
   try {
-    const rawPath = req.params[0] || "";
+    const rawPath = String(req.path || "").replace(/^\/+/, "");
     const objectKey = decodeURIComponent(rawPath).replace(/^\/+/, "");
 
-    if (!objectKey || !objectKey.startsWith("reels/")) {
+    if (!objectKey.startsWith("reels/")) {
       return res.status(400).json({ error: "Invalid reel media key" });
     }
 
     const client = getS3Client();
     const bucketName = process.env.R2_BUCKET_NAME || "pardaisparty-reels";
-    const head = await client.send(new HeadObjectCommand({
-      Bucket: bucketName,
-      Key: objectKey
-    }));
-
-    const totalSize = Number(head.ContentLength || 0);
-    const contentType = head.ContentType || "video/mp4";
     const range = req.headers.range as string | undefined;
+
+    // Get the object. Range is forwarded directly to R2 so mobile browsers can seek.
+    const commandInput: any = {
+      Bucket: bucketName,
+      Key: objectKey,
+    };
+    if (range) commandInput.Range = range;
+
+    const object: any = await client.send(new GetObjectCommand(commandInput));
+    const body: any = object.Body;
+    if (!body) return res.status(404).json({ error: "Reel media unavailable" });
+
+    const contentLength = Number(object.ContentLength || 0);
+    const contentRange = object.ContentRange;
+    const contentType = object.ContentType || "video/mp4";
 
     res.setHeader("Accept-Ranges", "bytes");
     res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
     res.setHeader("Content-Type", contentType);
+    if (contentLength > 0) res.setHeader("Content-Length", String(contentLength));
+    if (contentRange) res.setHeader("Content-Range", contentRange);
 
-    if (!range) {
-      res.setHeader("Content-Length", String(totalSize));
-      const object = await client.send(new GetObjectCommand({
-        Bucket: bucketName,
-        Key: objectKey
-      }));
-      const body: any = object.Body;
-      if (!body) return res.status(404).json({ error: "Media body not found" });
-      body.pipe(res);
-      return;
-    }
-
-    const match = /^bytes=(\d*)-(\d*)$/i.exec(range);
-    if (!match) {
-      res.setHeader("Content-Range", `bytes */${totalSize}`);
-      return res.status(416).end();
-    }
-
-    let start = match[1] ? Number(match[1]) : Math.max(totalSize - Number(match[2] || 1), 0);
-    let end = match[2] ? Number(match[2]) : totalSize - 1;
-
-    if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || start >= totalSize) {
-      res.setHeader("Content-Range", `bytes */${totalSize}`);
-      return res.status(416).end();
-    }
-
-    end = Math.min(end, totalSize - 1);
-    if (end < start) {
-      res.setHeader("Content-Range", `bytes */${totalSize}`);
-      return res.status(416).end();
-    }
-
-    const chunkSize = end - start + 1;
-    res.status(206);
-    res.setHeader("Content-Range", `bytes ${start}-${end}/${totalSize}`);
-    res.setHeader("Content-Length", String(chunkSize));
-
-    const object = await client.send(new GetObjectCommand({
-      Bucket: bucketName,
-      Key: objectKey,
-      Range: `bytes=${start}-${end}`
-    }));
-    const body: any = object.Body;
-    if (!body) return res.status(404).end();
+    if (range && contentRange) res.status(206);
     body.pipe(res);
   } catch (error: any) {
     console.error("[PARDAIS-PARTY R2 MEDIA] Playback proxy failed:", error?.message || error);
-    if (!res.headersSent) {
-      res.status(404).json({ error: "Reel media unavailable" });
-    } else {
-      res.end();
-    }
+    if (!res.headersSent) res.status(404).json({ error: "Reel media unavailable" });
+    else res.end();
   }
 });
 
