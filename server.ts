@@ -785,6 +785,26 @@ app.post("/api/v1/auth/google-login", (req, res) => {
   });
 });
 
+// Account status check — does NOT send an email.
+app.post("/api/v1/auth/email-status", (req, res) => {
+  const email = typeof req.body?.email === "string" ? req.body.email.toLowerCase().trim() : "";
+  if (!email || !email.includes("@")) return res.status(400).json({ error: "A valid email address is required." });
+  const user = findEmailUser(email);
+  return res.json({
+    success: true,
+    exists: Boolean(user),
+    needsPassword: Boolean(user && !user.passwordHash),
+    user: user ? {
+      uid: user.uid,
+      email: user.email,
+      username: user.username,
+      fullName: user.fullName,
+      uniqueId: user.uniqueId,
+      avatar: user.avatar
+    } : null
+  });
+});
+
 // 2. Dispatch Email Verification OTP Code
 // Email delivery uses the Resend HTTPS API instead of SMTP. This avoids
 // Railway's outbound SMTP port restrictions and keeps the OTP logic unchanged.
@@ -958,8 +978,9 @@ app.post("/api/v1/auth/verify-email-otp", (req, res) => {
   const token = createSession(user);
   res.json({
     success: true,
-    message: isNewUser ? "Email verified. Please complete your profile setup." : "Authenticated successfully.",
-    isNewUser: isNewUser || !user.fullName,
+    message: isNewUser ? "Email verified. Please complete your profile setup." : "Email verified successfully.",
+    isNewUser,
+    needsPassword: !Boolean(user.passwordHash),
     token,
     user
   });
@@ -1001,7 +1022,14 @@ app.post("/api/v1/auth/password-login", (req, res) => {
   const token = createSession(user);
   saveDatabase();
 
-  res.json({ success: true, message: "Logged in successfully.", token, isNewUser: false, user });
+  res.json({
+    success: true,
+    message: "Logged in successfully.",
+    token,
+    isNewUser: false,
+    needsPassword: false,
+    user
+  });
 });
 
 // Forgot password: send OTP only when the user explicitly requests recovery.
@@ -1081,6 +1109,8 @@ app.post("/api/v1/auth/setup-profile", authenticateUser, (req: any, res) => {
   }
 
   ensureStableEmailIdentity(req.user, req.user.email || "");
+  req.user.profileCompleted = Boolean(req.user.fullName && req.user.username);
+  req.user.profileUpdatedAt = new Date().toISOString();
   persistUser(req.user);
   saveDatabase();
 
