@@ -540,15 +540,12 @@ const ReelVideoPlayer: React.FC<ReelVideoPlayerProps> = ({
             const errMsg = (e.currentTarget as HTMLVideoElement)?.error?.message || "Source or format unavailable";
             console.warn(`[PARDAIS-PARTY PLAYER] Native HTML5 video error note (code: ${errCode}, msg: "${errMsg}") on "${activeUrl}"`);
             
-            const backends = [
-              "https://vjs.zencdn.net/v/oceans.mp4",
-              "https://media.w3.org/2010/05/sintel/trailer_hd.mp4",
-              "https://www.w3schools.com/html/mov_bbb.mp4"
-            ];
+            // Never replace a user's uploaded reel with a demo/system video.
+            // Retry the exact saved media URL only.
 
-            if (retryCount < 3) {
+            if (retryCount < 2) {
               const nextRetry = retryCount + 1;
-              console.warn(`[PARDAIS-PARTY PLAYER] Playback failed. Attempting retry ${nextRetry}/3 for: "${activeUrl}"`);
+              console.warn(`[PARDAIS-PARTY PLAYER] Playback failed. Attempting retry ${nextRetry}/2 for: "${activeUrl}"`);
               setRetryCount(nextRetry);
               setHasError(false);
               setIsLoading(true);
@@ -563,7 +560,7 @@ const ReelVideoPlayer: React.FC<ReelVideoPlayerProps> = ({
                 }
               }, 500);
             } else {
-              console.error("[PARDAIS-PARTY PLAYER] Video failed to play after 3 retries. Showing error overlay.");
+              console.error("[PARDAIS-PARTY PLAYER] Video failed to play after 2 retries. Showing error overlay.");
               setHasError(true);
               setIsLoading(false);
             }

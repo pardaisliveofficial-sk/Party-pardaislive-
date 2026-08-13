@@ -182,18 +182,16 @@ const ReelVideoPlayer: React.FC<ReelVideoPlayerProps> = ({
             const errMsg = (e.currentTarget as HTMLVideoElement)?.error?.message || "Source or format unavailable";
             console.warn(`[PARDAIS-PARTY PLAYER] Native HTML5 video error note (code: ${errCode}, msg: "${errMsg}") on "${activeUrl}"`);
             
-            const backends = [
-              "https://vjs.zencdn.net/v/oceans.mp4",
-              "https://media.w3.org/2010/05/sintel/trailer_hd.mp4",
-              "https://www.w3schools.com/html/mov_bbb.mp4"
-            ];
-
-            if (retryCount < 3) {
+            // IMPORTANT: Never replace a user's uploaded reel with a demo/system video.
+            // The previous implementation silently switched to public sample MP4s when
+            // the real URL failed, which made every uploaded reel appear as the same
+            // system video. Retry the exact uploaded URL only, then show the real error.
+            if (retryCount < 2) {
               const nextRetry = retryCount + 1;
               setRetryCount(nextRetry);
               setHasError(false);
               setIsLoading(true);
-              
+
               setTimeout(() => {
                 const v = videoRef.current;
                 if (v) {
@@ -204,24 +202,8 @@ const ReelVideoPlayer: React.FC<ReelVideoPlayerProps> = ({
                 }
               }, 500);
             } else {
-              const currentFallbackIndex = backends.indexOf(activeUrl);
-              let nextUrl = "";
-
-              if (currentFallbackIndex === -1) {
-                nextUrl = backends[0];
-              } else if (currentFallbackIndex < backends.length - 1) {
-                nextUrl = backends[currentFallbackIndex + 1];
-              }
-
-              if (nextUrl) {
-                setRetryCount(0);
-                setActiveUrl(nextUrl);
-                setHasError(false);
-                setIsLoading(true);
-              } else {
-                setHasError(true);
-                setIsLoading(false);
-              }
+              setHasError(true);
+              setIsLoading(false);
             }
           }}
         />
