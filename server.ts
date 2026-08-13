@@ -5875,9 +5875,8 @@ app.post("/api/v1/reels/upload-video", s3MulterUpload.single("video"), async (re
       // Return our API playback proxy instead of relying on the R2 custom
       // domain being publicly readable. The proxy supports HTTP Range requests
       // required by mobile/browser video playback.
-      const apiBaseUrl = process.env.API_PUBLIC_URL || "https://api.pardaisparty.soulverseapps.com";
-      const cleanApiBase = apiBaseUrl.endsWith("/") ? apiBaseUrl.slice(0, -1) : apiBaseUrl;
-      finalVideoUrl = `${cleanApiBase}/api/v1/reels/media/${objectKey.split("/").map(encodeURIComponent).join("/")}`;
+      const requestBaseUrl = `${req.protocol || "https"}://${req.get("host")}`;
+      finalVideoUrl = `${requestBaseUrl}/api/v1/reels/media/${objectKey.split("/").map(encodeURIComponent).join("/")}`;
 
       console.log(`[PARDAIS-PARTY R2] [UPLOAD-VIDEO] API PLAYBACK LINK GENERATED: "${finalVideoUrl}"`);
     } catch (r2Error: any) {

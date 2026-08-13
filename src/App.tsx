@@ -304,18 +304,21 @@ const normalizeReelUrl = (url: string | undefined | null): string => {
     return resolveApiUrl(cleanPath);
   }
 
-  // Parse reels/ key from the URL and convert to public custom R2 delivery domain
+  // Route all R2 reel objects through the API playback proxy. This endpoint
+  // supports HTTP Range requests so the exact same stored file plays in both
+  // Creator Hub and the public Reels feed.
   const reelsIndex = url.indexOf("reels/");
   if (reelsIndex !== -1 && !url.includes("/uploads/")) {
-    const objectKey = url.substring(reelsIndex);
-    return `https://media.pardaisparty.soulverseapps.com/${objectKey}`;
+    const objectKey = url.substring(reelsIndex).split("?")[0].replace(/^\/+/, "");
+    return resolveApiUrl(`/api/v1/reels/media/${objectKey.split("/").map(encodeURIComponent).join("/")}`);
   }
 
-  // If S3 or Cloudflare old endpoint
+  // Old S3/R2 URLs are also converted to the same playback proxy.
   if (url.includes("cloudflarestorage.com") || url.includes("amazonaws.com") || url.includes("pardaisparty-reels")) {
     const parts = url.split("pardaisparty-reels/");
     if (parts.length > 1 && parts[1]) {
-      return `https://media.pardaisparty.soulverseapps.com/${parts[1]}`;
+      const objectKey = parts[1].split("?")[0].replace(/^\/+/, "");
+      return resolveApiUrl(`/api/v1/reels/media/${objectKey.split("/").map(encodeURIComponent).join("/")}`);
     }
   }
 
@@ -15388,22 +15391,38 @@ export default function App() {
                                 </button>
                               </div>
 
-                              {/* Simulated Video Canvas */}
-                              <div className={`flex-1 relative ${selectedProfileReel.videoBg} flex items-center justify-center overflow-hidden`}>
-                                <div className="absolute inset-0 bg-radial-gradient from-transparent to-black/80 pointer-events-none"></div>
-                                
-                                <div className="text-center space-y-3 z-10 px-4">
-                                  <Film className="w-12 h-12 text-white/30 mx-auto animate-bounce" />
-                                  <span className="text-[8px] bg-gradient-to-r from-[#ff007f] to-purple-600 text-white px-2 py-0.5 rounded-full font-mono font-black tracking-widest uppercase">
-                                    {selectedProfileReel.tab} CLIP ACTIVE
+                              {/* REAL uploaded video player — exact same file used by public Reels */
+                              <div className="flex-1 relative bg-black flex items-center justify-center overflow-hidden">
+                                {selectedProfileReel.videoUrl ? (
+                                  <video
+                                    key={selectedProfileReel.id}
+                                    src={normalizeReelUrl(selectedProfileReel.videoUrl)}
+                                    className="w-full h-full object-contain bg-black"
+                                    controls
+                                    playsInline
+                                    preload="metadata"
+                                    onError={(event) => {
+                                      console.error("[PARDAIS CREATOR HUB] Uploaded reel playback failed:", {
+                                        reelId: selectedProfileReel.id,
+                                        videoUrl: event.currentTarget.src
+                                      });
+                                    }}
+                                  />
+                                ) : (
+                                  <div className="text-center px-4">
+                                    <Film className="w-12 h-12 text-white/30 mx-auto" />
+                                    <p className="text-sm font-black text-white mt-3">Video unavailable</p>
+                                  </div>
+                                )}
+
+                                <div className="absolute top-3 left-3 z-10 pointer-events-none">
+                                  <span className="text-[8px] bg-black/70 text-white px-2 py-1 rounded-full font-mono font-black tracking-widest uppercase border border-white/10">
+                                    ORIGINAL VIDEO
                                   </span>
-                                  <p className="text-xs font-black drop-shadow">{selectedProfileReel.title}</p>
-                                  <span className="text-[9px] text-white/60 font-mono block">🎵 {selectedProfileReel.song}</span>
                                 </div>
 
-                                {/* Security padlock for private videos inside the preview */}
                                 {selectedProfileReel.isPrivate && (
-                                  <div className="absolute top-4 right-4 bg-red-600/95 text-white font-black text-[8px] px-2.5 py-1 rounded-full border border-red-500 flex items-center space-x-1.5 shadow-lg animate-pulse">
+                                  <div className="absolute top-4 right-4 bg-red-600/95 text-white font-black text-[8px] px-2.5 py-1 rounded-full border border-red-500 flex items-center space-x-1.5 shadow-lg animate-pulse z-20">
                                     <Lock className="w-3 h-3" />
                                     <span>LOCKED LEDGER (HOST ONLY)</span>
                                   </div>
