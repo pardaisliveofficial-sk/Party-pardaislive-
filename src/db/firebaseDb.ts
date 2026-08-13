@@ -319,6 +319,20 @@ export function startFirestoreSynchronization() {
           });
           dbDataCache.gifts = Array.from(giftMap.values());
         }
+      } else if (colName === "reels") {
+        // Never wipe the production reel cache when Firestore temporarily returns
+        // an empty/stale snapshot. Merge by stable reel ID so refresh/reconnect
+        // cannot make uploaded reels disappear.
+        if (items.length > 0) {
+          const reelMap = new Map<string, any>();
+          (dbDataCache.reels || []).forEach((r: any) => {
+            if (r && r.id) reelMap.set(String(r.id), r);
+          });
+          items.forEach((r: any) => {
+            if (r && r.id) reelMap.set(String(r.id), r);
+          });
+          dbDataCache.reels = Array.from(reelMap.values());
+        }
       } else {
         dbDataCache[colName] = items;
       }

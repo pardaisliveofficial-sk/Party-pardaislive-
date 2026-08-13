@@ -115,7 +115,6 @@ import {
   initializeFirestore, 
   getFirestore,
   collection, 
-  addDoc, 
   getDocs, 
   onSnapshot, 
   query, 
@@ -1031,7 +1030,6 @@ export default function App() {
   const [uploadedVideoName, setUploadedVideoName] = useState<string>("");
   const [uploadedVideoSize, setUploadedVideoSize] = useState<string>("");
   const [uploadedVideoFileUrl, setUploadedVideoFileUrl] = useState<string | null>(null);
-  const [recordedVideoPreset, setRecordedVideoPreset] = useState<string | null>(null);
   const [reelPrivacy, setReelPrivacy] = useState<"public" | "private">("public");
 
   // Camera State & Handlers for Avatar Profile Photo Capture
@@ -1219,7 +1217,7 @@ export default function App() {
         const myUploaded = (myReels || []).filter(r => r && r.privacy !== "private").map(r => ({
           id: r.id,
           title: r.caption ? (r.caption.split(" ").slice(0, 4).join(" ") + "...") : "My Clip 🎬",
-          views: "1.2K",
+          views: r.views ?? 0,
           likes: r.likes,
           liked: r.liked,
           videoBg: r.videoBg,
@@ -1645,278 +1643,7 @@ export default function App() {
     }, 80); // 100% in 4 seconds
   };
 
-  const [reels, setReels] = useState(() => [
-    {
-      id: "r1",
-      creator: "Arooj_Queen 🎵",
-      avatar: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=150&h=150&q=80",
-      caption: "Live acoustic sneak peek! 🎸 Watch me perform Urdu ghazals tonight at 8 PM PST! #PardaisLive #Acoustic #Singing",
-      song: "Original Audio - Arooj Queen",
-      videoBg: "bg-gradient-to-tr from-[#1a0f30] via-[#0b0c10] to-[#ff007f]",
-      videoUrl: "https://vjs.zencdn.net/v/oceans.mp4",
-      likes: 4820,
-      commentsCount: 2,
-      liked: false,
-      privacy: "public",
-      location: "Lahore, Pakistan",
-      saves: 142,
-      saved: false,
-      shares: 98,
-      downloads: 41,
-      isFollowed: true,
-      comments: [
-        {
-          id: "c1_1",
-          userName: "Prince_Shah_Pardais",
-          userAvatar: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80",
-          text: "Subhanallah! What a beautiful classical touch! Best wishes from Lahore! 🌹👑",
-          timestamp: "2 mins ago",
-          likes: 18,
-          likedByUser: false,
-          replies: [
-            {
-              id: "r1_1_1",
-              userName: "Arooj_Queen 🎵",
-              userAvatar: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=150&h=150&q=80",
-              text: "Boht shukriya Prince bhai! Aapki support hi hmare liye sb kuch ha! ❤️",
-              timestamp: "1 min ago",
-              likes: 5,
-              likedByUser: false
-            }
-          ]
-        },
-        {
-          id: "c1_2",
-          userName: "Malik_Saeed",
-          userAvatar: "https://images.unsplash.com/photo-1570295999919-56ceb5ecca61?auto=format&fit=crop&w=150&h=150&q=80",
-          text: "Dil khush kr dia, outstanding ghazal recording! 👌",
-          timestamp: "1 hour ago",
-          likes: 12,
-          likedByUser: false,
-          replies: []
-        }
-      ]
-    },
-    {
-      id: "r2",
-      creator: "Zain_Killer 🔥",
-      avatar: "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=150&h=150&q=80",
-      caption: "Insane PK Battle finish! Thanks to all Pardais Kings for supporting! ⚡👑 #PKBattle #Ecosystem #Gaming",
-      song: "Winner Anthem - Zain_Killer",
-      videoBg: "bg-gradient-to-tr from-[#051622] via-[#12121a] to-[#7b2cbf]",
-      videoUrl: "https://media.w3.org/2010/05/sintel/trailer_hd.mp4",
-      likes: 9210,
-      commentsCount: 2,
-      liked: false,
-      privacy: "public",
-      location: "Karachi, Sindh",
-      saves: 340,
-      saved: false,
-      shares: 115,
-      downloads: 83,
-      isFollowed: true,
-      comments: [
-        {
-          id: "c2_1",
-          userName: "Aisha_Khan",
-          userAvatar: "https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=150&h=150&q=80",
-          text: "OMG what a legendary PK clutch finish! Zain is on fire today! 🔥⚔️",
-          timestamp: "10 mins ago",
-          likes: 45,
-          likedByUser: false,
-          replies: [
-            {
-              id: "r2_1_1",
-              userName: "Zain_Killer 🔥",
-              userAvatar: "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=150&h=150&q=80",
-              text: "Thanks sister! Last second crown gift saved the day! 🙌",
-              timestamp: "8 mins ago",
-              likes: 15,
-              likedByUser: false
-            }
-          ]
-        },
-        {
-          id: "c2_2",
-          userName: "Ali_Raza_99",
-          userAvatar: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=150&h=150&q=80",
-          text: "Opponent left the room immediately haha! King of Pardais Party! 👑👑",
-          timestamp: "4 hours ago",
-          likes: 22,
-          likedByUser: false,
-          replies: []
-        }
-      ]
-    },
-    {
-      id: "r3",
-      creator: "Mehak_Lounge 🎙️",
-      avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&h=150&q=80",
-      caption: "Late Night thoughts ☕ Cozy poetry recitation in Urdu. Join the 10-seat lounge now! #Cozy #Poetry #AudioRoom",
-      song: "Soft Piano background - Mehak Lounge",
-      videoBg: "bg-gradient-to-tr from-[#0b0c10] via-[#1e112a] to-[#00f5ff]",
-      videoUrl: "https://www.w3schools.com/html/mov_bbb.mp4",
-      likes: 15400,
-      commentsCount: 2,
-      liked: false,
-      privacy: "public",
-      location: "Islamabad",
-      saves: 512,
-      saved: false,
-      shares: 240,
-      downloads: 122,
-      isFollowed: false,
-      comments: [
-        {
-          id: "c3_1",
-          userName: "Nabeel_Ch",
-          userAvatar: "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=150&h=150&q=80",
-          text: "Urdu poetry has another level of peace. Soft piano matches the voice so well! ☕✨",
-          timestamp: "30 mins ago",
-          likes: 31,
-          likedByUser: false,
-          replies: []
-        },
-        {
-          id: "c3_2",
-          userName: "Sana_Pardais",
-          userAvatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&h=150&q=80",
-          text: "Boht behtreen intekhab-e-shayeri! Mehak lounge is the best place to chill late night.",
-          timestamp: "2 hours ago",
-          likes: 19,
-          likedByUser: false,
-          replies: []
-        }
-      ]
-    },
-    {
-      id: "r4",
-      creator: "Alpha_Queen 👑",
-      avatar: "https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=150&h=150&q=80",
-      caption: "Dance performance preview! 💃 Catch my exclusive solo video livestream! #Dance #Vibe #Broadcasting",
-      song: "Party Remix - Alpha_Queen",
-      videoBg: "bg-gradient-to-tr from-[#2a1124] via-[#12121a] to-[#ff007f]",
-      videoUrl: "https://www.w3schools.com/html/movie.mp4",
-      likes: 3120,
-      commentsCount: 1,
-      liked: false,
-      privacy: "public",
-      location: "Pardais Party Studio",
-      saves: 95,
-      saved: false,
-      shares: 54,
-      downloads: 18,
-      isFollowed: false,
-      comments: [
-        {
-          id: "c4_1",
-          userName: "PK_Baaz",
-          userAvatar: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=150&h=150&q=80",
-          text: "Brilliant expressions and perfect beat sync! 💃💯 Keep rising!",
-          timestamp: "5 mins ago",
-          likes: 14,
-          likedByUser: false,
-          replies: []
-        }
-      ]
-    },
-    {
-      id: "r5",
-      creator: "Tarkan_Lover 🇹🇷",
-      avatar: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80",
-      caption: "Merhaba! Beautiful evening in Istanbul 🕌 Singing live for my Pakistan fans! #Explore #Istanbul #Turkish #GlobalPardais",
-      song: "Turkish Pop Classic - Tarkan Remix",
-      videoBg: "bg-gradient-to-tr from-[#3c0c1b] via-[#0b0c10] to-[#e63946]",
-      videoUrl: "https://vjs.zencdn.net/v/oceans.mp4",
-      likes: 12450,
-      commentsCount: 1,
-      liked: false,
-      privacy: "public",
-      location: "Istanbul, Turkey",
-      saves: 382,
-      saved: false,
-      shares: 112,
-      downloads: 87,
-      isFollowed: false,
-      isExplore: true,
-      comments: [
-        {
-          id: "c5_1",
-          userName: "Pak_Turk_Dost",
-          userAvatar: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=150&h=150&q=80",
-          text: "Mashallah love from Lahore to Istanbul! Beautiful city and nice singing! 🇵🇰🇹🇷",
-          timestamp: "12 mins ago",
-          likes: 54,
-          likedByUser: false,
-          replies: []
-        }
-      ]
-    },
-    {
-      id: "r6",
-      creator: "Sarah_Dubai 🇦🇪",
-      avatar: "https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=150&h=150&q=80",
-      caption: "Amazing skyscraper view in Dubai Marina! Streaming live for the Pardais global lounge! 🌇✨ #Dubai #Explore #Luxury #Sunset #Marina",
-      song: "Desert Sunset Beats - Dubai Chill",
-      videoBg: "bg-gradient-to-tr from-[#1b1c3a] via-[#12121a] to-[#ffb703]",
-      videoUrl: "https://media.w3.org/2010/05/sintel/trailer_hd.mp4",
-      likes: 8320,
-      commentsCount: 1,
-      liked: false,
-      privacy: "public",
-      location: "Dubai Marina, UAE",
-      saves: 198,
-      saved: false,
-      shares: 64,
-      downloads: 23,
-      isFollowed: false,
-      isExplore: true,
-      comments: [
-        {
-          id: "c6_1",
-          userName: "Karachi_King",
-          userAvatar: "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=150&h=150&q=80",
-          text: "Dubai views are out of this world! Safe trip and stream well! 🙌🏙️",
-          timestamp: "45 mins ago",
-          likes: 29,
-          likedByUser: false,
-          replies: []
-        }
-      ]
-    },
-    {
-      id: "r7",
-      creator: "Youssef_Oud 🇪🇬",
-      avatar: "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=150&h=150&q=80",
-      caption: "Arabic Oud acoustic performance live from Cairo! 🎵 Mesmerizing ancient strings. #Arabic #Oud #Classical #Egypt #GlobalCulture",
-      song: "Arabic Oud Classical Solo - Youssef",
-      videoBg: "bg-gradient-to-tr from-[#111] via-[#2a1b15] to-[#f4a261]",
-      videoUrl: "https://www.w3schools.com/html/mov_bbb.mp4",
-      likes: 6710,
-      commentsCount: 1,
-      liked: false,
-      privacy: "public",
-      location: "Cairo, Egypt",
-      saves: 145,
-      saved: false,
-      shares: 31,
-      downloads: 14,
-      isFollowed: false,
-      isExplore: true,
-      comments: [
-        {
-          id: "c7_1",
-          userName: "Sufi_Saeed",
-          userAvatar: "https://images.unsplash.com/photo-1570295999919-56ceb5ecca61?auto=format&fit=crop&w=150&h=150&q=80",
-          text: "Oud has direct contact with the soul. Subhanallah brother from Cairo! 🎻🇪🇬🇵🇰",
-          timestamp: "1 hour ago",
-          likes: 18,
-          likedByUser: false,
-          replies: []
-        }
-      ]
-    }
-  ]);
+  const [reels, setReels] = useState<any[]>([]);
 
   // Dynamically sync profileReels from real user uploads, liked, saved items & stories!
   useEffect(() => {
@@ -1936,7 +1663,7 @@ export default function App() {
       .map((r: any) => ({
         id: r.id,
         title: r.caption ? (r.caption.split(" ").slice(0, 4).join(" ") + "...") : (r.title || "My Clip 🎬"),
-        views: r.views || "1.2K",
+        views: r.views ?? 0,
         likes: r.likes || 0,
         liked: !!r.liked,
         saved: !!r.saved,
@@ -1984,8 +1711,8 @@ export default function App() {
       .map((r: any) => ({
         id: r.id,
         title: r.caption ? (r.caption.split(" ").slice(0, 4).join(" ") + "...") : (r.title || "Liked Clip ❤️"),
-        views: r.views || "2.5K",
-        likes: r.likes || 1,
+        views: r.views ?? 0,
+        likes: r.likes ?? 0,
         liked: true,
         saved: !!r.saved,
         videoBg: r.videoBg || "bg-gradient-to-tr from-[#ff0055] via-black to-[#7b2cbf]",
@@ -2025,7 +1752,7 @@ export default function App() {
       .map((r: any) => ({
         id: r.id,
         title: r.caption ? (r.caption.split(" ").slice(0, 4).join(" ") + "...") : (r.title || "Saved Clip 🔖"),
-        views: r.views || "5K",
+        views: r.views ?? 0,
         likes: r.likes || 0,
         liked: !!r.liked,
         saved: true,
@@ -4658,8 +4385,7 @@ export default function App() {
         setUploadedVideoFile(new File([blob], `Pardais_Reel_${Date.now()}.mp4`, { type: "video/mp4" }));
         setUploadedVideoName(`Pardais_Reel_${Date.now().toString().slice(-4)}.mp4`);
         setUploadedVideoSize(`${(blob.size / (1024 * 1024)).toFixed(1)} MB`);
-        setRecordedVideoPreset(null);
-        setUploadReelStep("details");
+          setUploadReelStep("details");
       };
       
       mediaRecorderRef.current = recorder;
@@ -4704,14 +4430,10 @@ export default function App() {
       // 1. Prepare video for publishing
       console.log("[PARDAIS-PARTY FRONTEND] Preparing video for storage sync...");
 
-      // If preset selected but no actual file, use preset URL directly for instant publish
+      // Production rule: a reel must always come from a real gallery file or camera recording.
+      // Never substitute demo/preset videos.
       if (!fileToUpload) {
-        const presets = {
-          singing: "https://assets.mixkit.co/videos/preview/mixkit-girl-taking-selfies-with-her-smart-phone-41584-large.mp4",
-          battle: "https://assets.mixkit.co/videos/preview/mixkit-young-man-dancing-to-hip-hop-music-41908-large.mp4",
-          gallery_preset: "https://assets.mixkit.co/videos/preview/mixkit-excited-girl-vlogging-with-phone-41582-large.mp4",
-        };
-        finalVideoUrl = presets[recordedVideoPreset as keyof typeof presets] || presets.singing;
+        throw new Error("Please select a real video from Gallery or record a video with Camera before publishing.");
       }
 
       if (fileToUpload) {
@@ -4787,6 +4509,7 @@ export default function App() {
         objectKey: finalObjectKey,
         publicUrl: responsePublicUrl ? normalizeReelUrl(responsePublicUrl) : finalNormalizedUrl,
         mediaUrl: responseMediaUrl ? normalizeReelUrl(responseMediaUrl) : finalNormalizedUrl,
+        views: 0,
         likes: 0,
         commentsCount: 0,
         liked: false,
@@ -4802,21 +4525,29 @@ export default function App() {
         createdAt: new Date().toISOString()
       };
       
-      let reelId = `reel-${Math.floor(100000 + Math.random() * 900000)}`;
-      try {
-        const docPromise = addDoc(collection(db, "reels"), reelData);
-        const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Firestore write timeout")), 2000));
-        const docRef = await Promise.race([docPromise, timeoutPromise]) as any;
-        if (docRef && docRef.id) reelId = docRef.id;
-      } catch (err: any) {
-        console.warn("Firestore write skipped or timed out. Saved reel locally.", err);
+      // Persist exactly once through the production API.
+      // The backend creates the stable reel ID and synchronizes the same record to Firestore.
+      // Do NOT also call Firestore directly here; that previously created duplicate reels.
+      const createReelResponse = await fetch(resolveApiUrl("/api/v1/reels"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(reelData)
+      });
+      if (!createReelResponse.ok) {
+        const errorBody = await createReelResponse.json().catch(() => ({}));
+        throw new Error(errorBody?.error || `Failed to save reel metadata (HTTP ${createReelResponse.status})`);
+      }
+      const persistedReel = await createReelResponse.json();
+      const reelId = persistedReel?.id;
+      if (!reelId) {
+        throw new Error("Reel was uploaded but the server did not return a stable reel ID.");
       }
       
       // Save locally to profile reels
       const newProfileReel = {
         id: reelId,
         title: newReelCaption.trim() ? (newReelCaption.trim().split(" ").slice(0, 4).join(" ") + "...") : "My New Clip 🎬",
-        views: reelPrivacy === "private" ? "Host Private" : "1.2K",
+        views: reelPrivacy === "private" ? 0 : 0,
         likes: 0,
         liked: false,
         videoBg: newReelVideoBg,
@@ -4856,6 +4587,7 @@ export default function App() {
           videoBg: reelData.videoBg,
           videoUrl: finalNormalizedUrl,
           objectKey: reelData.objectKey,
+          views: 0,
           likes: 0,
           commentsCount: 0,
           liked: false,
@@ -4881,12 +4613,6 @@ export default function App() {
           });
         });
 
-        // Sync new reel to server DB so polling doesn't wipe it out
-        fetch("/api/v1/reels", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(newGlobalReel)
-        }).catch(err => console.error("Error posting reel to server backend:", err));
       }
 
       // Update user state so profile/ID reflects uploaded reel
@@ -8420,7 +8146,6 @@ export default function App() {
       setUploadedVideoSize((file.size / (1024 * 1024)).toFixed(1) + " MB");
       setUploadedVideoFileUrl(URL.createObjectURL(file));
       setUploadedVideoFile(file);
-      setRecordedVideoPreset(null);
       // Pre-fill fields from the file name
       const baseName = file.name.split('.').slice(0, -1).join('.');
       setNewReelSong(baseName || "My Gallery Video");
@@ -24690,42 +24415,6 @@ export default function App() {
                                 </div>
                               </div>
 
-                              {/* Simulation Options presets */}
-                              <div className="space-y-1">
-                                <label className="text-[8px] uppercase tracking-wider text-gray-400 block font-bold">Or Select Pre-Recorded Clip</label>
-                                <div className="grid grid-cols-2 gap-1.5">
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      setReelRecordingSeconds(15);
-                                      setUploadedVideoName("Host_Singing_Voice_Ghazal.mp4");
-                                      setUploadedVideoSize("8.4 MB");
-                                      setRecordedVideoPreset("singing");
-                                      setNewReelSong("Surili Awaaz - Syed Prince");
-                                      setUploadReelStep("details");
-                                      alert("Pre-recorded ghazal clip loaded!");
-                                    }}
-                                    className="p-1.5 bg-[#12121a] hover:bg-pink-500/10 border border-[#303040] rounded text-[8.5px] text-gray-300 font-medium text-left truncate"
-                                  >
-                                    🎤 Ghazal Rec (15s)
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      setReelRecordingSeconds(28);
-                                      setUploadedVideoName("PK_Crown_Battle_Pardais.mp4");
-                                      setUploadedVideoSize("14.2 MB");
-                                      setRecordedVideoPreset("battle");
-                                      setNewReelSong("PK Crown Battle Beat - Remix");
-                                      setUploadReelStep("details");
-                                      alert("Pre-recorded Battle Peak clip loaded!");
-                                    }}
-                                    className="p-1.5 bg-[#12121a] hover:bg-pink-500/10 border border-[#303040] rounded text-[8.5px] text-gray-300 font-medium text-left truncate"
-                                  >
-                                    ⚔️ Battle Highlight (28s)
-                                  </button>
-                                </div>
-                              </div>
                             </div>
                           )}
 
@@ -24744,7 +24433,7 @@ export default function App() {
                                 </button>
                                 <div>
                                   <h4 className="text-xs font-black text-pink-500 uppercase tracking-widest font-mono">Upload from Gallery</h4>
-                                  <p className="text-[8px] text-gray-400">Select files from storage or mock archives</p>
+                                  <p className="text-[8px] text-gray-400">Select a real video file from your device</p>
                                 </div>
                               </div>
 
@@ -24767,40 +24456,6 @@ export default function App() {
                                 </label>
                               </div>
 
-                              {/* Quick simulated Gallery Album Highlights */}
-                              <div className="space-y-2">
-                                <p className="text-[8.5px] font-bold text-gray-400 uppercase tracking-wider font-mono">📂 Gallery Fast Album Select</p>
-                                
-                                <div className="space-y-1.5 max-h-[160px] overflow-y-auto pr-1">
-                                  {[
-                                    { title: "Lahore_PK_Tournament_Win.mp4", size: "12.4 MB", duration: "35s", song: "Dil Dil Pakistan Remix" },
-                                    { title: "Sufi_Ghazal_Jam_Session.mp4", size: "18.1 MB", duration: "50s", song: "Karachi Sufi Classical" },
-                                    { title: "Wedding_Dance_Performance.mp4", size: "15.2 MB", duration: "42s", song: "Mehndi Mast Beats" },
-                                    { title: "My_Special_Thankyou_Reel.mp4", size: "6.8 MB", duration: "18s", song: "Pardais Instrumental Theme" }
-                                  ].map((clip) => (
-                                    <button
-                                      key={clip.title}
-                                      type="button"
-                                      onClick={() => {
-                                        setUploadedVideoName(clip.title);
-                                        setUploadedVideoSize(clip.size);
-                                        setUploadedVideoFileUrl(null);
-                                        setRecordedVideoPreset("gallery_preset");
-                                        setNewReelSong(clip.song);
-                                        setUploadReelStep("details");
-                                        alert(`Simulated selection: ${clip.title} loaded!`);
-                                      }}
-                                      className="w-full bg-[#12121a] hover:bg-cyan-500/10 border border-[#303040] hover:border-cyan-500/40 p-2 rounded-lg text-left transition-colors flex justify-between items-center"
-                                    >
-                                      <div className="min-w-0 flex-1">
-                                        <p className="text-[9px] font-bold text-gray-200 truncate">{clip.title}</p>
-                                        <p className="text-[7.5px] text-gray-400 mt-0.5">Duration: {clip.duration} • Sound: {clip.song}</p>
-                                      </div>
-                                      <span className="text-[8px] font-mono text-cyan-400 font-bold ml-2 bg-cyan-400/5 px-1.5 py-0.5 rounded">{clip.size}</span>
-                                    </button>
-                                  ))}
-                                </div>
-                              </div>
                             </div>
                           )}
 

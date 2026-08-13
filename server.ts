@@ -69,23 +69,31 @@ async function loadDatabase() {
     // 2. Clear all stale hosts from Firestore and local cache to ensure fresh active-only live stream directory
     await clearAllHostsInFirestore();
 
-    // 3. Start real-time Firestore synchronization listeners
-    startFirestoreSynchronization();
-
-    // 4. Fallback: Load initial local cache immediately during server boot to ensure zero startup latency
+    // 3. Load the local backup BEFORE starting Firestore listeners.
+    // This prevents an old/empty local backup from overwriting freshly
+    // loaded Firestore reels during the startup race.
     if (fs.existsSync(DB_PATH)) {
       const raw = fs.readFileSync(DB_PATH, "utf-8");
       const local = JSON.parse(raw);
       Object.assign(dbDataCache, local);
       console.log("[PARDAIS-PARTY FIREBASE] Pre-populated in-memory cache with local database backup.");
     }
-    
+
     if (!Array.isArray(dbDataCache.hosts)) {
       dbDataCache.hosts = [];
     }
     if (!Array.isArray(dbDataCache.parties)) {
       dbDataCache.parties = [];
     }
+    if (!Array.isArray(dbDataCache.reels)) {
+      dbDataCache.reels = [];
+    }
+
+    // 4. Start real-time Firestore synchronization listeners.
+    // Reels synchronization merges by ID and never clears the cache on
+    // transient empty snapshots.
+    startFirestoreSynchronization();
+
     saveDatabase();
   } catch (e) {
     console.error("[PARDAIS-PARTY FIREBASE] Error loading database:", e);
@@ -5036,6 +5044,7 @@ app.get("/api/v1/reels", (req, res) => {
 app.post("/api/v1/reels", (req, res) => {
   const newReel = {
     id: `r-${Date.now()}`,
+    views: 0,
     likes: 0,
     commentsCount: 0,
     liked: false,
