@@ -10,6 +10,7 @@ import { GoogleGenAI } from "@google/genai";
 import agoraToken from "agora-token";
 import AdmZip from "adm-zip";
 import zlib from "zlib";
+import crypto from "crypto";
 const { RtcTokenBuilder, RtcRole } = agoraToken;
 import {
   checkAndSeedDatabase,
@@ -615,6 +616,76 @@ app.get("/api/v1/ip-info", (req, res) => {
   });
 });
 
+
+// ------------------------------------------------------------------
+// PERSISTENT EMAIL ACCOUNT IDENTITY + PASSWORD AUTH
+// ------------------------------------------------------------------
+function stablePardaisId(email: string): string {
+  const clean = email.toLowerCase().trim();
+  const hash = crypto.createHash("sha256").update(clean).digest("hex").slice(0, 10).toUpperCase();
+  return `pardes_${hash}`;
+}
+
+function hashPassword(password: string): string {
+  const salt = crypto.randomBytes(16).toString("hex");
+  const derived = crypto.scryptSync(password, salt, 64).toString("hex");
+  return `scrypt:${salt}:${derived}`;
+}
+
+function verifyPassword(password: string, stored: string): boolean {
+  try {
+    const [scheme, salt, derived] = String(stored || "").split(":");
+    if (scheme !== "scrypt" || !salt || !derived) return false;
+    const candidate = crypto.scryptSync(password, salt, 64).toString("hex");
+    return crypto.timingSafeEqual(Buffer.from(candidate, "hex"), Buffer.from(derived, "hex"));
+  } catch {
+    return false;
+  }
+}
+
+function persistUser(user: any) {
+  // Keep the legacy username document for existing app features, while also
+  // creating stable identity documents keyed by UID and email.
+  syncDocument("users", user.username, user);
+  if (user.uid) syncDocument("users", `uid_${user.uid}`, user);
+  if (user.email) syncDocument("users", `email_${user.email.toLowerCase().replace(/[^a-zA-Z0-9]/g, "_")}`, user);
+}
+
+function createSession(user: any) {
+  const token = `pardais_session_${user.uid}_${crypto.randomBytes(8).toString("hex")}`;
+  const sessionData = {
+    uid: user.uid,
+    username: user.username,
+    email: user.email,
+    loginTime: new Date().toISOString()
+  };
+  dbData.sessions[token] = sessionData;
+  syncDocument("sessions", token, sessionData);
+  return token;
+}
+
+function findEmailUser(email: string) {
+  const cleanEmail = email.toLowerCase().trim();
+  return dbData.users?.find((u: any) =>
+    u && typeof u.email === "string" && u.email.toLowerCase().trim() === cleanEmail
+  );
+}
+
+function ensureStableEmailIdentity(user: any, email: string) {
+  const cleanEmail = email.toLowerCase().trim();
+  user.email = cleanEmail;
+  user.uid = user.uid || `email_${cleanEmail.replace(/[^a-zA-Z0-9]/g, "_")}`;
+  user.uniqueId = user.uniqueId || stablePardaisId(cleanEmail);
+  user.isVerified = true;
+  user.authProvider = "email";
+  if (user.avatar && user.avatar.includes("dicebear.com")) {
+    // Do not treat generated placeholder artwork as a permanent profile photo.
+    user.avatar = "";
+  }
+  if (!user.passwordHash) user.passwordHash = "";
+  return user;
+}
+
 // 1. Google Authentication Endpoint
 app.post("/api/v1/auth/google-login", (req, res) => {
   const requestDeviceId = req.body?.deviceId || (req.headers["x-device-id"] as string);
@@ -641,8 +712,7 @@ app.post("/api/v1/auth/google-login", (req, res) => {
   if (!user) {
     isNewUser = true;
     const username = cleanEmail.split("@")[0].replace(/[^a-zA-Z0-9_]/g, "_") || `user_${uid.substring(0, 6)}`;
-    const suffix = Math.floor(1000 + Math.random() * 9000);
-    const uniqueId = `pardes_${suffix}`;
+    const uniqueId = stablePardaisId(cleanEmail);
 
     user = {
       uid,
@@ -841,8 +911,7 @@ app.post("/api/v1/auth/verify-email-otp", (req, res) => {
   if (!user) {
     isNewUser = true;
     const username = cleanEmail.split("@")[0].replace(/[^a-zA-Z0-9_]/g, "_") || `user_${Math.floor(1000 + Math.random() * 9000)}`;
-    const suffix = Math.floor(1000 + Math.random() * 9000);
-    const uniqueId = `pardes_${suffix}`;
+    const uniqueId = stablePardaisId(cleanEmail);
 
     user = {
       uid,
@@ -850,7 +919,7 @@ app.post("/api/v1/auth/verify-email-otp", (req, res) => {
       username,
       uniqueId,
       fullName: "",
-      avatar: `https://api.dicebear.com/7.x/adventurer/svg?seed=${encodeURIComponent(cleanEmail)}`,
+      avatar: "",
       coverPhoto: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=800&q=80",
       bio: "Pardais Party Member 🇵🇰",
       gender: "Male",
@@ -882,18 +951,11 @@ app.post("/api/v1/auth/verify-email-otp", (req, res) => {
     syncDocument("users", user.username, user);
   }
 
-  const token = `pardais_session_${user.uid}_${Math.random().toString(36).substring(2, 10)}`;
-  const sessionData = {
-    uid: user.uid,
-    username: user.username,
-    email: user.email,
-    loginTime: new Date().toISOString()
-  };
-  dbData.sessions[token] = sessionData;
-
+  ensureStableEmailIdentity(user, cleanEmail);
+  persistUser(user);
   saveDatabase();
-  syncDocument("sessions", token, sessionData);
 
+  const token = createSession(user);
   res.json({
     success: true,
     message: isNewUser ? "Email verified. Please complete your profile setup." : "Authenticated successfully.",
@@ -901,6 +963,98 @@ app.post("/api/v1/auth/verify-email-otp", (req, res) => {
     token,
     user
   });
+});
+
+
+// 4. Create / change password after email verification.
+// Password login does NOT send an email/OTP.
+app.post("/api/v1/auth/set-password", authenticateUser, (req: any, res) => {
+  const password = typeof req.body?.password === "string" ? req.body.password : "";
+  if (password.length < 6) return res.status(400).json({ error: "Password must be at least 6 characters." });
+  if (!req.user?.email) return res.status(400).json({ error: "This account does not have an email address." });
+
+  req.user.passwordHash = hashPassword(password);
+  req.user.authProvider = "email";
+  req.user.isVerified = true;
+  ensureStableEmailIdentity(req.user, req.user.email);
+  persistUser(req.user);
+  saveDatabase();
+  res.json({ success: true, message: "Password created successfully.", user: req.user });
+});
+
+// Password login for returning email users.
+app.post("/api/v1/auth/password-login", (req, res) => {
+  const email = typeof req.body?.email === "string" ? req.body.email.toLowerCase().trim() : "";
+  const password = typeof req.body?.password === "string" ? req.body.password : "";
+  if (!email || !email.includes("@") || !password) {
+    return res.status(400).json({ error: "Email and password are required." });
+  }
+
+  const user = findEmailUser(email);
+  if (!user || !user.passwordHash || !verifyPassword(password, user.passwordHash)) {
+    return res.status(401).json({ error: "Incorrect email or password." });
+  }
+  if (user.isBanned) return res.status(403).json({ error: "ACCOUNT_BANNED" });
+
+  ensureStableEmailIdentity(user, email);
+  persistUser(user);
+  const token = createSession(user);
+  saveDatabase();
+
+  res.json({ success: true, message: "Logged in successfully.", token, isNewUser: false, user });
+});
+
+// Forgot password: send OTP only when the user explicitly requests recovery.
+app.post("/api/v1/auth/forgot-password", async (req, res) => {
+  const email = typeof req.body?.email === "string" ? req.body.email.toLowerCase().trim() : "";
+  if (!email || !email.includes("@")) return res.status(400).json({ error: "A valid email address is required." });
+
+  const user = findEmailUser(email);
+  // Keep the response generic so account existence is not exposed.
+  if (!user) return res.json({ success: true, message: "If an account exists for this email, a recovery code has been sent." });
+
+  const otp = Math.floor(100000 + Math.random() * 900000).toString();
+  if (!dbData.passwordResetOtps) dbData.passwordResetOtps = {};
+  dbData.passwordResetOtps[email] = { otp, expiresAt: Date.now() + 10 * 60 * 1000 };
+  saveDatabase();
+
+  try {
+    await sendPardaisPartyOtpEmail(email, otp);
+    res.json({ success: true, message: "Recovery code sent to your email." });
+  } catch (err) {
+    delete dbData.passwordResetOtps[email];
+    saveDatabase();
+    console.error("[PARDAIS PARTY PASSWORD RESET] Email failed:", err);
+    res.status(502).json({ success: false, error: "Recovery email could not be delivered. Please try again." });
+  }
+});
+
+// Reset password after the recovery OTP.
+app.post("/api/v1/auth/reset-password", (req, res) => {
+  const email = typeof req.body?.email === "string" ? req.body.email.toLowerCase().trim() : "";
+  const otp = String(req.body?.otp || "").trim();
+  const password = typeof req.body?.password === "string" ? req.body.password : "";
+  if (!email || !otp || password.length < 6) {
+    return res.status(400).json({ error: "Email, recovery code and a password of at least 6 characters are required." });
+  }
+
+  const stored = dbData.passwordResetOtps?.[email];
+  if (!stored || Date.now() > stored.expiresAt || String(stored.otp) !== otp) {
+    return res.status(401).json({ error: "Invalid or expired recovery code." });
+  }
+
+  const user = findEmailUser(email);
+  if (!user) return res.status(404).json({ error: "Account not found." });
+
+  user.passwordHash = hashPassword(password);
+  user.authProvider = "email";
+  ensureStableEmailIdentity(user, email);
+  delete dbData.passwordResetOtps[email];
+  persistUser(user);
+  saveDatabase();
+
+  const token = createSession(user);
+  res.json({ success: true, message: "Password reset successfully.", token, user });
 });
 
 // 4. Update Profile Details After Initial Verification / Setup
@@ -926,8 +1080,9 @@ app.post("/api/v1/auth/setup-profile", authenticateUser, (req: any, res) => {
     req.user.gender = gender;
   }
 
+  ensureStableEmailIdentity(req.user, req.user.email || "");
+  persistUser(req.user);
   saveDatabase();
-  syncDocument("users", req.user.username, req.user);
 
   res.json({
     success: true,

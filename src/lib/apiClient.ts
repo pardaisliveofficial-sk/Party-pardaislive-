@@ -194,3 +194,46 @@ export const authenticatedFetch = async (
     });
   }
 };
+
+
+// ------------------------------------------------------------------
+// Pardais Party persistent email authentication helpers
+// ------------------------------------------------------------------
+export async function emailPasswordLogin(email: string, password: string) {
+  const res = await fetch(resolveApiUrl("/api/v1/auth/password-login"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password })
+  });
+  return res.json();
+}
+
+export async function createEmailPassword(token: string, password: string) {
+  const res = await fetch(resolveApiUrl("/api/v1/auth/set-password"), {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${token}`
+    },
+    body: JSON.stringify({ password })
+  });
+  return res.json();
+}
+
+export async function requestPasswordReset(email: string) {
+  const res = await fetch(resolveApiUrl("/api/v1/auth/forgot-password"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email })
+  });
+  return res.json();
+}
+
+export async function resetEmailPassword(email: string, otp: string, password: string) {
+  const res = await fetch(resolveApiUrl("/api/v1/auth/reset-password"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, otp, password })
+  });
+  return res.json();
+}
