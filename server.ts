@@ -1005,31 +1005,26 @@ app.post("/api/v1/auth/set-password", authenticateUser, (req: any, res) => {
 
 // Password login for returning email users.
 app.post("/api/v1/auth/password-login", (req, res) => {
-  const email = typeof req.body?.email === "string" ? req.body.email.toLowerCase().trim() : "";
+  const identifier = typeof req.body?.identifier === "string"
+    ? req.body.identifier.trim()
+    : (typeof req.body?.email === "string" ? req.body.email.trim() : "");
   const password = typeof req.body?.password === "string" ? req.body.password : "";
-  if (!email || !email.includes("@") || !password) {
-    return res.status(400).json({ error: "Email and password are required." });
-  }
+  if (!identifier || !password) return res.status(400).json({ error: "Email/username and password are required." });
 
-  const user = findEmailUser(email);
-  if (!user || !user.passwordHash || !verifyPassword(password, user.passwordHash)) {
-    return res.status(401).json({ error: "Incorrect email or password." });
-  }
+  const normalized = identifier.toLowerCase().replace(/^@/, "");
+  const user = normalized.includes("@")
+    ? findEmailUser(normalized)
+    : (dbData.users || []).find((u: any) => String(u.username || "").toLowerCase() === normalized);
+
+  if (!user || !user.passwordHash || !verifyPassword(password, user.passwordHash))
+    return res.status(401).json({ error: "Incorrect email/username or password." });
   if (user.isBanned) return res.status(403).json({ error: "ACCOUNT_BANNED" });
 
-  ensureStableEmailIdentity(user, email);
+  if (user.email) ensureStableEmailIdentity(user, String(user.email).toLowerCase());
   persistUser(user);
   const token = createSession(user);
   saveDatabase();
-
-  res.json({
-    success: true,
-    message: "Logged in successfully.",
-    token,
-    isNewUser: false,
-    needsPassword: false,
-    user
-  });
+  res.json({ success:true, message:"Logged in successfully.", token, isNewUser:false, needsPassword:false, user });
 });
 
 // Forgot password: send OTP only when the user explicitly requests recovery.

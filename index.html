@@ -54,36 +54,61 @@
 </style>
 <div id="pardais-auth-gate">
   <div id="pardais-auth-card">
-    <div style="font-size:40px">🎉</div>
+    <div style="font-size:40px;text-align:center">🎉</div>
     <h1 id="pardais-auth-title">Welcome to Pardais Party</h1>
-    <p id="pardais-auth-subtitle">Sign in or create your account to continue.</p>
-    <div id="pardais-auth-login">
-      <div id="pardais-google-button"></div>
-      <div id="pardais-auth-or">OR</div>
-      <div id="pardais-email-section">
-        <label id="pardais-email-label" for="pardais-email">Email address</label>
-        <input id="pardais-email" type="email" placeholder="name@example.com" autocomplete="email" inputmode="email" autocapitalize="off" spellcheck="false">
-        <button id="pardais-send" type="button">Send verification code</button>
-      </div>
-      <div id="pardais-otp-row" style="display:none">
-        <label id="pardais-otp-label" for="pardais-otp">Verification code</label>
-        <input id="pardais-otp" type="text" maxlength="6" placeholder="6-digit code" inputmode="numeric" autocomplete="one-time-code">
-        <button id="pardais-verify" type="button">Verify & Continue</button>
-        <button id="pardais-resend" type="button" disabled>Resend code (60s)</button>
-      </div>
+    <p id="pardais-auth-subtitle">Login to your existing account or create a new one.</p>
+    <div id="pardais-auth-tabs" style="display:grid;grid-template-columns:1fr 1fr;gap:4px;background:#100e18;border-radius:12px;padding:4px;margin:0 0 18px">
+      <button id="pardais-tab-login" type="button" style="margin:0;background:linear-gradient(90deg,#ff0b8a,#9b30ff)">Login</button>
+      <button id="pardais-tab-signup" type="button" style="margin:0;background:transparent;border:1px solid #3b3747">Sign Up</button>
     </div>
-    <div id="pardais-auth-setup" style="display:none">
-      <p>Your email is verified. Create your permanent Pardais Party account.</p>
-      <label id="pardais-email-label">Full name</label>
-      <input id="pardais-name" placeholder="Your name" autocomplete="name">
-      <label id="pardais-email-label" style="margin-top:10px">Username</label>
-      <input id="pardais-username" placeholder="@username" autocomplete="username">
-      <label id="pardais-email-label" style="margin-top:10px">Create password</label>
-      <input id="pardais-create-password" type="password" placeholder="At least 6 characters" autocomplete="new-password">
-      <label id="pardais-email-label" style="margin-top:10px">Confirm password</label>
-      <input id="pardais-confirm-password" type="password" placeholder="Repeat password" autocomplete="new-password">
-      <button id="pardais-save-profile" type="button">Create Pardais Account</button>
-    </div>
+
+    <section id="pardais-login-panel">
+      <label>Email or Username</label>
+      <input id="pardais-login-identifier" type="text" placeholder="Email or @username" autocomplete="username">
+      <label>Password</label>
+      <input id="pardais-login-password" type="password" placeholder="Your password" autocomplete="current-password">
+      <button id="pardais-login-btn" type="button">Login</button>
+      <button id="pardais-forgot-btn" type="button" style="background:transparent;border:1px solid #3b3747">Forgot Password?</button>
+    </section>
+
+    <section id="pardais-signup-panel" style="display:none;text-align:left">
+      <div id="pardais-signup-email">
+        <label>Email Address</label>
+        <input id="pardais-signup-email-input" type="email" placeholder="name@example.com" autocomplete="email">
+        <button id="pardais-signup-send" type="button">Send Verification Code</button>
+      </div>
+      <div id="pardais-signup-otp" style="display:none">
+        <label>Verification Code</label>
+        <input id="pardais-signup-otp-input" type="text" maxlength="6" placeholder="6-digit code" inputmode="numeric" autocomplete="one-time-code">
+        <button id="pardais-signup-verify" type="button">Verify Email</button>
+        <button id="pardais-signup-resend" type="button" style="background:transparent;border:1px solid #3b3747" disabled>Resend Code (60s)</button>
+      </div>
+      <div id="pardais-auth-setup" style="display:none">
+        <label>Full Name</label>
+        <input id="pardais-name" placeholder="Your name" autocomplete="name">
+        <label>Username</label>
+        <input id="pardais-username" placeholder="@username" autocomplete="username">
+        <label>Create Password</label>
+        <input id="pardais-create-password" type="password" placeholder="At least 6 characters" autocomplete="new-password">
+        <label>Confirm Password</label>
+        <input id="pardais-confirm-password" type="password" placeholder="Repeat password" autocomplete="new-password">
+        <button id="pardais-save-profile" type="button">Create Pardais Account</button>
+      </div>
+    </section>
+
+    <section id="pardais-forgot-panel" style="display:none;text-align:left">
+      <label>Registered Email</label>
+      <input id="pardais-forgot-email" type="email" placeholder="name@example.com" autocomplete="email">
+      <button id="pardais-forgot-send" type="button">Send Recovery Code</button>
+      <div id="pardais-forgot-otp" style="display:none">
+        <label>Recovery Code</label>
+        <input id="pardais-forgot-code" type="text" maxlength="6" placeholder="6-digit code" inputmode="numeric">
+        <label>New Password</label>
+        <input id="pardais-new-password" type="password" placeholder="At least 6 characters" autocomplete="new-password">
+        <button id="pardais-reset-btn" type="button">Reset Password & Login</button>
+      </div>
+      <button id="pardais-back-login" type="button" style="background:transparent;border:1px solid #3b3747">Back to Login</button>
+    </section>
     <div id="pardais-auth-msg"></div>
   </div>
 </div>
@@ -92,267 +117,93 @@
   const API="https://api.pardaisparty.soulverseapps.com";
   const gate=document.getElementById("pardais-auth-gate");
   const msg=document.getElementById("pardais-auth-msg");
-  const login=document.getElementById("pardais-auth-login");
-  const setup=document.getElementById("pardais-auth-setup");
-  const email=document.getElementById("pardais-email");
-  const otp=document.getElementById("pardais-otp");
-  const sendBtn=document.getElementById("pardais-send");
-  const verifyBtn=document.getElementById("pardais-verify");
-  const resendBtn=document.getElementById("pardais-resend");
-  let resendTimer=null, currentEmail="";
-
-  const setMsg=x=>msg.textContent=x||"";
+  const loginPanel=document.getElementById("pardais-login-panel");
+  const signupPanel=document.getElementById("pardais-signup-panel");
+  const forgotPanel=document.getElementById("pardais-forgot-panel");
+  const tLogin=document.getElementById("pardais-tab-login"), tSignup=document.getElementById("pardais-tab-signup");
+  let signupEmail="", forgotEmail="", timer=null;
   const token=()=>localStorage.getItem("pardais_auth_token");
   const saveToken=t=>localStorage.setItem("pardais_auth_token",t);
-
+  const setMsg=x=>msg.textContent=x||"";
   async function post(path,body){
-    let r;
-    try{
-      r=await fetch(API+path,{method:"POST",headers:{"Content-Type":"application/json","Accept":"application/json"},body:JSON.stringify(body)});
-    }catch(e){throw new Error("Unable to connect to Pardais Party server.");}
-    const d=await r.json().catch(()=>({}));
-    if(!r.ok) throw new Error(d.error||d.message||("Server error ("+r.status+")"));
-    return d;
+    let r; try{r=await fetch(API+path,{method:"POST",headers:{"Content-Type":"application/json","Accept":"application/json"},body:JSON.stringify(body)})}
+    catch(e){throw new Error("Unable to connect to Pardais Party server.")}
+    const d=await r.json().catch(()=>({})); if(!r.ok)throw new Error(d.error||d.message||("Server error ("+r.status+")")); return d;
   }
-
-  function startResendTimer(){
-    let seconds=60;
-    resendBtn.disabled=true;
-    resendBtn.textContent="Resend code ("+seconds+"s)";
-    clearInterval(resendTimer);
-    resendTimer=setInterval(()=>{
-      seconds--;
-      if(seconds<=0){
-        clearInterval(resendTimer);
-        resendBtn.disabled=false;
-        resendBtn.textContent="Resend verification code";
-      }else resendBtn.textContent="Resend code ("+seconds+"s)";
-    },1000);
-  }
-
-  function showPasswordLogin(){
-    login.style.display="block";
-    setup.style.display="none";
-    document.getElementById("pardais-otp-row").style.display="none";
-    document.getElementById("pardais-auth-title").textContent="Welcome back";
-    document.getElementById("pardais-auth-subtitle").textContent="Enter your password to open your existing Pardais account.";
-    sendBtn.textContent="Continue";
+  function finish(d){if(d.token)saveToken(d.token);window.__pardaisAuthenticatedUser=d.user||{};gate.remove();}
+  function tab(name){
+    loginPanel.style.display=name==="login"?"block":"none";
+    signupPanel.style.display=name==="signup"?"block":"none";
+    forgotPanel.style.display=name==="forgot"?"block":"none";
+    tLogin.style.background=name==="login"?"linear-gradient(90deg,#ff0b8a,#9b30ff)":"transparent";
+    tSignup.style.background=name==="signup"?"linear-gradient(90deg,#ff0b8a,#9b30ff)":"transparent";
+    document.getElementById("pardais-auth-title").textContent=name==="login"?"Welcome Back":name==="signup"?"Create Your Account":"Forgot Password";
+    document.getElementById("pardais-auth-subtitle").textContent=name==="login"?"Login with your email or username and password.":name==="signup"?"Sign up once. Your Pardais ID and profile stay permanent.":"Recover your existing account with one email code.";
     setMsg("");
-    email.value=currentEmail;
-    email.disabled=true;
-    const existing=login.querySelector("#pardais-password-login");
-    if(existing) existing.focus();
   }
+  tLogin.onclick=()=>tab("login"); tSignup.onclick=()=>tab("signup");
 
-  function showCreateAccount(){
-    login.style.display="none";
-    setup.style.display="block";
-    document.getElementById("pardais-auth-title").textContent="Create your Pardais Account";
-    document.getElementById("pardais-auth-subtitle").textContent="This account will stay linked to this email permanently.";
-    document.getElementById("pardais-name").focus();
-  }
-
-  function finish(d){
-    if(d.token) saveToken(d.token);
-    window.__pardaisAuthenticatedUser=d.user||{};
-    gate.remove();
-  }
-
-  async function restore(){
-    const t=token();
-    if(!t) return;
-    try{
-      const r=await fetch(API+"/api/v1/auth/me",{headers:{Authorization:"Bearer "+t}});
-      if(!r.ok) throw new Error();
-      const d=await r.json();
-      window.__pardaisAuthenticatedUser=d.user;
-      gate.remove();
-    }catch(e){
-      localStorage.removeItem("pardais_auth_token");
-    }
-  }
-
-  async function continueEmail(){
-    const value=email.value.trim().toLowerCase();
-    if(!value || !value.includes("@") || !value.includes(".")){
-      setMsg("Please enter your complete email address."); return;
-    }
-    currentEmail=value;
-    try{
-      setMsg("Checking account…");
-      const status=await post("/api/v1/auth/email-status",{email:value});
-      if(status.exists && !status.needsPassword){
-        showPasswordLogin();
-        return;
-      }
-      // New email (or an older email account without a password):
-      // send ONE verification code, then create/complete the permanent account.
-      await post("/api/v1/auth/send-email-otp",{email:value});
-      document.getElementById("pardais-otp-row").style.display="block";
-      document.getElementById("pardais-email-section").style.display="none";
-      passwordBox.style.display="none";
-      document.getElementById("pardais-auth-title").textContent="Verify your email";
-      document.getElementById("pardais-auth-subtitle").textContent="Enter the code sent to "+value;
-      document.getElementById("pardais-otp-label").textContent="Verification code";
-      document.getElementById("pardais-verify").textContent="Verify & Create Account";
-      setMsg("Verification code sent. Check your email.");
-      otp.focus();
-      startResendTimer();
-    }catch(e){setMsg(e.message||"Unable to continue.");}
-  }
-
-  // Build password field + create account / forgot password controls dynamically.
-  const passwordBox=document.createElement("div");
-  passwordBox.innerHTML=
-    '<input id="pardais-password-login" type="password" placeholder="Password" autocomplete="current-password">'+
-    '<button id="pardais-login-password" type="button">Login</button>'+
-    '<button id="pardais-forgot" type="button" style="background:transparent;border:1px solid #3b3747;color:#ddd">Forgot password?</button>'+
-    '<button id="pardais-create-new" type="button" style="background:transparent;border:1px solid #3b3747;color:#ddd">Create account with this email</button>';
-  login.insertBefore(passwordBox,document.getElementById("pardais-email-section"));
-  passwordBox.style.display="none";
-
-  const passwordInput=()=>document.getElementById("pardais-password-login");
-
-  async function loginPassword(){
-    try{
-      setMsg("Signing in…");
-      const d=await post("/api/v1/auth/password-login",{email:currentEmail,password:passwordInput().value});
-      finish(d);
-    }catch(e){setMsg(e.message||"Incorrect email or password.");}
-  }
-
-  async function sendRegistrationCode(){
-    const value=email.value.trim().toLowerCase();
-    if(!value || !value.includes("@") || !value.includes(".")){setMsg("Please enter a valid email.");return;}
-    currentEmail=value;
-    try{
-      setMsg("Sending verification code…");
-      const d=await post("/api/v1/auth/send-email-otp",{email:value});
-      document.getElementById("pardais-otp-row").style.display="block";
-      login.style.display="block";
-      passwordBox.style.display="none";
-      document.getElementById("pardais-auth-title").textContent="Verify your email";
-      document.getElementById("pardais-auth-subtitle").textContent="Enter the code sent to "+value;
-      sendBtn.style.display="none";
-      document.getElementById("pardais-email-section").style.display="none";
-      setMsg("Code sent. Check your email.");
-      otp.focus();
-      startResendTimer();
-    }catch(e){setMsg(e.message||"Could not send verification code.");}
-  }
-
-  document.getElementById("pardais-send").onclick=continueEmail;
-  email.addEventListener("keydown",e=>{if(e.key==="Enter")continueEmail();});
-
-  // Password screen is shown after email check.
-  function revealPasswordControls(){
-    passwordBox.style.display="block";
-    passwordInput().focus();
-  }
-
-  // Override showPasswordLogin to reveal the actual password UI.
-  const oldShow=showPasswordLogin;
-  window.__showPardaisPassword=()=>{
-    passwordBox.style.display="block";
-    oldShow();
-    passwordBox.style.display="block";
-    passwordInput().focus();
+  document.getElementById("pardais-login-btn").onclick=async()=>{
+    const identifier=document.getElementById("pardais-login-identifier").value.trim();
+    const password=document.getElementById("pardais-login-password").value;
+    if(!identifier||!password){setMsg("Enter your email/username and password.");return}
+    try{setMsg("Signing in…");finish(await post("/api/v1/auth/password-login",{identifier,password}))}
+    catch(e){setMsg(e.message||"Incorrect email/username or password.")}
   };
+  document.getElementById("pardais-login-password").addEventListener("keydown",e=>{if(e.key==="Enter")document.getElementById("pardais-login-btn").click()});
 
-  document.getElementById("pardais-login-password").onclick=loginPassword;
-  passwordInput().addEventListener("keydown",e=>{if(e.key==="Enter")loginPassword();});
-
-  let recoveryMode=false;
-  const resetPasswordInput=document.createElement("input");
-  resetPasswordInput.id="pardais-reset-password";
-  resetPasswordInput.type="password";
-  resetPasswordInput.placeholder="New password";
-  resetPasswordInput.autocomplete="new-password";
-  resetPasswordInput.style.display="none";
-  login.appendChild(resetPasswordInput);
-
-  document.getElementById("pardais-forgot").onclick=async()=>{
-    const value=currentEmail||email.value.trim().toLowerCase();
-    if(!value){setMsg("Enter your email first.");return;}
+  document.getElementById("pardais-signup-send").onclick=async()=>{
+    const email=document.getElementById("pardais-signup-email-input").value.trim().toLowerCase();
+    if(!email||!email.includes("@")){setMsg("Enter a valid email address.");return}
     try{
-      setMsg("Sending recovery code…");
-      await post("/api/v1/auth/forgot-password",{email:value});
-      recoveryMode=true;
-      resetPasswordInput.style.display="block";
-      login.style.display="block";
-      passwordBox.style.display="none";
-      document.getElementById("pardais-email-section").style.display="none";
-      document.getElementById("pardais-otp-row").style.display="block";
-      document.getElementById("pardais-auth-title").textContent="Reset your password";
-      document.getElementById("pardais-auth-subtitle").textContent="Enter the recovery code sent to "+value;
-      document.getElementById("pardais-otp-label").textContent="Recovery code";
-      document.getElementById("pardais-verify").textContent="Reset Password";
-      setMsg("Recovery code sent.");
-      startResendTimer();
-      otp.focus();
-    }catch(e){setMsg(e.message||"Could not send recovery code.");}
+      const st=await post("/api/v1/auth/email-status",{email});
+      if(st.exists&&!st.needsPassword){setMsg("This email already has an account. Please use Login.");tab("login");document.getElementById("pardais-login-identifier").value=email;return}
+      signupEmail=email; await post("/api/v1/auth/send-email-otp",{email});
+      document.getElementById("pardais-signup-email").style.display="none";
+      document.getElementById("pardais-signup-otp").style.display="block";
+      setMsg("Verification code sent. Check your email.");document.getElementById("pardais-signup-otp-input").focus();startResend();
+    }catch(e){setMsg(e.message||"Could not send verification code.")}
   };
+  function startResend(){const b=document.getElementById("pardais-signup-resend");let s=60;b.disabled=true;b.textContent="Resend Code ("+s+"s)";clearInterval(timer);timer=setInterval(()=>{if(--s<=0){clearInterval(timer);b.disabled=false;b.textContent="Resend Code"}else b.textContent="Resend Code ("+s+"s)"},1000)}
+  document.getElementById("pardais-signup-resend").onclick=async()=>{try{await post("/api/v1/auth/send-email-otp",{email:signupEmail});setMsg("New verification code sent.");startResend()}catch(e){setMsg(e.message)}};
 
-  document.getElementById("pardais-create-new").onclick=sendRegistrationCode;
-
-  verifyBtn.onclick=async()=>{
-    const value=currentEmail||email.value.trim().toLowerCase(), code=otp.value.trim();
-    if(code.length!==6){setMsg("Enter the 6-digit code.");return;}
+  document.getElementById("pardais-signup-verify").onclick=async()=>{
+    const code=document.getElementById("pardais-signup-otp-input").value.trim();
+    if(code.length!==6){setMsg("Enter the 6-digit verification code.");return}
     try{
-      setMsg(recoveryMode ? "Resetting password…" : "Verifying code…");
-      if(recoveryMode){
-        const newPassword=resetPasswordInput.value;
-        if(newPassword.length<6) throw new Error("New password must be at least 6 characters.");
-        const d=await post("/api/v1/auth/reset-password",{email:value,otp:code,password:newPassword});
-        finish(d);
-        return;
-      }
-      const d=await post("/api/v1/auth/verify-email-otp",{email:value,otp:code});
-      if(d.needsPassword || d.isNewUser){
-        saveToken(d.token);
-        showCreateAccount();
-      }else{
-        finish(d);
-      }
-    }catch(e){setMsg(e.message||"Verification failed.");}
-  };;
-
-  resendBtn.onclick=sendRegistrationCode;
-  otp.addEventListener("input",()=>{otp.value=otp.value.replace(/\D/g,"").slice(0,6);});
+      const d=await post("/api/v1/auth/verify-email-otp",{email:signupEmail,otp:code});
+      if(d.needsPassword||d.isNewUser){if(d.token)saveToken(d.token);document.getElementById("pardais-signup-otp").style.display="none";document.getElementById("pardais-auth-setup").style.display="block";setMsg("Email verified. Create your permanent Pardais account.")}
+      else finish(d);
+    }catch(e){setMsg(e.message||"Verification failed.")}
+  };
 
   document.getElementById("pardais-save-profile").onclick=async()=>{
-    const name=document.getElementById("pardais-name").value.trim();
-    const username=document.getElementById("pardais-username").value.trim().replace(/^@/,"");
-    const password=document.getElementById("pardais-create-password").value;
-    const confirm=document.getElementById("pardais-confirm-password").value;
-    if(!name){setMsg("Enter your name.");return;}
-    if(username.length<3){setMsg("Username must be at least 3 characters.");return;}
-    if(password.length<6){setMsg("Password must be at least 6 characters.");return;}
-    if(password!==confirm){setMsg("Passwords do not match.");return;}
+    const name=document.getElementById("pardais-name").value.trim(), username=document.getElementById("pardais-username").value.trim().replace(/^@/,"");
+    const password=document.getElementById("pardais-create-password").value, confirm=document.getElementById("pardais-confirm-password").value;
+    if(!name||username.length<3||password.length<6||password!==confirm){setMsg("Enter name, username, matching password (6+ characters).");return}
     try{
-      setMsg("Creating your permanent account…");
       const t=token();
-      const passResponse=await fetch(API+"/api/v1/auth/set-password",{
-        method:"POST",
-        headers:{"Content-Type":"application/json",Authorization:"Bearer "+t},
-        body:JSON.stringify({password})
-      });
-      const p=await passResponse.json().catch(()=>({}));
-      if(!passResponse.ok) throw new Error(p.error||"Could not create password.");
-      // Profile setup uses the same verified account token.
-      const profile=await fetch(API+"/api/v1/auth/setup-profile",{
-        method:"POST",
-        headers:{"Content-Type":"application/json",Authorization:"Bearer "+t},
-        body:JSON.stringify({fullName:name,username})
-      });
-      const out=await profile.json().catch(()=>({}));
-      if(!profile.ok) throw new Error(out.error||"Could not save profile.");
-      finish({token:t,user:out.user});
-    }catch(e){setMsg(e.message||"Could not create account.");}
+      const p=await fetch(API+"/api/v1/auth/set-password",{method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+t},body:JSON.stringify({password})});
+      const pd=await p.json().catch(()=>({}));if(!p.ok)throw new Error(pd.error||"Could not create password.");
+      const r=await fetch(API+"/api/v1/auth/setup-profile",{method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+t},body:JSON.stringify({fullName:name,username})});
+      const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error||"Could not save profile.");
+      finish({token:t,user:d.user});
+    }catch(e){setMsg(e.message||"Could not create account.")}
   };
 
-  // First page: email only. Returning users get password; new users explicitly choose Create account.
-  document.getElementById("pardais-auth-title").textContent="Welcome to Pardais Party";
+  document.getElementById("pardais-forgot-btn").onclick=()=>tab("forgot");
+  document.getElementById("pardais-back-login").onclick=()=>tab("login");
+  document.getElementById("pardais-forgot-send").onclick=async()=>{
+    forgotEmail=document.getElementById("pardais-forgot-email").value.trim().toLowerCase();
+    if(!forgotEmail||!forgotEmail.includes("@")){setMsg("Enter your registered email.");return}
+    try{await post("/api/v1/auth/forgot-password",{email:forgotEmail});document.getElementById("pardais-forgot-otp").style.display="block";setMsg("Recovery code sent. Check your email.");}catch(e){setMsg(e.message)}
+  };
+  document.getElementById("pardais-reset-btn").onclick=async()=>{
+    const otp=document.getElementById("pardais-forgot-code").value.trim(), password=document.getElementById("pardais-new-password").value;
+    if(otp.length!==6||password.length<6){setMsg("Enter the 6-digit code and a 6+ character password.");return}
+    try{finish(await post("/api/v1/auth/reset-password",{email:forgotEmail,otp,password}))}catch(e){setMsg(e.message||"Could not reset password.")}
+  };
+  async function restore(){const t=token();if(!t)return;try{const r=await fetch(API+"/api/v1/auth/me",{headers:{Authorization:"Bearer "+t}});if(!r.ok)throw new Error();const d=await r.json();window.__pardaisAuthenticatedUser=d.user;gate.remove()}catch(e){localStorage.removeItem("pardais_auth_token")}}
   restore();
 })();
 </script>
