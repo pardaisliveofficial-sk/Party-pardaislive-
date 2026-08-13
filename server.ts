@@ -720,8 +720,9 @@ app.post("/api/v1/auth/google-login", (req, res) => {
 // Railway's outbound SMTP port restrictions and keeps the OTP logic unchanged.
 async function sendPardaisPartyOtpEmail(to: string, otp: string): Promise<void> {
   const resendApiKey = process.env.RESEND_API_KEY?.trim();
-  const fromEmail = (process.env.RESEND_FROM_EMAIL || "onboarding@resend.dev").trim();
+  const fromEmail = "noreply@mail.pardaisparty.soulverseapps.com";
   const fromName = (process.env.RESEND_FROM_NAME || "Pardais Party").trim();
+  console.log(`[PARDAIS PARTY EMAIL] Resend sender: ${fromName} <${fromEmail}>`);
 
   if (!resendApiKey) {
     throw new Error("RESEND_API_KEY is missing");
