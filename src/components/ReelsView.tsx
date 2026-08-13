@@ -44,18 +44,23 @@ const normalizeReelUrl = (url: string): string => {
     return url;
   }
 
-  // Parse reels/ key from the URL and convert to public custom R2 delivery domain
+  // Route every R2 reel through the API playback proxy. This works even when
+  // the R2 custom domain is not configured for public object reads and supports
+  // the HTTP Range requests used by HTML5/mobile video players.
   const reelsIndex = url.indexOf("reels/");
   if (reelsIndex !== -1) {
-    const objectKey = url.substring(reelsIndex);
-    return `https://media.pardaisparty.soulverseapps.com/${objectKey}`;
+    const objectKey = url.substring(reelsIndex).split("?")[0].replace(/^\/+/, "");
+    const apiBase = "https://api.pardaisparty.soulverseapps.com";
+    return `${apiBase}/api/v1/reels/media/${objectKey.split("/").map(encodeURIComponent).join("/")}`;
   }
 
-  // If S3 or Cloudflare old endpoint
+  // If S3 or Cloudflare old endpoint, extract the object key and use the proxy.
   if (url.includes("cloudflarestorage.com") || url.includes("amazonaws.com") || url.includes("pardaisparty-reels")) {
     const parts = url.split("pardaisparty-reels/");
     if (parts.length > 1 && parts[1]) {
-      return `https://media.pardaisparty.soulverseapps.com/${parts[1]}`;
+      const objectKey = parts[1].split("?")[0].replace(/^\/+/, "");
+      const apiBase = "https://api.pardaisparty.soulverseapps.com";
+      return `${apiBase}/api/v1/reels/media/${objectKey.split("/").map(encodeURIComponent).join("/")}`;
     }
   }
 
@@ -225,7 +230,7 @@ const ReelVideoPlayer: React.FC<ReelVideoPlayerProps> = ({
           <div>
             <h4 className="text-sm font-black text-white uppercase tracking-wider font-mono">PLAYBACK CONNECTION FAILED</h4>
             <p className="text-[9px] text-gray-400 mt-1.5 max-w-[240px] leading-relaxed">
-              Your connection failed or the R2 media link is still provisioning. Retrying with ultra-speed CDN fallback...
+              Unable to load this uploaded video. Retrying the original video from secure media storage...
             </p>
           </div>
         </div>

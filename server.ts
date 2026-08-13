@@ -3,7 +3,7 @@ import path from "path";
 import dotenv from "dotenv";
 import fs from "fs";
 import sharp from "sharp";
-import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
+import { S3Client, PutObjectCommand, GetObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
 import multer from "multer";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
@@ -5603,6 +5603,90 @@ Do not wrap your answer in quotes or add metadata. Speak as the host directly.`;
   }
 });
 
+
+// Public playback proxy for R2 reels.
+// This avoids relying on the R2 custom domain being publicly readable.
+// HTML5 <video> needs HTTP Range support, so the endpoint streams the exact
+// requested object and preserves byte ranges.
+app.get("/api/v1/reels/media/*", async (req: any, res: any) => {
+  try {
+    const rawPath = req.params[0] || "";
+    const objectKey = decodeURIComponent(rawPath).replace(/^\/+/, "");
+
+    if (!objectKey || !objectKey.startsWith("reels/")) {
+      return res.status(400).json({ error: "Invalid reel media key" });
+    }
+
+    const client = getS3Client();
+    const bucketName = process.env.R2_BUCKET_NAME || "pardaisparty-reels";
+    const head = await client.send(new HeadObjectCommand({
+      Bucket: bucketName,
+      Key: objectKey
+    }));
+
+    const totalSize = Number(head.ContentLength || 0);
+    const contentType = head.ContentType || "video/mp4";
+    const range = req.headers.range as string | undefined;
+
+    res.setHeader("Accept-Ranges", "bytes");
+    res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+    res.setHeader("Content-Type", contentType);
+
+    if (!range) {
+      res.setHeader("Content-Length", String(totalSize));
+      const object = await client.send(new GetObjectCommand({
+        Bucket: bucketName,
+        Key: objectKey
+      }));
+      const body: any = object.Body;
+      if (!body) return res.status(404).json({ error: "Media body not found" });
+      body.pipe(res);
+      return;
+    }
+
+    const match = /^bytes=(\d*)-(\d*)$/i.exec(range);
+    if (!match) {
+      res.setHeader("Content-Range", `bytes */${totalSize}`);
+      return res.status(416).end();
+    }
+
+    let start = match[1] ? Number(match[1]) : Math.max(totalSize - Number(match[2] || 1), 0);
+    let end = match[2] ? Number(match[2]) : totalSize - 1;
+
+    if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || start >= totalSize) {
+      res.setHeader("Content-Range", `bytes */${totalSize}`);
+      return res.status(416).end();
+    }
+
+    end = Math.min(end, totalSize - 1);
+    if (end < start) {
+      res.setHeader("Content-Range", `bytes */${totalSize}`);
+      return res.status(416).end();
+    }
+
+    const chunkSize = end - start + 1;
+    res.status(206);
+    res.setHeader("Content-Range", `bytes ${start}-${end}/${totalSize}`);
+    res.setHeader("Content-Length", String(chunkSize));
+
+    const object = await client.send(new GetObjectCommand({
+      Bucket: bucketName,
+      Key: objectKey,
+      Range: `bytes=${start}-${end}`
+    }));
+    const body: any = object.Body;
+    if (!body) return res.status(404).end();
+    body.pipe(res);
+  } catch (error: any) {
+    console.error("[PARDAIS-PARTY R2 MEDIA] Playback proxy failed:", error?.message || error);
+    if (!res.headersSent) {
+      res.status(404).json({ error: "Reel media unavailable" });
+    } else {
+      res.end();
+    }
+  }
+});
+
 // ------------------------------------------------------------------
 // CLOUDFLARE R2 STORAGE CONFIGURATION & VIDEO UPLOAD
 // ------------------------------------------------------------------
@@ -5788,12 +5872,14 @@ app.post("/api/v1/reels/upload-video", s3MulterUpload.single("video"), async (re
       
       console.log(`[PARDAIS-PARTY R2] [UPLOAD-VIDEO] SUCCESS: Binary written to R2 storage bucket "${bucketName}"`);
 
-      // Generate public CDN Delivery Domain URL
-      const publicBaseUrl = process.env.R2_PUBLIC_URL || "https://media.pardaisparty.soulverseapps.com";
-      const cleanBase = publicBaseUrl.endsWith("/") ? publicBaseUrl.slice(0, -1) : publicBaseUrl;
-      finalVideoUrl = `${cleanBase}/${objectKey}`;
+      // Return our API playback proxy instead of relying on the R2 custom
+      // domain being publicly readable. The proxy supports HTTP Range requests
+      // required by mobile/browser video playback.
+      const apiBaseUrl = process.env.API_PUBLIC_URL || "https://api.pardaisparty.soulverseapps.com";
+      const cleanApiBase = apiBaseUrl.endsWith("/") ? apiBaseUrl.slice(0, -1) : apiBaseUrl;
+      finalVideoUrl = `${cleanApiBase}/api/v1/reels/media/${objectKey.split("/").map(encodeURIComponent).join("/")}`;
 
-      console.log(`[PARDAIS-PARTY R2] [UPLOAD-VIDEO] PUBLIC CDN DISTRIBUTION LINK GENERATED: "${finalVideoUrl}"`);
+      console.log(`[PARDAIS-PARTY R2] [UPLOAD-VIDEO] API PLAYBACK LINK GENERATED: "${finalVideoUrl}"`);
     } catch (r2Error: any) {
       console.warn("[PARDAIS-PARTY R2] Cloudflare R2 upload unavailable/failed. Falling back to local storage:", r2Error.message || r2Error);
       
