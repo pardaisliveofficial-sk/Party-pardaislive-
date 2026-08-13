@@ -701,18 +701,12 @@ export default function App() {
       try {
         const isLogged = localStorage.getItem("pardais_is_logged_in") === "true";
         const saved = localStorage.getItem("pardais_user_profile");
-        const customAvatar = localStorage.getItem("pardais_custom_avatar");
         if (isLogged && saved) {
           const parsed = JSON.parse(saved);
           if (parsed && (parsed.username || parsed.uniqueId)) {
-            if (customAvatar) {
-              parsed.avatar = customAvatar;
-            }
             parsed.isGuest = false;
             return parsed;
           }
-        } else if (customAvatar) {
-          return { ...DEFAULT_USER, avatar: customAvatar, isGuest: !isLogged };
         }
       } catch (e) {
         console.warn("Error parsing stored user profile:", e);
@@ -838,7 +832,6 @@ export default function App() {
     setUser(updatedUser);
     localStorage.setItem("pardais_user_profile", JSON.stringify(updatedUser));
     if (updatedUser.avatar) {
-      localStorage.setItem("pardais_custom_avatar", updatedUser.avatar);
       localStorage.setItem("pardais_avatar_user_set", "true");
     }
     lastSavedUserRef.current = JSON.stringify(updatedUser);
@@ -854,9 +847,6 @@ export default function App() {
   useEffect(() => {
     if (user && (user.username || user.uniqueId)) {
       localStorage.setItem("pardais_user_profile", JSON.stringify(user));
-      if (user.avatar) {
-        localStorage.setItem("pardais_custom_avatar", user.avatar);
-      }
     }
   }, [user]);
 
@@ -881,21 +871,19 @@ export default function App() {
       // 2. Verify stored session token
       const token = localStorage.getItem("pardais_auth_token");
       const savedUserRaw = localStorage.getItem("pardais_user_profile");
-      const customAvatar = localStorage.getItem("pardais_custom_avatar");
       let savedProfile: UserProfile | null = null;
       if (savedUserRaw) {
         try { savedProfile = JSON.parse(savedUserRaw); } catch (e) {}
       }
 
       if (savedProfile && (savedProfile.username || savedProfile.uniqueId)) {
-        if (customAvatar) savedProfile.avatar = customAvatar;
         setUser(savedProfile);
         setIsLoggedIn(true);
       }
 
       if (!token) {
         if (!savedProfile) {
-          refreshSession({ username: DEFAULT_USER.username, uid: DEFAULT_USER.uniqueId }).then(() => {
+          refreshSession().then(() => {
             setIsLoggedIn(true);
           });
         }
@@ -909,16 +897,17 @@ export default function App() {
         })
         .then(data => {
           if (data && data.user) {
-            const preservedAvatar = customAvatar || savedProfile?.avatar || data.user.avatar;
+            const preservedAvatar = data.user.avatar || savedProfile?.avatar || "";
             const mergedUser: UserProfile = {
               ...data.user,
-              // Keep user's custom saved fullName, username, avatar, bio, uniqueId if set locally
+              // Keep local profile fields that are not replaced by the backend. Avatar comes from production storage.
               fullName: (savedProfile?.fullName && savedProfile.fullName.trim() !== "" && savedProfile.fullName !== "Pardais Member")
                 ? savedProfile.fullName
                 : (data.user.fullName || savedProfile?.fullName || ""),
               username: savedProfile?.username || data.user.username,
               uniqueId: savedProfile?.uniqueId || data.user.uniqueId,
               avatar: preservedAvatar,
+              avatarUrl: data.user.avatarUrl || preservedAvatar,
               bio: savedProfile?.bio || data.user.bio,
               gender: savedProfile?.gender || data.user.gender,
               dob: savedProfile?.dob || data.user.dob,
@@ -929,7 +918,6 @@ export default function App() {
             setUser(mergedUser);
             setIsLoggedIn(true);
             localStorage.setItem("pardais_user_profile", JSON.stringify(mergedUser));
-            if (preservedAvatar) localStorage.setItem("pardais_custom_avatar", preservedAvatar);
             lastSavedUserRef.current = JSON.stringify(mergedUser);
           }
         })
@@ -949,14 +937,10 @@ export default function App() {
   // Edit Profile States
   const [isEditingProfile, setIsEditingProfile] = useState<boolean>(false);
   const [editFullName, setEditFullName] = useState<string>(DEFAULT_USER.fullName || "");
-  const [editUsername, setEditUsername] = useState<string>(DEFAULT_USER.username);
   const [editAvatar, setEditAvatar] = useState<string>(DEFAULT_USER.avatar);
   const [editDob, setEditDob] = useState<string>(DEFAULT_USER.dob || "");
   const [editGender, setEditGender] = useState<string>(DEFAULT_USER.gender);
   const [editPhoneNumber, setEditPhoneNumber] = useState<string>(DEFAULT_USER.phoneNumber || "");
-  const [editFollowersCount, setEditFollowersCount] = useState<number>(DEFAULT_USER.followersCount || 14200);
-  const [editFollowingCount, setEditFollowingCount] = useState<number>(DEFAULT_USER.followingCount || 280);
-  const [editTotalLikesCount, setEditTotalLikesCount] = useState<number>(DEFAULT_USER.totalLikesCount || 125400);
   const [showDailyTasksOverlay, setShowDailyTasksOverlay] = useState<boolean>(false);
 
   // Profile Feed Tab states
@@ -5440,14 +5424,10 @@ export default function App() {
             lastSavedUserRef.current = JSON.stringify(data);
             // Sync default fields for editing
             setEditFullName(data.fullName || "");
-            setEditUsername(data.username || "");
             setEditAvatar(data.avatar || "");
             setEditDob(data.dob || "");
             setEditGender(data.gender || "Male");
             setEditPhoneNumber(data.phoneNumber || "");
-            setEditFollowersCount(data.followersCount || 14200);
-            setEditFollowingCount(data.followingCount || 280);
-            setEditTotalLikesCount(data.totalLikesCount || 125400);
           }
         })
         .catch(() => {});
@@ -6288,21 +6268,60 @@ export default function App() {
   };
 
   // Save profile edits
-  const handleSaveProfile = (e: React.FormEvent) => {
+  const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    let persistentAvatar = user.avatar;
+    const selectedAvatar = editAvatar.trim();
+
+    // Upload newly selected gallery/camera image to production storage first.
+    // Never persist a base64 data URL in localStorage or the user profile.
+    if (selectedAvatar && selectedAvatar !== user.avatar && selectedAvatar.startsWith("data:image/")) {
+      try {
+        const blob = await (await fetch(selectedAvatar)).blob();
+        const formData = new FormData();
+        formData.append("avatar", blob, `avatar-${Date.now()}.jpg`);
+
+        const uploadRes = await authenticatedFetch("/api/v1/user/avatar", {
+          method: "POST",
+          body: formData
+        });
+        const uploadData = await uploadRes.json().catch(() => ({}));
+
+        if (!uploadRes.ok || !uploadData?.url) {
+          throw new Error(uploadData?.error || "Profile photo upload failed");
+        }
+
+        persistentAvatar = uploadData.url;
+      } catch (err) {
+        console.error("[PARDAIS PROFILE] Avatar upload failed:", err);
+        alert("Profile photo upload failed. Please try again.");
+        return;
+      }
+    }
+
     const updatedUser: UserProfile = {
       ...user,
-      username: editUsername.trim() || user.username,
-      avatar: editAvatar.trim() || user.avatar,
+      // Username is the permanent account identity and cannot be changed here.
+      username: user.username,
+      avatar: persistentAvatar,
+      avatarUrl: persistentAvatar,
       gender: editGender,
       fullName: editFullName.trim(),
       dob: editDob,
       phoneNumber: editPhoneNumber,
-      followersCount: editFollowersCount,
-      followingCount: editFollowingCount,
-      totalLikesCount: editTotalLikesCount
+      // These are server/database metrics. They are never editable from Profile.
+      followersCount: user.followersCount ?? 0,
+      followingCount: user.followingCount ?? 0,
+      totalLikesCount: user.totalLikesCount ?? 0
     };
+
+    // Remove any stale base64 avatar cache from older builds.
+    localStorage.removeItem("pardais_custom_avatar");
+    localStorage.setItem("pardais_avatar_user_set", persistentAvatar ? "true" : "false");
+
     saveAndSyncUserProfile(updatedUser);
+    setEditAvatar(persistentAvatar);
     setIsEditingProfile(false);
   };
 
@@ -7415,8 +7434,8 @@ export default function App() {
     setUser(prev => ({
       ...prev,
       diamonds: prev.diamonds + permanentDiamondsEarned,
-      followersCount: (prev.followersCount || 14200) + permanentFollowersGained,
-      totalLikesCount: (prev.totalLikesCount || 125400) + Math.floor(userLiveLikes * 0.5)
+      followersCount: (prev.followersCount ?? 0) + permanentFollowersGained,
+      totalLikesCount: (prev.totalLikesCount ?? 0) + Math.floor(userLiveLikes * 0.5)
     }));
 
     // Save transaction ledger entry
@@ -13577,14 +13596,10 @@ export default function App() {
                                         setIsEditingProfile(false);
                                       } else {
                                         setEditFullName(user.fullName || "");
-                                        setEditUsername(user.username);
                                         setEditAvatar(user.avatar);
                                         setEditDob(user.dob || "1998-05-15");
                                         setEditGender(user.gender);
                                         setEditPhoneNumber(user.phoneNumber || "+92 300 4567890");
-                                        setEditFollowersCount(user.followersCount || 14200);
-                                        setEditFollowingCount(user.followingCount || 280);
-                                        setEditTotalLikesCount(user.totalLikesCount || 125400);
                                         setIsEditingProfile(true);
                                       }
                                     }}
@@ -13635,10 +13650,11 @@ export default function App() {
                                     <label className="text-[8px] uppercase tracking-wider text-gray-400 block mb-1 font-bold">Username</label>
                                     <input
                                       type="text"
-                                      value={editUsername}
-                                      onChange={(e) => setEditUsername(e.target.value)}
-                                      className="w-full bg-[#12121a] border border-[#303040] rounded px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-[#ff007f]"
-                                      required
+                                      value={user.username}
+                                      readOnly
+                                      aria-readonly="true"
+                                      className="w-full bg-[#12121a]/70 border border-[#303040] rounded px-2.5 py-1.5 text-xs text-gray-400 cursor-not-allowed focus:outline-none"
+                                      title="Username is your permanent account identity"
                                     />
                                   </div>
                                 </div>
@@ -13764,39 +13780,6 @@ export default function App() {
                                     required
                                   />
                                 </div>
-
-                                <div className="grid grid-cols-3 gap-2 pt-1 border-t border-[#303040]/30">
-                                  <div>
-                                    <label className="text-[8px] uppercase tracking-wider text-gray-400 block mb-1 font-bold">Followers</label>
-                                    <input
-                                      type="number"
-                                      value={editFollowersCount}
-                                      onChange={(e) => setEditFollowersCount(parseInt(e.target.value) || 0)}
-                                      className="w-full bg-[#12121a] border border-[#303040] rounded px-2 py-1.5 text-xs text-white font-mono focus:outline-none focus:border-[#ff007f]"
-                                      required
-                                    />
-                                  </div>
-                                  <div>
-                                    <label className="text-[8px] uppercase tracking-wider text-gray-400 block mb-1 font-bold">Following</label>
-                                    <input
-                                      type="number"
-                                      value={editFollowingCount}
-                                      onChange={(e) => setEditFollowingCount(parseInt(e.target.value) || 0)}
-                                      className="w-full bg-[#12121a] border border-[#303040] rounded px-2 py-1.5 text-xs text-white font-mono focus:outline-none focus:border-[#ff007f]"
-                                      required
-                                    />
-                                  </div>
-                                  <div>
-                                    <label className="text-[8px] uppercase tracking-wider text-gray-400 block mb-1 font-bold">Total Likes</label>
-                                    <input
-                                      type="number"
-                                      value={editTotalLikesCount}
-                                      onChange={(e) => setEditTotalLikesCount(parseInt(e.target.value) || 0)}
-                                      className="w-full bg-[#12121a] border border-[#303040] rounded px-2 py-1.5 text-xs text-white font-mono focus:outline-none focus:border-[#ff007f]"
-                                      required
-                                    />
-                                  </div>
-                                </div>
                               </div>
 
                               <div className="flex space-x-2 pt-1">
@@ -13866,36 +13849,36 @@ export default function App() {
                               <div className="grid grid-cols-3 gap-2 text-center pt-1">
                                 <button
                                   type="button"
-                                  onClick={() => alert(`👥 Followers Directory:\nYou have ${((user.followersCount ?? 14200)).toLocaleString()} verified fans. All follower IDs are synced in the Pakistan region server.`)}
+                                  onClick={() => alert(`👥 Followers Directory:\nYou have ${((user.followersCount ?? 0)).toLocaleString()} verified fans. All follower IDs are synced in the Pakistan region server.`)}
                                   className="bg-gradient-to-b from-[#1e1e2d] to-[#12121a] hover:from-[#ff007f]/20 hover:to-[#1e1e2d] border border-[#303040] hover:border-[#ff007f]/50 p-2.5 rounded-xl transition-all flex flex-col items-center justify-center group active:scale-95 shadow-md"
                                 >
                                   <Users className="w-4 h-4 text-[#ff007f] mb-1 group-hover:scale-110 transition-transform" />
                                   <span className="text-xs font-black text-white font-mono">
-                                    {((user.followersCount ?? 14200)).toLocaleString()}
+                                    {((user.followersCount ?? 0)).toLocaleString()}
                                   </span>
                                   <span className="text-[7.5px] uppercase tracking-wider text-gray-400 font-bold">Followers</span>
                                 </button>
 
                                 <button
                                   type="button"
-                                  onClick={() => alert(`✨ Following Directory:\nYou are currently following ${((user.followingCount ?? 280)).toLocaleString()} premium live hosts and top tier verified creators!`)}
+                                  onClick={() => alert(`✨ Following Directory:\nYou are currently following ${((user.followingCount ?? 0)).toLocaleString()} premium live hosts and top tier verified creators!`)}
                                   className="bg-gradient-to-b from-[#1e1e2d] to-[#12121a] hover:from-[#66fcf1]/20 hover:to-[#1e1e2d] border border-[#303040] hover:border-[#66fcf1]/50 p-2.5 rounded-xl transition-all flex flex-col items-center justify-center group active:scale-95 shadow-md"
                                 >
                                   <User className="w-4 h-4 text-[#66fcf1] mb-1 group-hover:scale-110 transition-transform" />
                                   <span className="text-xs font-black text-white font-mono">
-                                    {((user.followingCount ?? 280)).toLocaleString()}
+                                    {((user.followingCount ?? 0)).toLocaleString()}
                                   </span>
                                   <span className="text-[7.5px] uppercase tracking-wider text-gray-400 font-bold">Following</span>
                                 </button>
 
                                 <button
                                   type="button"
-                                  onClick={() => alert(`💖 Social Clout Metrics:\nYour live streams and creator reels have received a total of ${((user.totalLikesCount ?? 125400)).toLocaleString()} likes from around the world!`)}
+                                  onClick={() => alert(`💖 Social Clout Metrics:\nYour live streams and creator reels have received a total of ${((user.totalLikesCount ?? 0)).toLocaleString()} likes from around the world!`)}
                                   className="bg-gradient-to-b from-[#1e1e2d] to-[#12121a] hover:from-yellow-400/20 hover:to-[#1e1e2d] border border-[#303040] hover:border-yellow-400/50 p-2.5 rounded-xl transition-all flex flex-col items-center justify-center group active:scale-95 shadow-md"
                                 >
                                   <Heart className="w-4 h-4 text-yellow-400 fill-current mb-1 group-hover:scale-110 transition-transform" />
                                   <span className="text-xs font-black text-white font-mono">
-                                    {((user.totalLikesCount ?? 125400)).toLocaleString()}
+                                    {((user.totalLikesCount ?? 0)).toLocaleString()}
                                   </span>
                                   <span className="text-[7.5px] uppercase tracking-wider text-gray-400 font-bold">Total Likes</span>
                                 </button>

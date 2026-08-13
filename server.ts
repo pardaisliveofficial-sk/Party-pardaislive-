@@ -1352,7 +1352,9 @@ app.post("/api/v1/user", authenticateUser, (req: any, res) => {
     return res.status(403).json({ error: "Security Exception: Direct agency status modification is forbidden." });
   }
 
-  const updatedUser = { ...user, ...req.body };
+  // Username is the permanent account identity. Profile edits can never rename the account.
+  const { username: _ignoredUsername, ...profileUpdates } = req.body || {};
+  const updatedUser = { ...user, ...profileUpdates, username: user.username };
   req.user = updatedUser;
   
   // Sync changes in the persistent users list
@@ -5625,6 +5627,86 @@ const s3MulterUpload = multer({
   storage: multer.memoryStorage(),
   limits: {
     fileSize: 100 * 1024 * 1024, // 100 MB Limit for high-definition video reels
+  }
+});
+
+const avatarMulterUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 10 * 1024 * 1024,
+  }
+});
+
+// Production profile avatar upload endpoint to Cloudflare R2.
+// The client sends the image file; the server stores an optimized WebP and returns a durable CDN URL.
+app.post("/api/v1/user/avatar", authenticateUser, avatarMulterUpload.single("avatar"), async (req: any, res) => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({ success: false, error: "Unauthorized. Please log in." });
+    }
+
+    const file = req.file;
+    if (!file || !file.buffer || file.size <= 0) {
+      return res.status(400).json({ success: false, error: "No valid profile photo was uploaded." });
+    }
+
+    if (!String(file.mimetype || "").startsWith("image/")) {
+      return res.status(400).json({ success: false, error: "Only image files are allowed for profile photos." });
+    }
+
+    const optimized = await sharp(file.buffer)
+      .rotate()
+      .resize(512, 512, { fit: "cover", withoutEnlargement: true })
+      .webp({ quality: 84 })
+      .toBuffer();
+
+    const safeUserId = String(req.user.uid || req.user.username || "user").replace(/[^a-zA-Z0-9_-]/g, "_");
+    const objectKey = `avatars/${safeUserId}/${Date.now()}-${crypto.randomBytes(5).toString("hex")}.webp`;
+
+    const client = getS3Client();
+    const bucketName = process.env.R2_BUCKET_NAME || "pardaisparty-reels";
+
+    await client.send(new PutObjectCommand({
+      Bucket: bucketName,
+      Key: objectKey,
+      Body: optimized,
+      ContentType: "image/webp",
+      CacheControl: "public, max-age=31536000, immutable",
+    }));
+
+    const publicBaseUrl = process.env.R2_PUBLIC_URL || "https://media.pardaisparty.soulverseapps.com";
+    const cleanBase = publicBaseUrl.endsWith("/") ? publicBaseUrl.slice(0, -1) : publicBaseUrl;
+    const avatarUrl = `${cleanBase}/${objectKey}`;
+
+    // Persist the URL against the authenticated account immediately.
+    const updatedUser = {
+      ...req.user,
+      avatar: avatarUrl,
+      avatarUrl,
+    };
+    req.user = updatedUser;
+    const idxInUsers = dbData.users.findIndex((u: any) =>
+      (u.uid && u.uid === updatedUser.uid) ||
+      (u.username && u.username === updatedUser.username) ||
+      (u.email && u.email === updatedUser.email)
+    );
+    if (idxInUsers !== -1) {
+      dbData.users[idxInUsers] = { ...dbData.users[idxInUsers], avatar: avatarUrl, avatarUrl };
+    } else {
+      dbData.users.push(updatedUser);
+    }
+    dbData.user = updatedUser;
+    saveDatabase();
+    syncDocument("users", updatedUser.username, updatedUser);
+    writeMetadata("user_profile", updatedUser);
+
+    return res.json({ success: true, url: avatarUrl, avatar: avatarUrl });
+  } catch (err: any) {
+    console.error("[PARDAIS-PARTY AVATAR] Upload failed:", err);
+    return res.status(500).json({
+      success: false,
+      error: err?.message || "Profile photo upload failed."
+    });
   }
 });
 
