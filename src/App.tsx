@@ -15391,7 +15391,7 @@ export default function App() {
                                 </button>
                               </div>
 
-                              {/* REAL uploaded video player — exact same file used by public Reels */
+                              {/* REAL uploaded video player — exact same file used by public Reels */}
                               <div className="flex-1 relative bg-black flex items-center justify-center overflow-hidden">
                                 {selectedProfileReel.videoUrl ? (
                                   <video
