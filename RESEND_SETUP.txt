@@ -1,16 +1,12 @@
-Pardais Party production OTP setup
+Pardais Party Resend configuration
 
-Set these variables in Railway for the backend:
+Use the verified Resend sending domain:
+mail.pardaisparty.soulverseapps.com
 
-RESEND_API_KEY=<your Resend API key>
-RESEND_FROM_EMAIL=<an email address on a domain verified in Resend>
+Recommended Railway variables:
+RESEND_API_KEY=<your existing Resend API key>
+RESEND_FROM_EMAIL=noreply@mail.pardaisparty.soulverseapps.com
 RESEND_FROM_NAME=Pardais Party
 
-Important:
-- Do not use onboarding@resend.dev for sending OTPs to arbitrary users. It is only suitable for Resend's testing/restricted flow.
-- Verify the sending domain in Resend first, then use an address such as no-reply@your-verified-domain.
-
-Video upload fix included:
-- Removed the old 3-second R2 upload timeout.
-- Production R2 upload now allows up to 10 minutes for larger mobile videos.
-- OTP delivery uses the Resend HTTPS API and reports delivery failures correctly.
+The server also defaults to noreply@mail.pardaisparty.soulverseapps.com if RESEND_FROM_EMAIL is not set.
+Do not use onboarding@resend.dev for production OTP delivery.
