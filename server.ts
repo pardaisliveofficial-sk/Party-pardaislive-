@@ -145,7 +145,7 @@ loadDatabase();
 // ------------------------------------------------------------------
 // SECURE USER AUTHENTICATION & AUTHORIZATION MIDDLEWARE
 // ------------------------------------------------------------------
-async function authenticateUser(req: any, res: any, next: any) {
+async async function authenticateUser(req: any, res: any, next: any) {
   const authHeader = req.headers["authorization"];
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
     return res.status(401).json({ error: "Unauthorized. Authorization Bearer token is required." });
@@ -703,7 +703,7 @@ function persistUser(user: any) {
   if (user.email) syncDocument("users", `email_${user.email.toLowerCase().replace(/[^a-zA-Z0-9]/g, "_")}`, user);
 }
 
-function createSession(user: any) {
+async function createSession(user: any) {
   const token = `pardais_session_${user.uid}_${crypto.randomBytes(8).toString("hex")}`;
   const sessionData = {
     uid: user.uid,
@@ -712,7 +712,10 @@ function createSession(user: any) {
     loginTime: new Date().toISOString()
   };
   dbData.sessions[token] = sessionData;
-  syncDocument("sessions", token, sessionData);
+  // IMPORTANT: wait for the durable session write before returning the token.
+  // Otherwise a restart/replica switch can immediately report the fresh token
+  // as invalid and profile uploads will fail with 401.
+  await syncDocument("sessions", token, sessionData);
   return token;
 }
 
@@ -761,7 +764,7 @@ function ensureStableEmailIdentity(user: any, email: string) {
 }
 
 // 1. Google Authentication Endpoint
-app.post("/api/v1/auth/google-login", (req, res) => {
+app.post("/api/v1/auth/google-login", async (req, res) => {
   const requestDeviceId = req.body?.deviceId || (req.headers["x-device-id"] as string);
   if (isDeviceIdBlocked(requestDeviceId)) {
     return res.status(403).json({
@@ -848,7 +851,7 @@ app.post("/api/v1/auth/google-login", (req, res) => {
   dbData.sessions[token] = sessionData;
 
   saveDatabase();
-  syncDocument("sessions", token, sessionData);
+  await syncDocument("sessions", token, sessionData);
 
   res.json({
     success: true,
@@ -972,7 +975,7 @@ app.post("/api/v1/auth/send-email-otp", async (req, res) => {
 });
 
 // 3. Verify Email OTP Code
-app.post("/api/v1/auth/verify-email-otp", (req, res) => {
+app.post("/api/v1/auth/verify-email-otp", async (req, res) => {
   const { email, otp } = req.body;
   if (!email || !otp) {
     return res.status(400).json({ error: "Email and verification OTP code are required." });
@@ -1049,7 +1052,7 @@ app.post("/api/v1/auth/verify-email-otp", (req, res) => {
   persistUser(user);
   saveDatabase();
 
-  const token = createSession(user);
+  const token = await createSession(user);
   res.json({
     success: true,
     message: isNewUser ? "Email verified. Please complete your profile setup." : "Email verified successfully.",
@@ -1078,7 +1081,7 @@ app.post("/api/v1/auth/set-password", authenticateUser, (req: any, res) => {
 });
 
 // Password login for returning email users.
-app.post("/api/v1/auth/password-login", (req, res) => {
+app.post("/api/v1/auth/password-login", async (req, res) => {
   const identifier = typeof req.body?.identifier === "string"
     ? req.body.identifier.trim()
     : (typeof req.body?.email === "string" ? req.body.email.trim() : "");
@@ -1096,7 +1099,7 @@ app.post("/api/v1/auth/password-login", (req, res) => {
 
   if (user.email) ensureStableEmailIdentity(user, String(user.email).toLowerCase());
   persistUser(user);
-  const token = createSession(user);
+  const token = await createSession(user);
   saveDatabase();
   res.json({ success:true, message:"Logged in successfully.", token, isNewUser:false, needsPassword:false, user });
 });
@@ -1127,7 +1130,7 @@ app.post("/api/v1/auth/forgot-password", async (req, res) => {
 });
 
 // Reset password after the recovery OTP.
-app.post("/api/v1/auth/reset-password", (req, res) => {
+app.post("/api/v1/auth/reset-password", async (req, res) => {
   const email = typeof req.body?.email === "string" ? req.body.email.toLowerCase().trim() : "";
   const otp = String(req.body?.otp || "").trim();
   const password = typeof req.body?.password === "string" ? req.body.password : "";
@@ -1150,7 +1153,7 @@ app.post("/api/v1/auth/reset-password", (req, res) => {
   persistUser(user);
   saveDatabase();
 
-  const token = createSession(user);
+  const token = await createSession(user);
   res.json({ success: true, message: "Password reset successfully.", token, user });
 });
 
@@ -1274,7 +1277,7 @@ app.post("/api/v1/auth/guest-login", (req, res) => {
   }
 });
 
-app.post("/api/v1/auth/refresh-session", (req, res) => {
+app.post("/api/v1/auth/refresh-session", async (req, res) => {
   const requestDeviceId = req.body?.deviceId || (req.headers["x-device-id"] as string);
   if (isDeviceIdBlocked(requestDeviceId)) {
     return res.status(403).json({
@@ -1325,7 +1328,7 @@ app.post("/api/v1/auth/refresh-session", (req, res) => {
   dbData.sessions[token] = sessionData;
 
   saveDatabase();
-  syncDocument("sessions", token, sessionData);
+  await syncDocument("sessions", token, sessionData);
 
   return res.json({
     success: true,
