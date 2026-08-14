@@ -76,8 +76,17 @@ async function loadDatabase() {
     if (fs.existsSync(DB_PATH)) {
       const raw = fs.readFileSync(DB_PATH, "utf-8");
       const local = JSON.parse(raw);
+      // Local backup is only a bootstrap fallback. Never replace an already
+      // hydrated Firestore reel collection with a stale/empty local snapshot.
+      const existingReels = Array.isArray(dbDataCache.reels) ? dbDataCache.reels : [];
       Object.assign(dbDataCache, local);
-      console.log("[PARDAIS-PARTY FIREBASE] Pre-populated in-memory cache with local database backup.");
+      const localReels = Array.isArray(local?.reels) ? local.reels : [];
+      const reelMap = new Map<string, any>();
+      [...existingReels, ...localReels].forEach((r: any) => {
+        if (r && r.id) reelMap.set(String(r.id), r);
+      });
+      dbDataCache.reels = Array.from(reelMap.values());
+      console.log("[PARDAIS-PARTY FIREBASE] Pre-populated in-memory cache with local database backup (durable reels preserved/merged).");
     }
 
     if (!Array.isArray(dbDataCache.hosts)) {
@@ -5055,37 +5064,49 @@ app.get("/api/v1/reels", async (req, res) => {
   }
 });
 
-app.post("/api/v1/reels", (req, res) => {
-  const newReel = {
-    id: `r-${Date.now()}`,
-    views: 0,
-    likes: 0,
-    commentsCount: 0,
-    liked: false,
-    saves: 0,
-    saved: false,
-    shares: 0,
-    downloads: 0,
-    comments: [],
-    ...req.body
-  };
-  if (!dbData.reels) dbData.reels = [];
-  dbData.reels.unshift(newReel);
-  saveDatabase();
-  syncDocument("reels", newReel.id, newReel);
-  res.status(201).json(newReel);
+app.post("/api/v1/reels", async (req, res) => {
+  try {
+    const newReel = {
+      id: `r-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      views: 0,
+      likes: 0,
+      commentsCount: 0,
+      liked: false,
+      saves: 0,
+      saved: false,
+      shares: 0,
+      downloads: 0,
+      comments: [],
+      ...req.body
+    };
+    if (!dbData.reels) dbData.reels = [];
+    dbData.reels = [newReel, ...dbData.reels.filter((r: any) => r && r.id !== newReel.id)];
+    saveDatabase();
+    // IMPORTANT: await the durable Firestore write before confirming success.
+    // The previous fire-and-forget write could be lost during a deploy/restart.
+    await syncDocument("reels", newReel.id, newReel);
+    res.status(201).json(newReel);
+  } catch (error: any) {
+    console.error("[PARDAIS-PARTY REELS] Durable create failed:", error);
+    res.status(500).json({ error: error?.message || "Failed to persist reel" });
+  }
 });
 
-app.put("/api/v1/reels/:id", (req, res) => {
-  const { id } = req.params;
-  const index = dbData.reels.findIndex((r: any) => r.id === id);
-  if (index !== -1) {
-    dbData.reels[index] = { ...dbData.reels[index], ...req.body };
-    saveDatabase();
-    syncDocument("reels", id, dbData.reels[index]);
-    res.json(dbData.reels[index]);
-  } else {
-    res.status(404).json({ error: "Reel not found" });
+app.put("/api/v1/reels/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const index = dbData.reels.findIndex((r: any) => r.id === id);
+    if (index !== -1) {
+      dbData.reels[index] = { ...dbData.reels[index], ...req.body };
+      saveDatabase();
+      await syncDocument("reels", id, dbData.reels[index]);
+      res.json(dbData.reels[index]);
+    } else {
+      res.status(404).json({ error: "Reel not found" });
+    }
+  } catch (error: any) {
+    console.error("[PARDAIS-PARTY REELS] Durable update failed:", error);
+    res.status(500).json({ error: error?.message || "Failed to persist reel update" });
   }
 });
 

@@ -5199,12 +5199,39 @@ export default function App() {
         .then(data => {
           if (Array.isArray(data)) {
             const seen = new Set();
-            setReels(data.filter((item: any) => {
+            const durableReels = data.filter((item: any) => {
               if (!item || !item.id) return false;
               if (seen.has(item.id)) return false;
               seen.add(item.id);
               return true;
-            }));
+            });
+            setReels(durableReels);
+
+            // Rebuild Creator Hub from the same durable server collection on
+            // every login/refresh. Do not rely on in-memory React state.
+            const currentUniqueId = user?.uniqueId || user?.id || "";
+            const currentUsername = user?.username || "";
+            const currentFullName = user?.fullName || "";
+            const myDurableReels = durableReels.filter((r: any) =>
+              r && (
+                (currentUniqueId && r.uploaderId === currentUniqueId) ||
+                (currentUsername && (r.uploaderId === currentUsername || r.creator === currentUsername)) ||
+                (currentFullName && r.creator === currentFullName)
+              )
+            );
+            if (myDurableReels.length > 0) {
+              const uploaded = myDurableReels.filter((r: any) => r.privacy !== "private").map((r: any) => ({
+                id: r.id,
+                title: r.caption ? r.caption.split(" ").slice(0, 4).join(" ") + "..." : "My Clip 🎬",
+                views: r.views ?? 0, likes: r.likes ?? 0, liked: !!r.liked,
+                videoBg: r.videoBg, videoUrl: normalizeReelUrl(r.videoUrl || r.mediaUrl || r.publicUrl || ""),
+                caption: r.caption || "", song: r.song || "Original Sound",
+                comments: r.comments || [], duration: "0:30", location: r.location,
+                isPrivate: false, privacy: "public", saves: r.saves ?? 0, shares: r.shares ?? 0,
+                downloads: r.downloads ?? 0, creator: r.creator, avatar: r.avatar
+              }));
+              setProfileReels(prev => ({ ...prev, uploaded }));
+            }
           }
         })
         .catch(() => {});
@@ -15398,7 +15425,7 @@ export default function App() {
                                     className="w-full h-full object-contain bg-black"
                                     controls
                                     playsInline
-                                    preload="metadata"
+                                    preload="auto"
                                     onError={(event) => {
                                       console.error("[PARDAIS CREATOR HUB] Uploaded reel playback failed:", {
                                         reelId: selectedProfileReel.id,

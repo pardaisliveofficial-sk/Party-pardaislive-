@@ -358,10 +358,9 @@ export function startFirestoreSynchronization() {
 }
 
 export async function hydrateReelsFromFirestore(): Promise<any[]> {
-  if (isFirestoreQuotaExhausted) {
-    return Array.isArray(dbDataCache.reels) ? dbDataCache.reels : [];
-  }
-
+  // Reels must always attempt a durable Firestore read. A quota flag raised by
+  // another collection must never make the Reels feed appear empty after login,
+  // refresh, deployment, or app update.
   try {
     const snapshot = await getDocs(collection(db, "reels"));
     const firestoreReels: any[] = [];
@@ -417,13 +416,20 @@ export async function clearAllHostsInFirestore() {
 }
 
 export async function syncDocument(collectionName: string, docId: string, data: any) {
-  if (isFirestoreQuotaExhausted) return;
+  // Reels are durable user content. Do not silently skip their writes because
+  // another collection has exhausted its quota.
+  if (isFirestoreQuotaExhausted && collectionName !== "reels") return;
   try {
     if (!docId) return;
     await setDoc(doc(db, collectionName, String(docId)), sanitizeForFirestore(data), { merge: true });
     console.log(`[PARDAIS-PARTY FIREBASE] Synced document to Firestore: ${collectionName}/${docId}`);
   } catch (err) {
     handleQuotaError(err, `syncDocument ${collectionName}/${docId}`);
+    if (collectionName === "reels") {
+      // The API must not report a successful upload when its durable record
+      // could not be written. This prevents reels from disappearing after deploy.
+      throw err;
+    }
   }
 }
 
