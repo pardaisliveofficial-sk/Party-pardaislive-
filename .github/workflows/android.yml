@@ -39,11 +39,8 @@ jobs:
 
       - name: Install Dependencies
         run: |
-          if [ -f "package-lock.json" ]; then
-            npm ci
-          else
-            npm install
-          fi
+          # Reconcile package.json/package-lock.json changes during CI.
+          npm install --no-audit --no-fund
 
       - name: Recreate Android Assets from SVG (Icons & Splash)
         run: node android-recreate-icons.cjs
@@ -167,3 +164,4 @@ jobs:
         with:
           name: pardais-party-debug-apk
           path: android/app/build/outputs/apk/debug/*.apk
+          
