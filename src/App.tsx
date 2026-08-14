@@ -13182,17 +13182,6 @@ export default function App() {
 
                           {/* TOP RIGHT PROFILE HEADER CONTROLS (Install App, Camera Cover Photo, Bell, Settings) */}
                           <div className="absolute top-3 right-3 z-40 flex items-center space-x-1.5 max-w-[calc(100%-55px)] flex-wrap justify-end gap-y-1">
-                            {/* 📲 Install Android App Green Button */}
-                            <button
-                              type="button"
-                              onClick={triggerAndroidInstall}
-                              className="px-2.5 py-1 rounded-full bg-gradient-to-r from-[#00e676] to-emerald-600 border border-emerald-300 text-black font-extrabold text-[9.5px] uppercase tracking-wider backdrop-blur-md transition-all shadow-[0_0_12px_rgba(0,230,118,0.5)] hover:scale-105 active:scale-95 cursor-pointer flex items-center space-x-1 shrink-0"
-                              title="Install Android App"
-                            >
-                              <Smartphone className="w-3.5 h-3.5 text-black" />
-                              <span>Install App</span>
-                            </button>
-
                             {/* 📷 Change Cover Photo Camera Button */}
                             <button
                               type="button"
