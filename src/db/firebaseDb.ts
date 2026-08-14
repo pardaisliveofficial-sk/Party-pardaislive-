@@ -169,6 +169,48 @@ export const dbDataCache: any = {
   coinSellers: []
 };
 
+// Durable auth lookup used by the API server. The in-memory session cache can
+// briefly be empty after a deploy/restart or on a second backend replica.
+// Always fall back to Firestore before declaring a valid token expired.
+export async function getPersistedSession(token: string): Promise<any | null> {
+  if (!token) return null;
+  try {
+    const snap = await getDoc(doc(db, "sessions", token));
+    return snap.exists() ? snap.data() : null;
+  } catch (err) {
+    handleQuotaError(err, "auth session lookup");
+    return null;
+  }
+}
+
+export async function getPersistedUserForSession(session: any): Promise<any | null> {
+  if (!session) return null;
+  const candidates: any[] = [];
+  try {
+    if (session.uid) {
+      const snap = await getDoc(doc(db, "users", `uid_${session.uid}`));
+      if (snap.exists()) candidates.push(snap.data());
+    }
+    if (session.email) {
+      const emailKey = String(session.email).toLowerCase().trim().replace(/[^a-zA-Z0-9]/g, "_");
+      const snap = await getDoc(doc(db, "users", `email_${emailKey}`));
+      if (snap.exists()) candidates.push(snap.data());
+    }
+    if (session.username) {
+      const snap = await getDoc(doc(db, "users", String(session.username)));
+      if (snap.exists()) candidates.push(snap.data());
+    }
+  } catch (err) {
+    handleQuotaError(err, "auth user lookup");
+  }
+  // Deterministic identity matching: UID first, then normalized email.
+  return candidates.find((u: any) => session.uid && u?.uid === session.uid)
+    || candidates.find((u: any) => session.email && String(u?.email || "").toLowerCase().trim() === String(session.email).toLowerCase().trim())
+    || candidates.find((u: any) => session.username && u?.username === session.username)
+    || null;
+}
+
+
 export function sanitizeForFirestore(obj: any): any {
   if (obj === null || obj === undefined) return null;
   if (typeof obj !== "object") return obj;

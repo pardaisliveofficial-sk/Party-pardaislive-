@@ -20,7 +20,9 @@ import {
   deleteDocument,
   writeMetadata,
   hydrateReelsFromFirestore,
-  clearAllHostsInFirestore
+  clearAllHostsInFirestore,
+  getPersistedSession,
+  getPersistedUserForSession
 } from "./src/db/firebaseDb";
 
 dotenv.config();
@@ -143,28 +145,69 @@ loadDatabase();
 // ------------------------------------------------------------------
 // SECURE USER AUTHENTICATION & AUTHORIZATION MIDDLEWARE
 // ------------------------------------------------------------------
-function authenticateUser(req: any, res: any, next: any) {
+async function authenticateUser(req: any, res: any, next: any) {
   const authHeader = req.headers["authorization"];
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
     return res.status(401).json({ error: "Unauthorized. Authorization Bearer token is required." });
   }
-  const token = authHeader.substring(7);
-  const session = dbData.sessions?.[token];
-  if (session) {
-    const user = dbData.users?.find((u: any) => 
-      (session.uid && u.uid === session.uid) || 
-      (session.username && u.username === session.username) ||
-      (session.email && u.email === session.email)
-    );
-    if (user) {
-      req.user = user;
-      req.token = token;
-      return next();
+
+  const token = authHeader.substring(7).trim();
+  if (!token) {
+    return res.status(401).json({ error: "Unauthorized. Authorization Bearer token is required." });
+  }
+
+  // First use the hot in-memory cache.
+  let session = dbData.sessions?.[token];
+
+  // IMPORTANT: after a Railway/production restart or when traffic reaches a
+  // different replica, the in-memory session map may not yet contain a token
+  // that is still valid in Firestore. Never turn that temporary cache miss into
+  // a false "session expired" response. Hydrate the session from Firestore.
+  if (!session) {
+    session = await getPersistedSession(token);
+    if (session) {
+      dbData.sessions[token] = session;
     }
   }
-  
-  // Unauthorized token format / expired session, send unauthorized
-  return res.status(401).json({ error: "Session expired or invalid token. Please log in again." });
+
+  if (!session) {
+    return res.status(401).json({ error: "Session expired or invalid token. Please log in again." });
+  }
+
+  // Deterministic account resolution: exact UID first, then exact email, then
+  // exact username. Do not let duplicate legacy user documents change which
+  // account is selected after refresh.
+  let user = session.uid
+    ? dbData.users?.find((u: any) => u?.uid === session.uid)
+    : null;
+  if (!user && session.email) {
+    const email = String(session.email).toLowerCase().trim();
+    user = dbData.users?.find((u: any) => String(u?.email || "").toLowerCase().trim() === email);
+  }
+  if (!user && session.username) {
+    user = dbData.users?.find((u: any) => u?.username === session.username);
+  }
+
+  // If the user cache is also cold, hydrate the canonical Firestore user docs.
+  if (!user) {
+    user = await getPersistedUserForSession(session);
+    if (user) {
+      const existingIdx = dbData.users?.findIndex((u: any) =>
+        (session.uid && u?.uid === session.uid) ||
+        (session.email && String(u?.email || "").toLowerCase().trim() === String(session.email).toLowerCase().trim())
+      );
+      if (existingIdx != null && existingIdx >= 0) dbData.users[existingIdx] = { ...dbData.users[existingIdx], ...user };
+      else if (Array.isArray(dbData.users)) dbData.users.push(user);
+    }
+  }
+
+  if (user) {
+    req.user = user;
+    req.token = token;
+    return next();
+  }
+
+  return res.status(401).json({ error: "Authenticated account could not be restored. Please log in again." });
 }
 
 // ------------------------------------------------------------------
