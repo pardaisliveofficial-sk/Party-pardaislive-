@@ -3,7 +3,7 @@ import path from "path";
 import dotenv from "dotenv";
 import fs from "fs";
 import sharp from "sharp";
-import { S3Client, PutObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
+import { S3Client, PutObjectCommand, GetObjectCommand, ListObjectsV2Command } from "@aws-sdk/client-s3";
 import multer from "multer";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
@@ -19,6 +19,7 @@ import {
   syncDocument,
   deleteDocument,
   writeMetadata,
+  hydrateReelsFromFirestore,
   clearAllHostsInFirestore
 } from "./src/db/firebaseDb";
 
@@ -5036,12 +5037,81 @@ app.post("/api/v1/reports", (req, res) => {
   res.status(201).json(newReport);
 });
 
+// ------------------------------------------------------------------
+// DURABLE REEL METADATA MIRROR (Cloudflare R2)
+// ------------------------------------------------------------------
+// Firestore is the primary metadata store. R2 metadata is a durable second
+// copy so a Firestore quota/cold-start issue can never make an uploaded reel
+// disappear from the feed or Creator Hub after refresh/redeploy.
+async function persistReelMetadataToR2(reel: any) {
+  try {
+    const client = getS3Client();
+    const bucketName = process.env.R2_BUCKET_NAME || "pardaisparty-reels";
+    const key = `reels/_metadata/${String(reel.id)}.json`;
+    await client.send(new PutObjectCommand({
+      Bucket: bucketName,
+      Key: key,
+      Body: Buffer.from(JSON.stringify(reel), "utf-8"),
+      ContentType: "application/json",
+      CacheControl: "no-cache, no-store, must-revalidate",
+    }));
+    return true;
+  } catch (err: any) {
+    console.warn("[PARDAIS-PARTY REELS] R2 metadata mirror unavailable:", err?.message || err);
+    return false;
+  }
+}
+
+async function hydrateReelsFromR2Metadata() {
+  try {
+    const client = getS3Client();
+    const bucketName = process.env.R2_BUCKET_NAME || "pardaisparty-reels";
+    const listed = await client.send(new ListObjectsV2Command({ Bucket: bucketName, Prefix: "reels/_metadata/" }));
+    const keys = (listed.Contents || []).map((x: any) => x.Key).filter((k: any) => typeof k === "string" && k.endsWith(".json"));
+    if (!keys.length) return [];
+
+    const restored: any[] = [];
+    for (const key of keys) {
+      try {
+        const obj = await client.send(new GetObjectCommand({ Bucket: bucketName, Key: key }));
+        const body = obj.Body && typeof (obj.Body as any).transformToString === "function"
+          ? await (obj.Body as any).transformToString("utf-8")
+          : "";
+        if (body) {
+          const reel = JSON.parse(body);
+          if (reel && reel.id) restored.push(reel);
+        }
+      } catch (err: any) {
+        console.warn(`[PARDAIS-PARTY REELS] Failed reading R2 metadata ${key}:`, err?.message || err);
+      }
+    }
+
+    if (restored.length) {
+      const map = new Map<string, any>();
+      (dbData.reels || []).forEach((r: any) => { if (r?.id) map.set(String(r.id), r); });
+      restored.forEach((r: any) => map.set(String(r.id), r));
+      dbData.reels = Array.from(map.values()).sort((a: any, b: any) => {
+        const ta = Date.parse(a?.createdAt || "") || 0;
+        const tb = Date.parse(b?.createdAt || "") || 0;
+        return tb - ta;
+      });
+      saveDatabase();
+    }
+    return restored;
+  } catch (err: any) {
+    console.warn("[PARDAIS-PARTY REELS] R2 metadata hydration unavailable:", err?.message || err);
+    return [];
+  }
+}
+
 // Reels endpoints
-app.get("/api/v1/reels", (req, res) => {
+app.get("/api/v1/reels", async (req, res) => {
+  await hydrateReelsFromFirestore();
+  await hydrateReelsFromR2Metadata();
   res.json(dbData.reels || []);
 });
 
-app.post("/api/v1/reels", (req, res) => {
+app.post("/api/v1/reels", async (req, res) => {
   const newReel = {
     id: `r-${Date.now()}`,
     views: 0,
@@ -5058,17 +5128,19 @@ app.post("/api/v1/reels", (req, res) => {
   if (!dbData.reels) dbData.reels = [];
   dbData.reels.unshift(newReel);
   saveDatabase();
-  syncDocument("reels", newReel.id, newReel);
+  await syncDocument("reels", newReel.id, newReel);
+  await persistReelMetadataToR2(newReel);
   res.status(201).json(newReel);
 });
 
-app.put("/api/v1/reels/:id", (req, res) => {
+app.put("/api/v1/reels/:id", async (req, res) => {
   const { id } = req.params;
   const index = dbData.reels.findIndex((r: any) => r.id === id);
   if (index !== -1) {
     dbData.reels[index] = { ...dbData.reels[index], ...req.body };
     saveDatabase();
-    syncDocument("reels", id, dbData.reels[index]);
+    await syncDocument("reels", id, dbData.reels[index]);
+    await persistReelMetadataToR2(dbData.reels[index]);
     res.json(dbData.reels[index]);
   } else {
     res.status(404).json({ error: "Reel not found" });

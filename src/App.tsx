@@ -5205,7 +5205,7 @@ export default function App() {
         .catch(() => {});
 
       // 4. Fetch reels list
-      fetch("/api/v1/reels")
+      fetch(resolveApiUrl("/api/v1/reels"))
         .then(res => res.ok ? res.json() : null)
         .then(data => {
           if (Array.isArray(data)) {
@@ -5431,7 +5431,7 @@ export default function App() {
         })
         .catch(() => {});
 
-      fetch("/api/v1/reels")
+      fetch(resolveApiUrl("/api/v1/reels"))
         .then(res => res.ok ? res.json() : null)
         .then(data => {
           if (Array.isArray(data)) {
@@ -15578,7 +15578,7 @@ export default function App() {
                     {/* ===================================================================== */}
                     {/* VIEW: REELS (SHORT VERTICAL VIDEOS) WITH COMPLETE TIKTOK INTERACTIONS */}
                     {/* ===================================================================== */}
-                    {clientView === "reels" && (
+                    {false && clientView === "reels" && (
                       <ReelsView
                         reels={reels}
                         setReels={setReels}
@@ -15613,7 +15613,7 @@ export default function App() {
                       />
                     )}
 
-                    {false && (
+                    {clientView === "reels" && (
                       <div className="flex-1 flex flex-col bg-[#09090e] relative select-none pb-0">
                         {/* Floating Back Button */}
                         <button
