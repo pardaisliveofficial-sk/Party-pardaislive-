@@ -106,6 +106,22 @@ async function loadDatabase() {
     // transient empty snapshots.
     startFirestoreSynchronization();
 
+    // Permanent email identity migration. Existing email accounts are copied into
+    // the durable registry once; a locked registry entry can never be reassigned.
+    setTimeout(async () => {
+      try {
+        const users = Array.isArray(dbData.users) ? dbData.users : [];
+        for (const existingUser of users) {
+          if (existingUser?.email && existingUser?.uid) {
+            await persistEmailRegistry(String(existingUser.email), existingUser);
+          }
+        }
+        console.log(`[PARDAIS AUTH] Permanent email registry migration checked ${users.length} users.`);
+      } catch (err) {
+        console.warn("[PARDAIS AUTH] Email registry migration deferred:", err);
+      }
+    }, 5000);
+
     saveDatabase();
   } catch (e) {
     console.error("[PARDAIS-PARTY FIREBASE] Error loading database:", e);
@@ -722,10 +738,11 @@ async function persistUserDurably(user: any): Promise<boolean> {
     const email = String(user.email).toLowerCase().trim();
     user.email = email;
     user.registeredAt = user.registeredAt || new Date().toISOString();
-    await syncDocument("users", user.username, user);
-    await syncDocument("users", `uid_${user.uid}`, user);
-    await syncDocument("users", `email_${email.replace(/[^a-zA-Z0-9]/g, "_")}`, user);
-    return await persistEmailRegistry(email, user);
+    const usernameSaved = await syncDocument("users", user.username, user);
+    const uidSaved = await syncDocument("users", `uid_${user.uid}`, user);
+    const emailSaved = await syncDocument("users", `email_${email.replace(/[^a-zA-Z0-9]/g, "_")}`, user);
+    const registrySaved = await persistEmailRegistry(email, user);
+    return usernameSaved && uidSaved && emailSaved && registrySaved;
   } catch (err) {
     console.error("[PARDAIS AUTH] Durable user persistence failed:", err);
     return false;
@@ -1025,15 +1042,11 @@ app.post("/api/v1/auth/send-email-otp", async (req, res) => {
   const challenge = { otp, email: cleanEmail, type: "signup", expiresAt: Date.now() + 10 * 60 * 1000, createdAt: new Date().toISOString() };
   // Persist before sending. This prevents an email from arriving while another
   // API replica/restart has no matching OTP record.
-  const challengeKey = `email_${cleanEmail.replace(/[^a-zA-Z0-9]/g, "_")}`;
-  const durable = await persistAuthChallenge(challengeKey, challenge);
-  if (!dbData.emailOtps) dbData.emailOtps = {};
+  const durable = await persistAuthChallenge(`email_${cleanEmail.replace(/[^a-zA-Z0-9]/g, "_")}`, challenge);
   if (!durable) {
-    // Firestore may be temporarily unavailable (quota/network). Keep a local
-    // challenge so the same running API can still complete signup while the
-    // durable store recovers. The OTP remains short-lived (10 minutes).
-    console.warn("[PARDAIS PARTY EMAIL OTP] Firestore persistence unavailable; using short-lived local OTP fallback.");
+    return res.status(503).json({ success: false, error: "Verification service is temporarily unavailable. Please try again." });
   }
+  if (!dbData.emailOtps) dbData.emailOtps = {};
   dbData.emailOtps[cleanEmail] = challenge;
   saveDatabase();
 
@@ -1218,10 +1231,10 @@ app.post("/api/v1/auth/forgot-password", async (req, res) => {
   const challengeKey = `reset_${email.replace(/[^a-zA-Z0-9]/g, "_")}`;
   const challenge = { otp, email, type: "password-reset", expiresAt: Date.now() + 10 * 60 * 1000, createdAt: new Date().toISOString() };
   const durable = await persistAuthChallenge(challengeKey, challenge);
-  if (!dbData.passwordResetOtps) dbData.passwordResetOtps = {};
   if (!durable) {
-    console.warn("[PARDAIS PARTY PASSWORD RESET] Firestore persistence unavailable; using short-lived local recovery fallback.");
+    return res.status(503).json({ success: false, error: "Recovery service is temporarily unavailable. Please try again." });
   }
+  if (!dbData.passwordResetOtps) dbData.passwordResetOtps = {};
   dbData.passwordResetOtps[email] = challenge;
   saveDatabase();
 

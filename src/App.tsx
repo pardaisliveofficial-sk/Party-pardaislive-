@@ -932,7 +932,6 @@ export default function App() {
             setUser(mergedUser);
             setIsLoggedIn(true);
             localStorage.setItem("pardais_user_profile", JSON.stringify(mergedUser));
-            rememberDeviceAccount(token, mergedUser);
             lastSavedUserRef.current = JSON.stringify(mergedUser);
           }
         })
@@ -1315,15 +1314,6 @@ export default function App() {
   const [showNotifications, setShowNotifications] = useState<boolean>(false);
   const [hasUnreadNotifications, setHasUnreadNotifications] = useState<boolean>(true);
   const [showSettingsDrawer, setShowSettingsDrawer] = useState<boolean>(false);
-  type SavedDeviceAccount = { uid: string; email: string; username?: string; fullName?: string; avatar?: string; uniqueId?: string; token: string; };
-  const [savedDeviceAccounts, setSavedDeviceAccounts] = useState<SavedDeviceAccount[]>(() => {
-    try {
-      const raw = localStorage.getItem("pardais_saved_device_accounts");
-      const parsed = raw ? JSON.parse(raw) : [];
-      return Array.isArray(parsed) ? parsed.filter((a: any) => a?.token && (a?.uid || a?.email)) : [];
-    } catch { return []; }
-  });
-  const [showAccountSwitcher, setShowAccountSwitcher] = useState<boolean>(false);
 
   // Android App Conversion & PWA Install State
   const [showAndroidInstallModal, setShowAndroidInstallModal] = useState<boolean>(false);
@@ -7410,11 +7400,10 @@ export default function App() {
         setLoginSuccessMsg(data.message || `OTP dispatched to ${loginEmail}`);
       })
       .catch(err => {
-        console.warn("Send Email OTP fallback mode:", err);
-        const fallbackOtp = "123456";
-        setIsOtpSent(true);
-        setLoginOtp(fallbackOtp);
-        setLoginSuccessMsg(`Verification code generated: ${fallbackOtp}`);
+        console.warn("Send Email OTP failed:", err);
+        setIsOtpSent(false);
+        setLoginOtp("");
+        setLoginError(err?.message || "Verification code could not be sent. Please try again.");
       });
   };
 
@@ -7743,53 +7732,6 @@ export default function App() {
     setShowProfileSetupModal(false);
   };
 
-  const persistSavedDeviceAccounts = (accounts: SavedDeviceAccount[]) => {
-    const unique = accounts.filter((account, index, arr) =>
-      arr.findIndex((a) => (a.uid && account.uid ? a.uid === account.uid : a.email.toLowerCase() === account.email.toLowerCase())) === index
-    ).slice(0, 5);
-    setSavedDeviceAccounts(unique);
-    localStorage.setItem("pardais_saved_device_accounts", JSON.stringify(unique));
-    return unique;
-  };
-
-  const rememberDeviceAccount = (token: string, account: any) => {
-    if (!token || !account) return;
-    const normalized: SavedDeviceAccount = {
-      uid: String(account.uid || account.uniqueId || account.email || ""),
-      email: String(account.email || "").toLowerCase(),
-      username: account.username,
-      fullName: account.fullName,
-      avatar: account.avatar,
-      uniqueId: account.uniqueId,
-      token
-    };
-    const next = [normalized, ...savedDeviceAccounts.filter((a) =>
-      (normalized.uid && a.uid !== normalized.uid) && a.email !== normalized.email
-    )];
-    persistSavedDeviceAccounts(next);
-  };
-
-  const switchToSavedDeviceAccount = (account: SavedDeviceAccount) => {
-    if (!account?.token) return;
-    localStorage.setItem("pardais_auth_token", account.token);
-    localStorage.setItem("pardais_is_logged_in", "true");
-    const nextUser = {
-      ...DEFAULT_USER,
-      ...account,
-      uid: account.uid,
-      email: account.email,
-      isGuest: false
-    } as UserProfile;
-    localStorage.setItem("pardais_user_profile", JSON.stringify(nextUser));
-    lastSavedUserRef.current = JSON.stringify(nextUser);
-    setUser(nextUser);
-    setIsLoggedIn(true);
-    setShowAuthModal(false);
-    setShowAccountSwitcher(false);
-    setShowSettingsDrawer(false);
-    setLoginError("");
-  };
-
   // Persistent email/password authentication completion. Only a real backend token can log the user in.
   const handlePersistentAuthenticated = (payload: any) => {
     const token = payload?.token;
@@ -7802,7 +7744,6 @@ export default function App() {
     localStorage.setItem("pardais_is_logged_in", "true");
     localStorage.setItem("pardais_user_profile", JSON.stringify({ ...authenticatedUser, isGuest: false }));
     lastSavedUserRef.current = JSON.stringify(authenticatedUser);
-    rememberDeviceAccount(token, { ...authenticatedUser, isGuest: false });
     setUser({ ...authenticatedUser, isGuest: false });
     setIsLoggedIn(true);
     setShowAuthModal(false);
@@ -7815,41 +7756,31 @@ export default function App() {
     }
   };
 
-  // Universal Logout — clear the active account immediately.
-  const handleLogout = () => {
+  // Universal Logout
+  const handleLogout = async () => {
     const token = localStorage.getItem("pardais_auth_token");
-    const activeUid = user?.uid || user?.uniqueId || "";
-
-    // Remove the active account from the device switcher; other saved accounts stay available.
-    const remaining = savedDeviceAccounts.filter((account) =>
-      !((activeUid && account.uid === activeUid) || (user?.email && account.email === String(user.email).toLowerCase()))
-    );
-    persistSavedDeviceAccounts(remaining);
-
-    // UI/session state is cleared synchronously so Logout responds immediately.
-    localStorage.removeItem("pardais_auth_token");
-    localStorage.removeItem("pardais_user_profile");
-    localStorage.removeItem("pardais_avatar_user_set");
-    localStorage.setItem("pardais_is_logged_in", "false");
-    setIsLoggedIn(false);
-    setUser({ ...DEFAULT_USER, username: "Guest_Visitor", fullName: "Guest Visitor", isGuest: true });
-    setLoginEmail("");
-    setLoginOtp("");
-    setLoginError("");
-    setLoginSuccessMsg("");
-    setShowProfileSetupModal(false);
-    setPendingAuthCallback(null);
-    setShowAccountSwitcher(false);
-    setShowSettingsDrawer(false);
-    setShowAuthModal(true);
-
-    // Server/Firebase logout is deliberately fire-and-forget so it never delays the UI logout.
-    void signOut(clientAuth).catch(() => {});
-    if (token) {
-      void fetch(resolveApiUrl("/api/v1/auth/logout"), {
-        method: "POST",
-        headers: { "Authorization": `Bearer ${token}` }
-      }).catch(() => {});
+    try {
+      await signOut(clientAuth).catch(() => {});
+      if (token) {
+        await fetch("/api/v1/auth/logout", {
+          method: "POST",
+          headers: { "Authorization": `Bearer ${token}` }
+        }).catch(() => {});
+      }
+    } finally {
+      localStorage.removeItem("pardais_auth_token");
+      localStorage.removeItem("pardais_user_profile");
+      localStorage.removeItem("pardais_avatar_user_set");
+      localStorage.setItem("pardais_is_logged_in", "false");
+      setIsLoggedIn(false);
+      setUser({ ...DEFAULT_USER, username: "Guest_Visitor", fullName: "Guest Visitor", isGuest: true });
+      setLoginEmail("");
+      setLoginOtp("");
+      setLoginError("");
+      setLoginSuccessMsg("");
+      setShowProfileSetupModal(false);
+      setPendingAuthCallback(null);
+      setShowAuthModal(true);
     }
   };
 
@@ -26119,28 +26050,6 @@ export default function App() {
                             </div>
                           </div>
 
-                          {/* 👥 ACCOUNT SWITCHER / ADD ACCOUNT */}
-                          <div className="pt-1 space-y-1.5">
-                            <button
-                              type="button"
-                              onClick={() => setShowAccountSwitcher(true)}
-                              className="w-full bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-400/30 text-cyan-200 py-2 rounded-xl text-[10px] font-black transition-all flex items-center justify-center space-x-1.5"
-                            >
-                              <span>🔄</span><span>Switch Account</span>
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setShowSettingsDrawer(false);
-                                setLoginError("");
-                                setShowAuthModal(true);
-                              }}
-                              className="w-full bg-purple-500/10 hover:bg-purple-500/20 border border-purple-400/30 text-purple-200 py-2 rounded-xl text-[10px] font-black transition-all flex items-center justify-center space-x-1.5"
-                            >
-                              <span>➕</span><span>Add Account</span>
-                            </button>
-                          </div>
-
                           {/* Quick Logout option */}
                           <div className="pt-1">
                             <button
@@ -26162,53 +26071,6 @@ export default function App() {
                             className="w-full bg-[#303040] hover:bg-[#404050] text-white py-2 rounded-xl text-[10px] font-black transition-all cursor-pointer"
                           >
                             Return to App
-                          </button>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* ===================================================================== */}
-                    {/* 👥 SAVED ACCOUNT SWITCHER */}
-                    {/* ===================================================================== */}
-                    {showAccountSwitcher && (
-                      <div className="fixed inset-0 bg-black/90 backdrop-blur-md z-[9998] flex items-center justify-center p-4">
-                        <div className="bg-[#171722] border border-cyan-400/30 rounded-2xl p-4 w-full max-w-sm space-y-3 shadow-2xl">
-                          <div className="flex items-center justify-between">
-                            <div>
-                              <h4 className="text-white text-sm font-black">Switch Account</h4>
-                              <p className="text-[8px] text-gray-400">Accounts added on this device stay available for quick switching.</p>
-                            </div>
-                            <button type="button" onClick={() => setShowAccountSwitcher(false)} className="text-gray-400 hover:text-white w-7 h-7 rounded-full bg-white/5">✕</button>
-                          </div>
-                          {savedDeviceAccounts.length === 0 ? (
-                            <div className="text-center py-5 text-gray-400 text-xs">No other saved account on this device.</div>
-                          ) : (
-                            <div className="space-y-2 max-h-[45vh] overflow-y-auto">
-                              {savedDeviceAccounts.map((account) => (
-                                <button
-                                  key={`${account.uid}-${account.email}`}
-                                  type="button"
-                                  onClick={() => switchToSavedDeviceAccount(account)}
-                                  className="w-full flex items-center gap-3 p-3 rounded-xl bg-white/5 hover:bg-cyan-500/10 border border-white/10 hover:border-cyan-400/30 text-left"
-                                >
-                                  <div className="w-10 h-10 rounded-full overflow-hidden bg-black/30 border border-white/10 shrink-0">
-                                    {account.avatar ? <img src={account.avatar} className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center text-lg">👤</div>}
-                                  </div>
-                                  <div className="min-w-0 flex-1">
-                                    <div className="text-white text-xs font-black truncate">{account.fullName || account.username || "Pardais Account"}</div>
-                                    <div className="text-gray-400 text-[9px] truncate">{account.email}</div>
-                                  </div>
-                                  <span className="text-cyan-300 text-[9px] font-black">SWITCH</span>
-                                </button>
-                              ))}
-                            </div>
-                          )}
-                          <button
-                            type="button"
-                            onClick={() => { setShowAccountSwitcher(false); setShowAuthModal(true); }}
-                            className="w-full bg-gradient-to-r from-[#ff007f] to-[#7b2cbf] text-white py-2.5 rounded-xl text-[10px] font-black"
-                          >
-                            ➕ Add Another Account
                           </button>
                         </div>
                       </div>
@@ -30891,28 +30753,6 @@ export default function App() {
               <h3 className="text-base font-black text-white tracking-wide uppercase font-mono">Login to Pardais Party</h3>
               <p className="text-[11px] text-pink-200 leading-snug px-2">Use your registered email and password, or create a new account.</p>
             </div>
-            {savedDeviceAccounts.length > 0 && (
-              <div className="mb-4 space-y-2">
-                <div className="text-[9px] text-cyan-300 font-black uppercase tracking-widest">Saved Accounts</div>
-                {savedDeviceAccounts.map((account) => (
-                  <button
-                    key={`login-${account.uid}-${account.email}`}
-                    type="button"
-                    onClick={() => switchToSavedDeviceAccount(account)}
-                    className="w-full flex items-center gap-2.5 p-2.5 rounded-xl bg-white/5 border border-white/10 hover:border-cyan-400/30 text-left"
-                  >
-                    <div className="w-8 h-8 rounded-full overflow-hidden bg-black/30 shrink-0">
-                      {account.avatar ? <img src={account.avatar} className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center">👤</div>}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="text-white text-[10px] font-black truncate">{account.fullName || account.username || "Pardais Account"}</div>
-                      <div className="text-gray-400 text-[8px] truncate">{account.email}</div>
-                    </div>
-                    <span className="text-cyan-300 text-[8px] font-black">LOGIN</span>
-                  </button>
-                ))}
-              </div>
-            )}
             <PersistentEmailAuth onAuthenticated={handlePersistentAuthenticated} />
             <div className="mt-4 pt-3 border-t border-white/10">
               <button type="button" onClick={()=>{ setSelectedAuthMethod(selectedAuthMethod === "email" ? "google" : "email"); }} className="w-full py-2 text-gray-400 text-xs">{selectedAuthMethod === "email" ? "Use Google instead" : "Use Email & Password instead"}</button>

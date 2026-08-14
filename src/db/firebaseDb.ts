@@ -10,7 +10,8 @@ import {
   collection, 
   onSnapshot,
   setLogLevel,
-  getDocs
+  getDocs,
+  runTransaction
 } from "firebase/firestore";
 import { resolveApiUrl } from "../lib/apiClient";
 import appletConfig from "../../firebase-applet-config.json";
@@ -242,13 +243,31 @@ export async function persistEmailRegistry(email: string, user: any): Promise<bo
   if (!cleanEmail || !user?.uid) return false;
   const emailKey = cleanEmail.replace(/[^a-zA-Z0-9]/g, "_");
   try {
-    await setDoc(doc(db, "emailRegistry", emailKey), sanitizeForFirestore({
-      email: cleanEmail,
-      uid: user.uid,
-      username: user.username || "",
-      registeredAt: user.registeredAt || new Date().toISOString(),
-      locked: true
-    }), { merge: true });
+    const registryRef = doc(db, "emailRegistry", emailKey);
+    await runTransaction(db, async (tx) => {
+      const existing = await tx.get(registryRef);
+      if (existing.exists()) {
+        const current = existing.data() || {};
+        if (String(current.uid || "") !== String(user.uid)) {
+          throw new Error("EMAIL_REGISTRY_LOCKED_TO_ANOTHER_ACCOUNT");
+        }
+        tx.set(registryRef, sanitizeForFirestore({
+          email: cleanEmail,
+          uid: user.uid,
+          username: user.username || current.username || "",
+          registeredAt: current.registeredAt || user.registeredAt || new Date().toISOString(),
+          locked: true
+        }), { merge: true });
+        return;
+      }
+      tx.set(registryRef, sanitizeForFirestore({
+        email: cleanEmail,
+        uid: user.uid,
+        username: user.username || "",
+        registeredAt: user.registeredAt || new Date().toISOString(),
+        locked: true
+      }), { merge: false });
+    });
     return true;
   } catch (err) {
     handleQuotaError(err, `persist email registry ${emailKey}`);
@@ -552,14 +571,16 @@ export async function hydrateReelsFromFirestore(force = false): Promise<any[]> {
   return Array.isArray(dbDataCache.reels) ? dbDataCache.reels : [];
 }
 
-export async function syncDocument(collectionName: string, docId: string, data: any) {
-  if (isFirestoreQuotaExhausted) return;
+export async function syncDocument(collectionName: string, docId: string, data: any): Promise<boolean> {
+  if (isFirestoreQuotaExhausted) return false;
   try {
-    if (!docId) return;
+    if (!docId) return false;
     await setDoc(doc(db, collectionName, String(docId)), sanitizeForFirestore(data), { merge: true });
     console.log(`[PARDAIS-PARTY FIREBASE] Synced document to Firestore: ${collectionName}/${docId}`);
+    return true;
   } catch (err) {
     handleQuotaError(err, `syncDocument ${collectionName}/${docId}`);
+    return false;
   }
 }
 

@@ -33,7 +33,15 @@ export default function PersistentEmailAuth({ onAuthenticated }: Props) {
       }
       setExistingNeedsPassword(false);
       const sent = await sendEmailOtp(clean);
-      if (!sent?.success) throw new Error(sent?.error || "Could not send verification code.");
+      if (!sent?.success) {
+        if (sent?.code === "EMAIL_ALREADY_REGISTERED") {
+          setExistingNeedsPassword(true);
+          setStep("password");
+          setError("This email is already registered. Please log in or use Forgot Password.");
+          return;
+        }
+        throw new Error(sent?.error || "Could not send verification code.");
+      }
       setStep("otp");
     } catch (e) { fail(e, "Could not continue with this email."); }
     finally { setBusy(false); }

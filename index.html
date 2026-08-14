@@ -126,18 +126,9 @@
   const saveToken=t=>localStorage.setItem("pardais_auth_token",t);
   const setMsg=x=>msg.textContent=x||"";
   async function post(path,body){
-    const controller=new AbortController();
-    const timeout=setTimeout(()=>controller.abort(),20000);
-    let r;
-    try{
-      r=await fetch(API+path,{method:"POST",headers:{"Content-Type":"application/json","Accept":"application/json"},body:JSON.stringify(body),signal:controller.signal});
-    }catch(e){
-      if(e && e.name==="AbortError") throw new Error("Server request timed out. Please try again.");
-      throw new Error("Unable to connect to Pardais Party server.");
-    }finally{clearTimeout(timeout)}
-    const d=await r.json().catch(()=>({}));
-    if(!r.ok)throw new Error(d.error||d.message||("Server error ("+r.status+")"));
-    return d;
+    let r; try{r=await fetch(API+path,{method:"POST",headers:{"Content-Type":"application/json","Accept":"application/json"},body:JSON.stringify(body)})}
+    catch(e){throw new Error("Unable to connect to Pardais Party server.")}
+    const d=await r.json().catch(()=>({})); if(!r.ok)throw new Error(d.error||d.message||("Server error ("+r.status+")")); return d;
   }
   function finish(d){if(d.token)saveToken(d.token);window.__pardaisAuthenticatedUser=d.user||{};gate.remove();}
   function tab(name){
@@ -164,38 +155,17 @@
   document.getElementById("pardais-signup-send").onclick=async()=>{
     const email=document.getElementById("pardais-signup-email-input").value.trim().toLowerCase();
     if(!email||!email.includes("@")){setMsg("Enter a valid email address.");return}
-    const btn=document.getElementById("pardais-signup-send");
-    if(btn.disabled)return;
-    btn.disabled=true; btn.textContent="Checking email…";
     try{
       const st=await post("/api/v1/auth/email-status",{email});
-      if(st.exists){
-        setMsg("This email is already registered. Please use Login or Forgot Password.");
-        tab("login");
-        document.getElementById("pardais-login-identifier").value=email;
-        return;
-      }
-      signupEmail=email;
-      btn.textContent="Sending code…";
-      await post("/api/v1/auth/send-email-otp",{email});
+      if(st.exists&&!st.needsPassword){setMsg("This email already has an account. Please use Login.");tab("login");document.getElementById("pardais-login-identifier").value=email;return}
+      signupEmail=email; await post("/api/v1/auth/send-email-otp",{email});
       document.getElementById("pardais-signup-email").style.display="none";
       document.getElementById("pardais-signup-otp").style.display="block";
-      setMsg("Verification code sent. Check your email inbox and spam folder.");
-      document.getElementById("pardais-signup-otp-input").focus();
-      startResend();
-    }catch(e){
-      setMsg(e.message||"Could not send verification code. Please try again.");
-    }finally{
-      btn.disabled=false; btn.textContent="Send Verification Code";
-    }
+      setMsg("Verification code sent. Check your email.");document.getElementById("pardais-signup-otp-input").focus();startResend();
+    }catch(e){setMsg(e.message||"Could not send verification code.")}
   };
   function startResend(){const b=document.getElementById("pardais-signup-resend");let s=60;b.disabled=true;b.textContent="Resend Code ("+s+"s)";clearInterval(timer);timer=setInterval(()=>{if(--s<=0){clearInterval(timer);b.disabled=false;b.textContent="Resend Code"}else b.textContent="Resend Code ("+s+"s)"},1000)}
-  document.getElementById("pardais-signup-resend").onclick=async()=>{
-    const b=document.getElementById("pardais-signup-resend");
-    if(b.disabled)return;
-    try{b.disabled=true;b.textContent="Sending…";await post("/api/v1/auth/send-email-otp",{email:signupEmail});setMsg("New verification code sent. Check your inbox.");startResend()}
-    catch(e){b.disabled=false;b.textContent="Resend Code";setMsg(e.message||"Could not resend verification code.")}
-  };
+  document.getElementById("pardais-signup-resend").onclick=async()=>{try{await post("/api/v1/auth/send-email-otp",{email:signupEmail});setMsg("New verification code sent.");startResend()}catch(e){setMsg(e.message)}};
 
   document.getElementById("pardais-signup-verify").onclick=async()=>{
     const code=document.getElementById("pardais-signup-otp-input").value.trim();
