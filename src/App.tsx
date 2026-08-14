@@ -108,7 +108,6 @@ import { dbDataCache, db, auth as firebaseAuth } from "./db/firebaseDb";
 import { PardaisPartyLogo, PardaisLiveLogo } from "./components/PardaisPartyLogo";
 import { PardaisPartySplashScreen } from "./components/PardaisPartySplashScreen";
 import { PartyGamesModal } from "./components/PartyGamesModal";
-import PersistentEmailAuth from "./components/PersistentEmailAuth";
 import { initializeApp, getApps, getApp } from "firebase/app";
 import { getAuth, signInWithPopup, signInWithRedirect, getRedirectResult, GoogleAuthProvider, signOut } from "firebase/auth";
 import firebaseConfig from "../firebase-applet-config.json";
@@ -679,7 +678,6 @@ export default function App() {
 
   // Guest Mode & Auth Prompt Modal State
   const [showAuthModal, setShowAuthModal] = useState<boolean>(false);
-  const [authGateLocked, setAuthGateLocked] = useState<boolean>(false);
   const [authModalReason, setAuthModalReason] = useState<string>("interact with features");
   const [pendingAuthCallback, setPendingAuthCallback] = useState<(() => void) | null>(null);
 
@@ -889,11 +887,10 @@ export default function App() {
       }
 
       if (!token) {
-        // No authentication token means the user is not authenticated.
-        // Never restore a cached profile as a logged-in session after logout.
-        setIsLoggedIn(false);
-        if (savedProfile) {
-          localStorage.removeItem("pardais_user_profile");
+        if (!savedProfile) {
+          refreshSession().then(() => {
+            setIsLoggedIn(true);
+          });
         }
         return;
       }
@@ -931,10 +928,6 @@ export default function App() {
         })
         .catch(err => {
           console.warn("[PARDAIS AUTH RESTORE] Session verification notice:", err.message);
-          localStorage.removeItem("pardais_auth_token");
-          localStorage.removeItem("pardais_user_profile");
-          localStorage.setItem("pardais_is_logged_in", "false");
-          setIsLoggedIn(false);
         });
     };
 
@@ -7662,16 +7655,13 @@ export default function App() {
     try {
       await signOut(clientAuth).catch(() => {});
       if (token) {
-        await fetch(resolveApiUrl("/api/v1/auth/logout"), {
+        await fetch("/api/v1/auth/logout", {
           method: "POST",
           headers: { "Authorization": `Bearer ${token}` }
         }).catch(() => {});
       }
     } finally {
-      // Clear every local account/session marker so a previous account can
-      // never be restored or silently replaced by a guest session.
       localStorage.removeItem("pardais_auth_token");
-      localStorage.removeItem("pardais_user_profile");
       localStorage.setItem("pardais_is_logged_in", "false");
       setIsLoggedIn(false);
       setUser({
@@ -7680,15 +7670,6 @@ export default function App() {
         fullName: "Guest Visitor",
         isGuest: true
       });
-      setLoginEmail("");
-      setLoginOtp("");
-      setIsOtpSent(false);
-      setLoginError("");
-      setLoginSuccessMsg("");
-      setPendingAuthCallback(null);
-      setAuthGateLocked(true);
-      setAuthModalReason("continue using Pardais Party");
-      setShowAuthModal(true);
     }
   };
 
@@ -30663,18 +30644,16 @@ export default function App() {
           <div className="bg-gradient-to-b from-[#1c082b] via-[#100a1c] to-[#0a0a12] border border-[#ff007f]/50 rounded-3xl w-full max-w-[400px] p-5 shadow-[0_0_40px_rgba(255,0,127,0.3)] flex flex-col text-white space-y-4 relative animate-pop-gift max-h-[90vh] overflow-y-auto">
             
             {/* Close / Dismiss Button */}
-            {!authGateLocked && (
-              <button
-                type="button"
-                onClick={() => {
-                  setShowAuthModal(false);
-                  setPendingAuthCallback(null);
-                }}
-                className="absolute top-3.5 right-3.5 w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-gray-300 hover:text-white transition-all cursor-pointer z-10"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            )}
+            <button
+              type="button"
+              onClick={() => {
+                setShowAuthModal(false);
+                setPendingAuthCallback(null);
+              }}
+              className="absolute top-3.5 right-3.5 w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-gray-300 hover:text-white transition-all cursor-pointer z-10"
+            >
+              <X className="w-4 h-4" />
+            </button>
 
             {/* Header & Lock Badge */}
             <div className="text-center space-y-2 pt-1">
@@ -30700,7 +30679,7 @@ export default function App() {
                     : "text-gray-400 hover:text-white"
                 }`}
               >
-                Email
+                Email OTP
               </button>
               <button
                 type="button"
@@ -30714,6 +30693,16 @@ export default function App() {
                 Google Auth
               </button>
             </div>
+
+            {/* Instant One-Tap Quick Account Button */}
+            <button
+              type="button"
+              onClick={handleQuickGuestLogin}
+              className="w-full py-2.5 px-4 bg-gradient-to-r from-[#00f5ff]/20 via-[#7b2cbf]/20 to-[#ff007f]/20 hover:from-[#00f5ff]/30 hover:to-[#ff007f]/30 border border-[#00f5ff]/40 rounded-2xl flex items-center justify-center space-x-2 text-white shadow-lg transition-all active:scale-[0.98] cursor-pointer"
+            >
+              <Zap className="w-4 h-4 text-[#00f5ff] animate-pulse" />
+              <span className="text-xs font-black tracking-wide">⚡ One-Tap Instant Registration</span>
+            </button>
 
             {/* Error / Success Alerts */}
             {loginError && (
@@ -30730,52 +30719,45 @@ export default function App() {
             )}
 
             {selectedAuthMethod === "email" ? (
-              <PersistentEmailAuth
-                onSendOtp={async (email) => {
-                  const res = await fetch(resolveApiUrl("/api/v1/auth/send-email-otp"), {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ email: email.trim().toLowerCase() })
-                  });
-                  return res.json();
-                }}
-                onVerifyOtp={async (email, otp) => {
-                  const res = await fetch(resolveApiUrl("/api/v1/auth/verify-email-otp"), {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ email: email.trim().toLowerCase(), otp })
-                  });
-                  const data = await res.json().catch(() => ({}));
-                  if (!res.ok) return { success: false, error: data.error || "Invalid verification code." };
-                  return data;
-                }}
-                onAuthenticated={(payload) => {
-                  if (!payload?.token || !payload?.user) {
-                    setLoginError("Authentication succeeded but no account session was returned.");
-                    return;
-                  }
-                  localStorage.setItem("pardais_auth_token", payload.token);
-                  localStorage.setItem("pardais_is_logged_in", "true");
-                  localStorage.setItem("pardais_user_profile", JSON.stringify(payload.user));
-                  lastSavedUserRef.current = JSON.stringify(payload.user);
-                  setUser(payload.user);
-                  setIsLoggedIn(true);
-                  setAuthGateLocked(false);
-                  setShowAuthModal(false);
-                  setLoginError("");
-                  setLoginSuccessMsg("");
-                  if (pendingAuthCallback) {
-                    const cb = pendingAuthCallback;
-                    setPendingAuthCallback(null);
-                    try { cb(); } catch (e) {}
-                  }
-                  if (payload.isNewUser || !payload.user.fullName || payload.user.fullName === "Pardais Member") {
-                    setSetupFullName(payload.user.fullName || "");
-                    setSetupUsername(payload.user.username || "");
-                    setShowProfileSetupModal(true);
-                  }
-                }}
-              />
+              <form onSubmit={isOtpSent ? handleVerifyEmailOtp : handleSendEmailOtp} className="space-y-3">
+                <div>
+                  <label className="text-[9px] uppercase tracking-wider text-gray-400 block mb-1 font-bold font-mono">Email Address</label>
+                  <input
+                    type="email"
+                    placeholder="user@example.com"
+                    value={loginEmail}
+                    onChange={(e) => {
+                      setLoginEmail(e.target.value);
+                      if (loginError) setLoginError("");
+                    }}
+                    disabled={isOtpSent}
+                    className="w-full bg-[#1e1e2d] border border-[#303040] rounded-xl px-3 py-2 text-white text-xs focus:outline-none focus:border-[#ff007f] font-mono"
+                  />
+                </div>
+
+                {isOtpSent && (
+                  <div className="animate-pop-gift bg-[#1e1e2d] p-3 rounded-xl border border-[#ff007f]/20 space-y-1">
+                    <label className="text-[9px] uppercase tracking-wider text-[#00f5ff] block font-bold font-mono">Enter 6-Digit OTP Code</label>
+                    <input
+                      type="text"
+                      placeholder="123456"
+                      value={loginOtp}
+                      onChange={(e) => {
+                        setLoginOtp(e.target.value);
+                        if (loginError) setLoginError("");
+                      }}
+                      className="w-full bg-[#12121a] border border-[#00f5ff] rounded-lg px-3 py-2 text-white text-center text-sm font-black focus:outline-none tracking-widest font-mono"
+                    />
+                  </div>
+                )}
+
+                <button
+                  type="submit"
+                  className="w-full bg-gradient-to-r from-[#ff007f] to-[#7b2cbf] text-white py-2.5 rounded-xl text-xs font-bold shadow-lg hover:opacity-95 transition-all cursor-pointer"
+                >
+                  {isOtpSent ? "Verify Code & Log In" : "Send Email OTP Code"}
+                </button>
+              </form>
             ) : (
               <div className="space-y-2">
                 <button
@@ -30789,18 +30771,17 @@ export default function App() {
               </div>
             )}
 
-            {!authGateLocked && (
-              <button
-                type="button"
-                onClick={() => {
-                  setShowAuthModal(false);
-                  setPendingAuthCallback(null);
-                }}
-                className="w-full py-2 bg-white/5 hover:bg-white/10 text-gray-300 font-bold text-xs rounded-xl border border-white/10 transition-all cursor-pointer text-center"
-              >
-                Continue Browsing as Guest 👁️
-              </button>
-            )}
+            {/* Dismiss Button */}
+            <button
+              type="button"
+              onClick={() => {
+                setShowAuthModal(false);
+                setPendingAuthCallback(null);
+              }}
+              className="w-full py-2 bg-white/5 hover:bg-white/10 text-gray-300 font-bold text-xs rounded-xl border border-white/10 transition-all cursor-pointer text-center"
+            >
+              Continue Browsing as Guest 👁️
+            </button>
           </div>
         </div>
       )}
