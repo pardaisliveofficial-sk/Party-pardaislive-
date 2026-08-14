@@ -304,6 +304,12 @@ const normalizeReelUrl = (url: string | undefined | null): string => {
     return resolveApiUrl(cleanPath);
   }
 
+  // A URL that is already our playback proxy is canonical. NEVER normalize it
+  // again, otherwise `/api/v1/reels/media/reels/...` becomes duplicated.
+  if (url.includes("/api/v1/reels/media/")) {
+    return url;
+  }
+
   // Route all R2 reel objects through the API playback proxy. This endpoint
   // supports HTTP Range requests so the exact same stored file plays in both
   // Creator Hub and the public Reels feed.
@@ -1167,7 +1173,10 @@ export default function App() {
         if (rawUrl && (rawUrl.startsWith("/uploads/") || rawUrl.startsWith("uploads/") || rawUrl.startsWith("blob:") || rawUrl.startsWith("file:"))) {
           finalUrl = normalizeReelUrl(rawUrl);
         } else if (data.objectKey && !data.objectKey.startsWith("uploads/")) {
-          finalUrl = `https://media.pardaisparty.soulverseapps.com/${data.objectKey}`;
+          // Never build a direct R2 URL here. Use the same playback proxy as
+          // newly uploaded reels so Creator Hub and public Reels share one
+          // canonical media URL.
+          finalUrl = normalizeReelUrl(`https://media.pardaisparty.soulverseapps.com/${data.objectKey}`);
         } else {
           finalUrl = normalizeReelUrl(rawUrl);
         }
@@ -4493,8 +4502,8 @@ export default function App() {
         throw new Error("Could not acquire a valid R2 video playback URL. Reel publish aborted.");
       }
 
+      const finalObjectKey = responseKey || "";
       const finalNormalizedUrl = normalizeReelUrl(finalVideoUrl);
-      const finalObjectKey = responseKey || (finalNormalizedUrl.includes("reels/") ? finalNormalizedUrl.substring(finalNormalizedUrl.indexOf("reels/")) : "");
 
       setUploadStatus("Publishing Reel...");
       console.log("[PARDAIS-PARTY FRONTEND] Saving Reel metadata in Firestore. Video URL:", finalNormalizedUrl);

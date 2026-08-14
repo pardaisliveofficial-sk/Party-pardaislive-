@@ -5608,8 +5608,18 @@ Do not wrap your answer in quotes or add metadata. Speak as the host directly.`;
 // Uses the same R2 object URL for every viewer and supports HTTP Range requests.
 app.use("/api/v1/reels/media", async (req: any, res: any) => {
   try {
-    const rawPath = String(req.path || "").replace(/^\/+/, "");
-    const objectKey = decodeURIComponent(rawPath).replace(/^\/+/, "");
+    let rawPath = String(req.path || "").replace(/^\/+/, "");
+    let objectKey = decodeURIComponent(rawPath).replace(/^\/+/, "");
+
+    // Repair old clients/records that accidentally prefixed the playback path
+    // more than once. The R2 object itself is still stored under one canonical
+    // `reels/...` key.
+    while (objectKey.startsWith("api/v1/reels/media/")) {
+      objectKey = objectKey.substring("api/v1/reels/media/".length);
+    }
+    while (objectKey.startsWith("reels/media/")) {
+      objectKey = objectKey.substring("reels/media/".length);
+    }
 
     if (!objectKey.startsWith("reels/")) {
       return res.status(400).json({ error: "Invalid reel media key" });
