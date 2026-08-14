@@ -530,7 +530,6 @@ const ReelVideoPlayer: React.FC<ReelVideoPlayerProps> = ({
           className="w-full h-full object-cover z-0"
           loop
           playsInline
-          preload={isActive ? "auto" : "metadata"}
           muted={muted}
           onWaiting={() => setIsLoading(true)}
           onPlaying={() => {
@@ -5189,15 +5188,14 @@ export default function App() {
       fetch("/api/v1/reels")
         .then(res => res.ok ? res.json() : null)
         .then(data => {
-          if (Array.isArray(data) && data.length > 0) {
+          if (Array.isArray(data)) {
             const seen = new Set();
-            const durableReels = data.filter((item: any) => {
+            setReels(data.filter((item: any) => {
               if (!item || !item.id) return false;
               if (seen.has(item.id)) return false;
               seen.add(item.id);
               return true;
-            });
-            if (durableReels.length > 0) setReels(durableReels);
+            }));
           }
         })
         .catch(() => {});
@@ -15402,7 +15400,7 @@ export default function App() {
                                     className="w-full h-full object-contain bg-black"
                                     controls
                                     playsInline
-                                    preload="auto"
+                                    preload="metadata"
                                     onError={(event) => {
                                       console.error("[PARDAIS CREATOR HUB] Uploaded reel playback failed:", {
                                         reelId: selectedProfileReel.id,
