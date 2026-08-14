@@ -5113,7 +5113,7 @@ app.get("/api/v1/reels", async (req, res) => {
 
 app.post("/api/v1/reels", async (req, res) => {
   const newReel = {
-    id: `r-${Date.now()}`,
+    id: `r-${Date.now()}-${crypto.randomBytes(4).toString("hex")}`,
     views: 0,
     likes: 0,
     commentsCount: 0,
@@ -5125,12 +5125,57 @@ app.post("/api/v1/reels", async (req, res) => {
     comments: [],
     ...req.body
   };
+
   if (!dbData.reels) dbData.reels = [];
   dbData.reels.unshift(newReel);
+
+  // IMPORTANT: the client must receive a success response immediately after the
+  // reel record is safely written locally. Firestore/R2 synchronization is
+  // deliberately performed in the background so a slow/temporary cloud write
+  // cannot keep the publish screen spinning at 100% or turn a successful upload
+  // into a false HTTP 502/timeout.
   saveDatabase();
-  await syncDocument("reels", newReel.id, newReel);
-  await persistReelMetadataToR2(newReel);
-  res.status(201).json(newReel);
+
+  const syncReelDurably = async () => {
+    let firestoreOk = false;
+    let r2Ok = false;
+
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        await syncDocument("reels", newReel.id, newReel);
+        firestoreOk = true;
+        break;
+      } catch (err: any) {
+        console.warn(`[PARDAIS-PARTY REELS] Firestore metadata sync attempt ${attempt}/3 failed:`, err?.message || err);
+        await new Promise(resolve => setTimeout(resolve, attempt * 1500));
+      }
+    }
+
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        r2Ok = await persistReelMetadataToR2(newReel);
+        if (r2Ok) break;
+      } catch (err: any) {
+        console.warn(`[PARDAIS-PARTY REELS] R2 metadata sync attempt ${attempt}/3 failed:`, err?.message || err);
+      }
+      await new Promise(resolve => setTimeout(resolve, attempt * 1500));
+    }
+
+    console.log(`[PARDAIS-PARTY REELS] Durable metadata sync complete for ${newReel.id}: Firestore=${firestoreOk}, R2=${r2Ok}`);
+  };
+
+  // Never block the HTTP response on cloud metadata persistence.
+  void syncReelDurably().catch(err => {
+    console.error("[PARDAIS-PARTY REELS] Background metadata persistence failed:", err);
+  });
+
+  return res.status(201).json({
+    success: true,
+    persisted: true,
+    persistencePending: true,
+    message: "Reel uploaded and published successfully. Cloud metadata synchronization is continuing in the background.",
+    ...newReel
+  });
 });
 
 app.put("/api/v1/reels/:id", async (req, res) => {
@@ -5800,20 +5845,51 @@ app.post("/api/v1/user/avatar", authenticateUser, avatarMulterUpload.single("ava
     const safeUserId = String(req.user.uid || req.user.username || "user").replace(/[^a-zA-Z0-9_-]/g, "_");
     const objectKey = `avatars/${safeUserId}/${Date.now()}-${crypto.randomBytes(5).toString("hex")}.webp`;
 
-    const client = getS3Client();
-    const bucketName = process.env.R2_BUCKET_NAME || "pardaisparty-reels";
+    let avatarUrl = "";
 
-    await client.send(new PutObjectCommand({
-      Bucket: bucketName,
-      Key: objectKey,
-      Body: optimized,
-      ContentType: "image/webp",
-      CacheControl: "public, max-age=31536000, immutable",
-    }));
+    // Primary: Cloudflare R2.
+    try {
+      if (!process.env.R2_ACCESS_KEY_ID || !process.env.R2_SECRET_ACCESS_KEY || !process.env.R2_ENDPOINT) {
+        throw new Error("Cloudflare R2 credentials not configured");
+      }
 
-    const publicBaseUrl = process.env.R2_PUBLIC_URL || "https://media.pardaisparty.soulverseapps.com";
-    const cleanBase = publicBaseUrl.endsWith("/") ? publicBaseUrl.slice(0, -1) : publicBaseUrl;
-    const avatarUrl = `${cleanBase}/${objectKey}`;
+      const client = getS3Client();
+      const bucketName = process.env.R2_BUCKET_NAME || "pardaisparty-reels";
+
+      await Promise.race([
+        client.send(new PutObjectCommand({
+          Bucket: bucketName,
+          Key: objectKey,
+          Body: optimized,
+          ContentType: "image/webp",
+          CacheControl: "public, max-age=31536000, immutable",
+        })),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("R2 profile photo upload timeout")), 30000)
+        )
+      ]);
+
+      const publicBaseUrl = process.env.R2_PUBLIC_URL || "https://media.pardaisparty.soulverseapps.com";
+      const cleanBase = publicBaseUrl.endsWith("/") ? publicBaseUrl.slice(0, -1) : publicBaseUrl;
+      avatarUrl = `${cleanBase}/${objectKey}`;
+    } catch (r2Err: any) {
+      // Fallback: save the already-optimized image to the API's persistent public
+      // uploads directory. This guarantees profile editing still completes even
+      // when R2 is temporarily unavailable.
+      console.warn("[PARDAIS-PARTY AVATAR] R2 upload unavailable; using API storage fallback:", r2Err?.message || r2Err);
+
+      const uploadsDir = path.join(process.cwd(), "public", "uploads");
+      if (!fs.existsSync(uploadsDir)) {
+        fs.mkdirSync(uploadsDir, { recursive: true });
+      }
+
+      const fallbackName = `avatar_${safeUserId}_${Date.now()}_${crypto.randomBytes(4).toString("hex")}.webp`;
+      const fallbackPath = path.join(uploadsDir, fallbackName);
+      fs.writeFileSync(fallbackPath, optimized);
+
+      const requestBaseUrl = `${req.protocol || "https"}://${req.get("host")}`;
+      avatarUrl = `${requestBaseUrl}/uploads/${fallbackName}`;
+    }
 
     // Persist the URL against the authenticated account immediately.
     const updatedUser = {
@@ -5822,22 +5898,36 @@ app.post("/api/v1/user/avatar", authenticateUser, avatarMulterUpload.single("ava
       avatarUrl,
     };
     req.user = updatedUser;
+
     const idxInUsers = dbData.users.findIndex((u: any) =>
       (u.uid && u.uid === updatedUser.uid) ||
       (u.username && u.username === updatedUser.username) ||
       (u.email && u.email === updatedUser.email)
     );
+
     if (idxInUsers !== -1) {
       dbData.users[idxInUsers] = { ...dbData.users[idxInUsers], avatar: avatarUrl, avatarUrl };
     } else {
       dbData.users.push(updatedUser);
     }
+
     dbData.user = updatedUser;
     saveDatabase();
-    syncDocument("users", updatedUser.username, updatedUser);
-    writeMetadata("user_profile", updatedUser);
 
-    return res.json({ success: true, url: avatarUrl, avatar: avatarUrl });
+    // Do not make the profile-photo UI wait for Firestore propagation.
+    void Promise.resolve(syncDocument("users", updatedUser.username, updatedUser)).catch((err: any) => {
+      console.warn("[PARDAIS-PARTY AVATAR] Firestore profile sync queued/failed:", err?.message || err);
+    });
+    void Promise.resolve(writeMetadata("user_profile", updatedUser)).catch((err: any) => {
+      console.warn("[PARDAIS-PARTY AVATAR] Metadata profile sync queued/failed:", err?.message || err);
+    });
+
+    return res.json({
+      success: true,
+      url: avatarUrl,
+      avatar: avatarUrl,
+      message: "Profile photo updated successfully."
+    });
   } catch (err: any) {
     console.error("[PARDAIS-PARTY AVATAR] Upload failed:", err);
     return res.status(500).json({

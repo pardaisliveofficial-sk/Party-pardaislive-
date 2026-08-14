@@ -4544,6 +4544,12 @@ export default function App() {
       if (!reelId) {
         throw new Error("Reel was uploaded but the server did not return a stable reel ID.");
       }
+
+      if (persistedReel?.persistencePending) {
+        setUploadStatus("Published! Saving Reel metadata in background...");
+      } else {
+        setUploadStatus("Reel Published Successfully!");
+      }
       
       // Save locally to profile reels
       const newProfileReel = {
