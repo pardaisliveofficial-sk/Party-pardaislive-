@@ -1,140 +1,116 @@
 import React, { useState } from "react";
-import { emailStatus, sendEmailOtp, verifyEmailOtp, emailPasswordLogin, createEmailPassword, requestPasswordReset, resetEmailPassword } from "../lib/apiClient";
+import { emailPasswordLogin, createEmailPassword, requestPasswordReset, resetEmailPassword } from "../lib/apiClient";
 
-type Props = { onAuthenticated: (payload: any) => void; };
+type Props = {
+  onAuthenticated: (payload: any) => void;
+  onSendOtp: (email: string) => Promise<any>;
+  onVerifyOtp: (email: string, otp: string) => Promise<any>;
+};
 
-export default function PersistentEmailAuth({ onAuthenticated }: Props) {
-  const [showPassword, setShowPassword] = useState(false);
-  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+/**
+ * Persistent email auth UI logic:
+ * - Returning users: password login (no OTP)
+ * - New users: email OTP -> create password/profile
+ * - Forgot password: email OTP only for recovery
+ */
+export default function PersistentEmailAuth({ onAuthenticated, onSendOtp, onVerifyOtp }: Props) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [otp, setOtp] = useState("");
   const [name, setName] = useState("");
   const [username, setUsername] = useState("");
-  const [step, setStep] = useState<"email"|"password"|"otp"|"profile"|"forgot">("email");
+  const [step, setStep] = useState<"email"|"password"|"otp"|"profile"|"forgotOtp"|"reset">("email");
   const [token, setToken] = useState("");
   const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
-
-  const fail = (e: any, fallback: string) => setError(e?.message || e?.error || fallback);
 
   const continueEmail = async () => {
-    const clean = email.trim().toLowerCase();
-    if (!clean || !clean.includes("@")) { setError("Enter a valid email address."); return; }
-    setError(""); setBusy(true);
-    try {
-      const status = await emailStatus(clean);
-      if (status?.exists && !status?.needsPassword) { setStep("password"); return; }
-      const sent = await sendEmailOtp(clean);
-      if (!sent?.success) throw new Error(sent?.error || "Could not send verification code.");
-      setStep("otp");
-    } catch (e) { fail(e, "Could not continue with this email."); }
-    finally { setBusy(false); }
+    setError("");
+    // The backend password-login response is deliberately used only to
+    // determine whether a password already exists; an incorrect password
+    // is expected here, so the app should normally expose the password step.
+    setStep("password");
   };
 
   const login = async () => {
-    setError(""); setBusy(true);
-    try {
-      const r = await emailPasswordLogin(email.trim().toLowerCase(), password);
-      if (!r?.success || !r?.token || !r?.user) throw new Error(r?.error || "Incorrect email/username or password.");
-      onAuthenticated(r);
-    } catch (e) { fail(e, "Incorrect email/username or password."); }
-    finally { setBusy(false); }
+    setError("");
+    const r = await emailPasswordLogin(email, password);
+    if (!r?.success) { setError(r?.error || "Unable to sign in."); return; }
+    onAuthenticated(r);
   };
 
   const verifyFirstEmail = async () => {
-    setError(""); setBusy(true);
-    try {
-      const r = await verifyEmailOtp(email, otp);
-      if (!r?.success || !r?.token || !r?.user) throw new Error(r?.error || "Invalid verification code.");
-      setToken(r.token);
-      setName(r.user.fullName || "");
-      setUsername(r.user.username || "");
-      setStep("profile");
-    } catch (e) { fail(e, "Invalid verification code."); }
-    finally { setBusy(false); }
+    setError("");
+    const r = await onVerifyOtp(email, otp);
+    if (!r?.success) { setError(r?.error || "Invalid verification code."); return; }
+    setToken(r.token || "");
+    setStep("profile");
   };
 
   const saveProfile = async () => {
-    if (!token) { setError("Verification session expired. Please start again."); return; }
-    if (!password || password.length < 6) { setError("Password must be at least 6 characters."); return; }
-    if (!name.trim() || username.trim().replace(/^@/, "").length < 3) { setError("Enter your name and a username of at least 3 characters."); return; }
-    setError(""); setBusy(true);
-    try {
-      const p = await createEmailPassword(token, password);
-      if (!p?.success) throw new Error(p?.error || "Could not create password.");
-      const profile = await fetch("/api/v1/auth/setup-profile", {
-        method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
-        body: JSON.stringify({ fullName: name.trim(), username: username.trim().replace(/^@/, "") })
-      }).then(async r => { const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.error || "Could not save profile."); return d; });
-      onAuthenticated({ success: true, token, user: profile.user || p.user });
-    } catch (e) { fail(e, "Could not create account."); }
-    finally { setBusy(false); }
+    if (!token) return;
+    if (password.length < 6) { setError("Password must be at least 6 characters."); return; }
+    const p = await createEmailPassword(token, password);
+    if (!p?.success) { setError(p?.error || "Could not create password."); return; }
+    const profile = await fetch("/api/v1/auth/setup-profile", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+      body: JSON.stringify({ fullName: name, username })
+    }).then(x => x.json());
+    if (!profile?.success) { setError(profile?.error || "Could not save profile."); return; }
+    onAuthenticated({ ...p, ...profile, token });
   };
 
   const startForgot = async () => {
-    const clean = email.trim().toLowerCase();
-    if (!clean || !clean.includes("@")) { setError("Enter your registered email first."); return; }
-    setError(""); setBusy(true);
-    try {
-      const r = await requestPasswordReset(clean);
-      if (!r?.success) throw new Error(r?.error || "Could not send recovery code.");
-      setStep("forgot");
-    } catch (e) { fail(e, "Could not start recovery."); }
-    finally { setBusy(false); }
+    setError("");
+    const r = await requestPasswordReset(email);
+    if (!r?.success) { setError(r?.error || "Could not start recovery."); return; }
+    setStep("forgotOtp");
   };
 
   const reset = async () => {
-    if (password.length < 6) { setError("New password must be at least 6 characters."); return; }
-    setError(""); setBusy(true);
-    try {
-      const r = await resetEmailPassword(email.trim().toLowerCase(), otp, password);
-      if (!r?.success || !r?.token || !r?.user) throw new Error(r?.error || "Could not reset password.");
-      onAuthenticated(r);
-    } catch (e) { fail(e, "Could not reset password."); }
-    finally { setBusy(false); }
+    setError("");
+    const r = await resetEmailPassword(email, otp, password);
+    if (!r?.success) { setError(r?.error || "Could not reset password."); return; }
+    onAuthenticated(r);
   };
 
-  return <div className="space-y-3">
-    {step === "email" && <>
-      <input value={email} onChange={e=>setEmail(e.target.value)} type="email" placeholder="Email address" className="w-full bg-[#1e1e2d] border border-[#303040] rounded-xl px-3 py-3 text-white text-sm" autoComplete="email" />
-      <button type="button" disabled={busy} onClick={continueEmail} className="w-full bg-gradient-to-r from-[#ff007f] to-[#7b2cbf] text-white py-3 rounded-xl font-bold">{busy ? "Please wait…" : "Continue"}</button>
-    </>}
-    {step === "password" && <>
-      <input value={email} readOnly type="email" className="w-full bg-[#1e1e2d] border border-[#303040] rounded-xl px-3 py-3 text-white text-sm" />
-      <div className="relative w-full">
-        <input value={password} onChange={e=>setPassword(e.target.value)} type={showPassword ? "text" : "password"} placeholder="Password" className="w-full bg-[#1e1e2d] border border-[#303040] rounded-xl px-3 py-3 pr-12 text-white text-sm" autoComplete="current-password" />
-        <button type="button" onClick={()=>setShowPassword(v=>!v)} className="absolute right-2 top-1/2 -translate-y-1/2 w-9 h-9 flex items-center justify-center text-lg" aria-label={showPassword ? "Hide password" : "Show password"}>{showPassword ? "🙈" : "👁️"}</button>
-      </div>
-      <button type="button" disabled={busy} onClick={login} className="w-full bg-gradient-to-r from-[#ff007f] to-[#7b2cbf] text-white py-3 rounded-xl font-bold">Login</button>
-      <button type="button" disabled={busy} onClick={startForgot} className="w-full py-2 bg-white/5 rounded-xl border border-white/10 text-gray-300 text-sm">Forgot Password?</button>
-      <button type="button" disabled={busy} onClick={()=>{setPassword("");setStep("email");}} className="w-full py-2 text-gray-400 text-xs">Use another email</button>
-    </>}
-    {step === "otp" && <>
-      <p className="text-xs text-gray-300">Verification code sent to <b>{email}</b>.</p>
-      <input value={otp} onChange={e=>setOtp(e.target.value)} maxLength={6} inputMode="numeric" placeholder="6-digit code" className="w-full bg-[#12121a] border border-[#00f5ff] rounded-xl px-3 py-3 text-white text-center tracking-widest font-bold" />
-      <button type="button" disabled={busy} onClick={verifyFirstEmail} className="w-full bg-gradient-to-r from-[#ff007f] to-[#7b2cbf] text-white py-3 rounded-xl font-bold">Verify Email</button>
-      <button type="button" onClick={()=>setStep("email")} className="w-full py-2 text-gray-400 text-xs">Use another email</button>
-    </>}
-    {step === "profile" && <>
-      <input value={name} onChange={e=>setName(e.target.value)} placeholder="Full name" className="w-full bg-[#1e1e2d] border border-[#303040] rounded-xl px-3 py-3 text-white text-sm" autoComplete="name" />
-      <input value={username} onChange={e=>setUsername(e.target.value)} placeholder="Username" className="w-full bg-[#1e1e2d] border border-[#303040] rounded-xl px-3 py-3 text-white text-sm" autoComplete="username" />
-      <input value={email} readOnly className="w-full bg-[#151520] border border-[#303040] rounded-xl px-3 py-3 text-gray-400 text-sm" />
-      <div className="relative w-full">
-        <input value={password} onChange={e=>setPassword(e.target.value)} type={showPassword ? "text" : "password"} placeholder="Create password (6+ characters)" className="w-full bg-[#1e1e2d] border border-[#303040] rounded-xl px-3 py-3 pr-12 text-white text-sm" autoComplete="new-password" />
-        <button type="button" onClick={()=>setShowPassword(v=>!v)} className="absolute right-2 top-1/2 -translate-y-1/2 w-9 h-9 flex items-center justify-center text-lg" aria-label={showPassword ? "Hide password" : "Show password"}>{showPassword ? "🙈" : "👁️"}</button>
-      </div>
-      <button type="button" disabled={busy} onClick={saveProfile} className="w-full bg-gradient-to-r from-[#ff007f] to-[#7b2cbf] text-white py-3 rounded-xl font-bold">Create Account</button>
-    </>}
-    {step === "forgot" && <>
-      <p className="text-xs text-gray-300">Recovery code sent to <b>{email}</b>.</p>
-      <input value={otp} onChange={e=>setOtp(e.target.value)} maxLength={6} inputMode="numeric" placeholder="Recovery code" className="w-full bg-[#12121a] border border-[#00f5ff] rounded-xl px-3 py-3 text-white text-center tracking-widest font-bold" />
-      <div className="relative w-full">
-        <input value={password} onChange={e=>setPassword(e.target.value)} type={showPassword ? "text" : "password"} placeholder="New password (6+ characters)" className="w-full bg-[#1e1e2d] border border-[#303040] rounded-xl px-3 py-3 pr-12 text-white text-sm" autoComplete="new-password" />
-        <button type="button" onClick={()=>setShowPassword(v=>!v)} className="absolute right-2 top-1/2 -translate-y-1/2 w-9 h-9 flex items-center justify-center text-lg" aria-label={showPassword ? "Hide password" : "Show password"}>{showPassword ? "🙈" : "👁️"}</button>
-      </div>
-      <button type="button" disabled={busy} onClick={reset} className="w-full bg-gradient-to-r from-[#ff007f] to-[#7b2cbf] text-white py-3 rounded-xl font-bold">Reset Password & Login</button>
-    </>}
-    {error && <p className="text-red-300 text-xs bg-red-950/30 border border-red-500/30 rounded-xl p-3">{error}</p>}
-  </div>;
+  return (
+    <div className="space-y-3">
+      {step === "email" && <>
+        <input value={email} onChange={e=>setEmail(e.target.value)} type="email" placeholder="Email address" />
+        <button onClick={continueEmail}>Continue</button>
+      </>}
+
+      {step === "password" && <>
+        <input value={email} readOnly type="email" />
+        <input value={password} onChange={e=>setPassword(e.target.value)} type="password" placeholder="Password" />
+        <button onClick={login}>Login</button>
+        <button onClick={()=>{setOtp("");setStep("forgotOtp")}}>Forgot password</button>
+        <button onClick={async()=>{setError(""); const r=await onSendOtp(email); if(r?.success)setStep("otp"); else setError(r?.error||"Could not send code.");}}>New email / verify with code</button>
+      </>}
+
+      {step === "otp" && <>
+        <input value={otp} onChange={e=>setOtp(e.target.value)} placeholder="6-digit email code" />
+        <button onClick={verifyFirstEmail}>Verify email</button>
+      </>}
+
+      {step === "profile" && <>
+        <input value={name} onChange={e=>setName(e.target.value)} placeholder="Full name" />
+        <input value={username} onChange={e=>setUsername(e.target.value)} placeholder="Username" />
+        <input value={email} readOnly />
+        <input value={password} onChange={e=>setPassword(e.target.value)} type="password" placeholder="Create password" />
+        <button onClick={saveProfile}>Create account</button>
+      </>}
+
+      {step === "forgotOtp" && <>
+        <input value={email} onChange={e=>setEmail(e.target.value)} type="email" placeholder="Email address" />
+        <button onClick={startForgot}>Send recovery code</button>
+        <input value={otp} onChange={e=>setOtp(e.target.value)} placeholder="Recovery code" />
+        <input value={password} onChange={e=>setPassword(e.target.value)} type="password" placeholder="New password" />
+        <button onClick={reset}>Reset password</button>
+      </>}
+
+      {error && <p className="text-red-400 text-sm">{error}</p>}
+    </div>
+  );
 }

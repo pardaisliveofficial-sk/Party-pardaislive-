@@ -441,3 +441,135 @@
   width: 100%;
 }
 
+
+
+/* =====================================================================
+   MOBILE / ANDROID VIEWPORT SAFETY
+   Keep every control inside the real WebView viewport, including devices
+   with gesture/navigation bars and edge-to-edge Android rendering.
+   ===================================================================== */
+html,
+body,
+#root {
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  min-height: 100%;
+  background: #09090e;
+  overflow-x: hidden;
+}
+
+body {
+  min-height: 100dvh;
+  min-height: 100svh;
+  overflow-x: hidden;
+  overscroll-behavior-x: none;
+}
+
+#root {
+  min-height: 100dvh;
+  min-height: 100svh;
+  overflow-x: hidden;
+}
+
+.pardais-app-shell {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: 100svh;
+  height: 100dvh;
+  max-height: 100dvh;
+  overflow: hidden;
+}
+
+#pardais-phone-simulator,
+#pardais-phone-simulator > * {
+  box-sizing: border-box;
+  min-width: 0;
+  max-width: 100%;
+}
+
+#pardais-phone-simulator button,
+#pardais-phone-simulator a,
+#pardais-phone-simulator input,
+#pardais-phone-simulator textarea,
+#pardais-phone-simulator select {
+  box-sizing: border-box;
+  max-width: 100%;
+}
+
+#pardais-phone-simulator .pardais-party-header-actions {
+  min-width: 0;
+  max-width: 48%;
+  flex-shrink: 1;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+#pardais-phone-simulator .pardais-party-header-host {
+  min-width: 0;
+  max-width: 52%;
+  flex-shrink: 1;
+}
+
+#pardais-phone-simulator .pardais-party-header-host > div:last-child,
+#pardais-phone-simulator .pardais-party-header-host h4,
+#pardais-phone-simulator .pardais-party-header-host p {
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* Prevent utility overlays/rows from creating horizontal overflow. */
+#pardais-phone-simulator .absolute {
+  max-width: 100%;
+}
+
+@media (max-width: 380px) {
+  #pardais-phone-simulator .pardais-party-header-actions {
+    gap: 3px !important;
+    max-width: 50%;
+  }
+
+  #pardais-phone-simulator .pardais-party-header-host {
+    max-width: 50%;
+  }
+
+  #pardais-phone-simulator .pardais-party-header-actions button {
+    width: 28px !important;
+    height: 28px !important;
+    min-width: 28px;
+    padding: 0.25rem !important;
+  }
+
+  #pardais-phone-simulator .pardais-party-header-actions button > span:not(:first-child) {
+    display: none;
+  }
+
+  #pardais-phone-simulator .pardais-party-header-actions button .party-game-label {
+    display: none;
+  }
+}
+
+@media (max-width: 340px) {
+  #pardais-phone-simulator .pardais-party-header-host {
+    max-width: 47%;
+  }
+
+  #pardais-phone-simulator .pardais-party-header-actions {
+    max-width: 53%;
+  }
+}
+
+/* Android gesture/navigation area must never cover bottom controls. */
+@supports (padding-bottom: env(safe-area-inset-bottom)) {
+  .pardais-app-shell {
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    padding-left: env(safe-area-inset-left, 0px);
+    padding-right: env(safe-area-inset-right, 0px);
+  }
+}

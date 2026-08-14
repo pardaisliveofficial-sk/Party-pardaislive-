@@ -344,8 +344,6 @@ export function recommendReels(
     isFollowed: boolean;
   }> = {}
 ) {
-  const [showPassword, setShowPassword] = useState(false);
-  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   return [...reelsList].sort((a, b) => {
     // 1. Calculate general engagement score (baseline for trending/popular content)
     const popularityA = (a.likes || 0) * 1 + (a.commentsCount || 0) * 2 + (a.shares || 0) * 3 + (a.saves || 0) * 2;
@@ -4543,12 +4541,6 @@ export default function App() {
       const reelId = persistedReel?.id;
       if (!reelId) {
         throw new Error("Reel was uploaded but the server did not return a stable reel ID.");
-      }
-
-      if (persistedReel?.persistencePending) {
-        setUploadStatus("Published! Saving Reel metadata in background...");
-      } else {
-        setUploadStatus("Reel Published Successfully!");
       }
       
       // Save locally to profile reels

@@ -379,39 +379,6 @@ export async function clearAllHostsInFirestore() {
   }
 }
 
-let reelsHydratedAt = 0;
-
-export async function hydrateReelsFromFirestore(force = false): Promise<any[]> {
-  const now = Date.now();
-  // Avoid a Firestore read on every polling request while still recovering
-  // quickly after a Railway restart or a cold server instance.
-  if (!force && now - reelsHydratedAt < 5000 && Array.isArray(dbDataCache.reels) && dbDataCache.reels.length > 0) {
-    return dbDataCache.reels;
-  }
-  if (isFirestoreQuotaExhausted) return Array.isArray(dbDataCache.reels) ? dbDataCache.reels : [];
-  try {
-    const snapshot = await getDocs(collection(db, "reels"));
-    const reelMap = new Map<string, any>();
-    (dbDataCache.reels || []).forEach((r: any) => {
-      if (r && r.id) reelMap.set(String(r.id), r);
-    });
-    snapshot.forEach(docSnap => {
-      const data = docSnap.data();
-      if (data && data.id) reelMap.set(String(data.id), data);
-      else if (data) reelMap.set(String(docSnap.id), { ...data, id: docSnap.id });
-    });
-    dbDataCache.reels = Array.from(reelMap.values()).sort((a: any, b: any) => {
-      const ta = Date.parse(a?.createdAt || "") || 0;
-      const tb = Date.parse(b?.createdAt || "") || 0;
-      return tb - ta;
-    });
-    reelsHydratedAt = now;
-  } catch (err) {
-    handleQuotaError(err, "hydrate reels from Firestore");
-  }
-  return Array.isArray(dbDataCache.reels) ? dbDataCache.reels : [];
-}
-
 export async function syncDocument(collectionName: string, docId: string, data: any) {
   if (isFirestoreQuotaExhausted) return;
   try {
