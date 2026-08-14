@@ -130,20 +130,7 @@
     catch(e){throw new Error("Unable to connect to Pardais Party server.")}
     const d=await r.json().catch(()=>({})); if(!r.ok)throw new Error(d.error||d.message||("Server error ("+r.status+")")); return d;
   }
-  function finish(d){
-    if(!d||!d.token||!d.user) throw new Error("Authentication response is incomplete. Please try again.");
-    const incomingEmail=String(d.user.email||"").toLowerCase().trim();
-    const currentEmail=String(localStorage.getItem("pardais_auth_email")||"").toLowerCase().trim();
-    if(currentEmail && incomingEmail && currentEmail!==incomingEmail){
-      localStorage.removeItem("pardais_user_profile");
-    }
-    saveToken(d.token);
-    localStorage.setItem("pardais_auth_email",incomingEmail);
-    localStorage.setItem("pardais_is_logged_in","true");
-    localStorage.setItem("pardais_user_profile",JSON.stringify(d.user));
-    window.__pardaisAuthenticatedUser=d.user;
-    gate.remove();
-  }
+  function finish(d){if(d.token)saveToken(d.token);window.__pardaisAuthenticatedUser=d.user||{};gate.remove();}
   function tab(name){
     loginPanel.style.display=name==="login"?"block":"none";
     signupPanel.style.display=name==="signup"?"block":"none";
@@ -196,7 +183,6 @@
     if(!name||username.length<3||password.length<6||password!==confirm){setMsg("Enter name, username, matching password (6+ characters).");return}
     try{
       const t=token();
-      if(!t) throw new Error("Email verification session expired. Please verify your email again.");
       const p=await fetch(API+"/api/v1/auth/set-password",{method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+t},body:JSON.stringify({password})});
       const pd=await p.json().catch(()=>({}));if(!p.ok)throw new Error(pd.error||"Could not create password.");
       const r=await fetch(API+"/api/v1/auth/setup-profile",{method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+t},body:JSON.stringify({fullName:name,username})});
@@ -217,30 +203,7 @@
     if(otp.length!==6||password.length<6){setMsg("Enter the 6-digit code and a 6+ character password.");return}
     try{finish(await post("/api/v1/auth/reset-password",{email:forgotEmail,otp,password}))}catch(e){setMsg(e.message||"Could not reset password.")}
   };
-  async function restore(){
-    const t=token();
-    if(!t){
-      localStorage.removeItem("pardais_is_logged_in");
-      localStorage.removeItem("pardais_user_profile");
-      return;
-    }
-    try{
-      const r=await fetch(API+"/api/v1/auth/me",{headers:{Authorization:"Bearer "+t}});
-      if(!r.ok) throw new Error();
-      const d=await r.json();
-      if(!d.user||!d.user.email) throw new Error();
-      localStorage.setItem("pardais_is_logged_in","true");
-      localStorage.setItem("pardais_auth_email",String(d.user.email).toLowerCase().trim());
-      localStorage.setItem("pardais_user_profile",JSON.stringify(d.user));
-      window.__pardaisAuthenticatedUser=d.user;
-      gate.remove();
-    }catch(e){
-      localStorage.removeItem("pardais_auth_token");
-      localStorage.removeItem("pardais_is_logged_in");
-      localStorage.removeItem("pardais_user_profile");
-      localStorage.removeItem("pardais_auth_email");
-    }
-  }
+  async function restore(){const t=token();if(!t)return;try{const r=await fetch(API+"/api/v1/auth/me",{headers:{Authorization:"Bearer "+t}});if(!r.ok)throw new Error();const d=await r.json();window.__pardaisAuthenticatedUser=d.user;gate.remove()}catch(e){localStorage.removeItem("pardais_auth_token")}}
   restore();
 })();
 </script>
