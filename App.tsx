@@ -304,6 +304,14 @@ const normalizeReelUrl = (url: string | undefined | null): string => {
     return resolveApiUrl(cleanPath);
   }
 
+  // If the URL is already our API playback URL, return it unchanged.
+  // Without this guard, a second normalization pass can turn
+  // /api/v1/reels/media/reels/... into /api/v1/reels/media/reels/media/reels/...
+  // which makes the R2 object key invalid and causes a 404.
+  if (url.includes("/api/v1/reels/media/")) {
+    return url;
+  }
+
   // Route all R2 reel objects through the API playback proxy. This endpoint
   // supports HTTP Range requests so the exact same stored file plays in both
   // Creator Hub and the public Reels feed.
