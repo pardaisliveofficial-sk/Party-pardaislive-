@@ -102,7 +102,10 @@ export default function PersistentEmailAuth({ onAuthenticated }: Props) {
     </>}
     {step === "password" && <>
       <input value={email} readOnly type="email" className="w-full bg-[#1e1e2d] border border-[#303040] rounded-xl px-3 py-3 text-white text-sm" />
-      <input value={password} onChange={e=>setPassword(e.target.value)} type="password" placeholder="Password" className="w-full bg-[#1e1e2d] border border-[#303040] rounded-xl px-3 py-3 text-white text-sm" autoComplete="current-password" />
+      <div className="relative w-full">
+        <input value={password} onChange={e=>setPassword(e.target.value)} type={showPassword ? "text" : "password"} placeholder="Password" className="w-full bg-[#1e1e2d] border border-[#303040] rounded-xl px-3 py-3 pr-12 text-white text-sm" autoComplete="current-password" />
+        <button type="button" onClick={()=>setShowPassword(v=>!v)} className="absolute right-2 top-1/2 -translate-y-1/2 w-9 h-9 flex items-center justify-center text-lg" aria-label={showPassword ? "Hide password" : "Show password"}>{showPassword ? "🙈" : "👁️"}</button>
+      </div>
       <button type="button" disabled={busy} onClick={login} className="w-full bg-gradient-to-r from-[#ff007f] to-[#7b2cbf] text-white py-3 rounded-xl font-bold">Login</button>
       <button type="button" disabled={busy} onClick={startForgot} className="w-full py-2 bg-white/5 rounded-xl border border-white/10 text-gray-300 text-sm">Forgot Password?</button>
       <button type="button" disabled={busy} onClick={()=>{setPassword("");setStep("email");}} className="w-full py-2 text-gray-400 text-xs">Use another email</button>
@@ -117,13 +120,19 @@ export default function PersistentEmailAuth({ onAuthenticated }: Props) {
       <input value={name} onChange={e=>setName(e.target.value)} placeholder="Full name" className="w-full bg-[#1e1e2d] border border-[#303040] rounded-xl px-3 py-3 text-white text-sm" autoComplete="name" />
       <input value={username} onChange={e=>setUsername(e.target.value)} placeholder="Username" className="w-full bg-[#1e1e2d] border border-[#303040] rounded-xl px-3 py-3 text-white text-sm" autoComplete="username" />
       <input value={email} readOnly className="w-full bg-[#151520] border border-[#303040] rounded-xl px-3 py-3 text-gray-400 text-sm" />
-      <input value={password} onChange={e=>setPassword(e.target.value)} type="password" placeholder="Create password (6+ characters)" className="w-full bg-[#1e1e2d] border border-[#303040] rounded-xl px-3 py-3 text-white text-sm" autoComplete="new-password" />
+      <div className="relative w-full">
+        <input value={password} onChange={e=>setPassword(e.target.value)} type={showPassword ? "text" : "password"} placeholder="Create password (6+ characters)" className="w-full bg-[#1e1e2d] border border-[#303040] rounded-xl px-3 py-3 pr-12 text-white text-sm" autoComplete="new-password" />
+        <button type="button" onClick={()=>setShowPassword(v=>!v)} className="absolute right-2 top-1/2 -translate-y-1/2 w-9 h-9 flex items-center justify-center text-lg" aria-label={showPassword ? "Hide password" : "Show password"}>{showPassword ? "🙈" : "👁️"}</button>
+      </div>
       <button type="button" disabled={busy} onClick={saveProfile} className="w-full bg-gradient-to-r from-[#ff007f] to-[#7b2cbf] text-white py-3 rounded-xl font-bold">Create Account</button>
     </>}
     {step === "forgot" && <>
       <p className="text-xs text-gray-300">Recovery code sent to <b>{email}</b>.</p>
       <input value={otp} onChange={e=>setOtp(e.target.value)} maxLength={6} inputMode="numeric" placeholder="Recovery code" className="w-full bg-[#12121a] border border-[#00f5ff] rounded-xl px-3 py-3 text-white text-center tracking-widest font-bold" />
-      <input value={password} onChange={e=>setPassword(e.target.value)} type="password" placeholder="New password (6+ characters)" className="w-full bg-[#1e1e2d] border border-[#303040] rounded-xl px-3 py-3 text-white text-sm" autoComplete="new-password" />
+      <div className="relative w-full">
+        <input value={password} onChange={e=>setPassword(e.target.value)} type={showPassword ? "text" : "password"} placeholder="New password (6+ characters)" className="w-full bg-[#1e1e2d] border border-[#303040] rounded-xl px-3 py-3 pr-12 text-white text-sm" autoComplete="new-password" />
+        <button type="button" onClick={()=>setShowPassword(v=>!v)} className="absolute right-2 top-1/2 -translate-y-1/2 w-9 h-9 flex items-center justify-center text-lg" aria-label={showPassword ? "Hide password" : "Show password"}>{showPassword ? "🙈" : "👁️"}</button>
+      </div>
       <button type="button" disabled={busy} onClick={reset} className="w-full bg-gradient-to-r from-[#ff007f] to-[#7b2cbf] text-white py-3 rounded-xl font-bold">Reset Password & Login</button>
     </>}
     {error && <p className="text-red-300 text-xs bg-red-950/30 border border-red-500/30 rounded-xl p-3">{error}</p>}

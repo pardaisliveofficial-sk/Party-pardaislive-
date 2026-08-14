@@ -107,7 +107,7 @@ import { getRankingData } from "./rankingData";
 import { dbDataCache, db, auth as firebaseAuth } from "./db/firebaseDb";
 import { PardaisPartyLogo, PardaisLiveLogo } from "./components/PardaisPartyLogo";
 import { PardaisPartySplashScreen } from "./components/PardaisPartySplashScreen";
-import { PersistentEmailAuth } from "./components/PersistentEmailAuth";
+import PersistentEmailAuth from "./components/PersistentEmailAuth";
 import { PartyGamesModal } from "./components/PartyGamesModal";
 import { initializeApp, getApps, getApp } from "firebase/app";
 import { getAuth, signInWithPopup, signInWithRedirect, getRedirectResult, GoogleAuthProvider, signOut } from "firebase/auth";
