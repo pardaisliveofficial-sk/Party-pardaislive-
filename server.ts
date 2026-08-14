@@ -1101,6 +1101,12 @@ app.post("/api/v1/auth/setup-profile", authenticateUser, (req: any, res) => {
   if (username && typeof username === "string") {
     const cleanUser = username.trim().replace(/[^a-zA-Z0-9_]/g, "_");
     if (cleanUser.length > 2) {
+      const usernameTaken = (dbData.users || []).some((u: any) =>
+        u && u.uid !== req.user.uid && String(u.username || "").toLowerCase() === cleanUser.toLowerCase()
+      );
+      if (usernameTaken) {
+        return res.status(409).json({ error: "USERNAME_ALREADY_EXISTS", message: "This username is already in use. Please choose another username." });
+      }
       req.user.username = cleanUser;
     }
   }
@@ -1143,69 +1149,11 @@ app.post("/api/v1/auth/logout", authenticateUser, (req: any, res) => {
 });
 
 // 7. Acquire or Refresh Session Token
-app.post("/api/v1/auth/guest-login", (req, res) => {
-  try {
-    const requestDeviceId = req.body?.deviceId || (req.headers["x-device-id"] as string);
-    if (isDeviceIdBlocked(requestDeviceId)) {
-      return res.status(403).json({
-        error: "DEVICE_HARDWARE_BLOCKED",
-        message: "🚨 HARDWARE BAN ENFORCED: Your phone/device hardware has been permanently banned from Pardais Party by system administrators."
-      });
-    }
-
-    const requestedUsername = req.body?.username || `user_${Math.floor(1000 + Math.random() * 9000)}`;
-    const requestedUid = req.body?.uid || `guest_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-    
-    let user = dbData.users?.find((u: any) => 
-      (requestedUid && u.uid === requestedUid) || 
-      (requestedUsername && u.username === requestedUsername)
-    );
-
-    if (!user) {
-      user = {
-        uid: requestedUid,
-        username: requestedUsername,
-        uniqueId: `pardais_${Math.floor(1000 + Math.random() * 9000)}`,
-        fullName: req.body?.fullName || "Pardais Member",
-        avatar: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80",
-        bio: "Pardais Party Member 🇵🇰",
-        gender: "Male",
-        country: "Pakistan",
-        coins: 1000000,
-        diamonds: 0,
-        vipLevel: 0,
-        userLevel: 1,
-        hostLevel: 1,
-        wealthLevel: 1,
-        xp: 0
-      };
-      if (!Array.isArray(dbData.users)) dbData.users = [];
-      dbData.users.push(user);
-      syncDocument("users", user.username, user);
-    }
-
-    const token = `pardais_session_${user.uid}_${Math.random().toString(36).substring(2, 10)}`;
-    const sessionData = {
-      uid: user.uid,
-      username: user.username,
-      email: user.email || "",
-      loginTime: new Date().toISOString()
-    };
-    if (!dbData.sessions) dbData.sessions = {};
-    dbData.sessions[token] = sessionData;
-
-    saveDatabase();
-    syncDocument("sessions", token, sessionData);
-
-    console.log(`[PARDAIS-PARTY AUTH] Created/refreshed session token for user: ${user.username}`);
-    return res.json({
-      success: true,
-      token,
-      user
-    });
-  } catch (err: any) {
-    return res.status(500).json({ error: err.message || "Failed to create session" });
-  }
+app.post("/api/v1/auth/guest-login", (_req, res) => {
+  return res.status(403).json({
+    error: "GUEST_ACCESS_DISABLED",
+    message: "Guest login is disabled. Please log in or create an account."
+  });
 });
 
 app.post("/api/v1/auth/refresh-session", (req, res) => {

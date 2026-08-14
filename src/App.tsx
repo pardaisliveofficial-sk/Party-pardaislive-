@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from "react"
 import { authenticatedFetch, resolveApiUrl, refreshSession, getAuthToken, isCapacitorOrAndroid } from "./lib/apiClient";
 import { COUNTRIES_CURRENCIES, CountryCurrency, getCoinsCostInCurrency } from "./currencyUtils";
 import { ReelsView } from "./components/ReelsView";
+import PersistentEmailAuth from "./components/PersistentEmailAuth";
 import { AgoraStream } from "./components/AgoraStream";
 import { AgoraPartyAudio } from "./components/AgoraPartyAudio";
 import { VipAnimatedFrame, VIP_FRAMES_LIST } from "./components/VipAnimatedFrame";
@@ -704,11 +705,14 @@ export default function App() {
   const getInitialUser = (): UserProfile => {
     if (typeof window !== "undefined") {
       try {
+        const token = localStorage.getItem("pardais_auth_token");
         const isLogged = localStorage.getItem("pardais_is_logged_in") === "true";
         const saved = localStorage.getItem("pardais_user_profile");
-        if (isLogged && saved) {
+        // A cached profile is never an authentication credential. Restore it only
+        // when both the session marker and the real server token exist.
+        if (isLogged && token && saved) {
           const parsed = JSON.parse(saved);
-          if (parsed && (parsed.username || parsed.uniqueId)) {
+          if (parsed && (parsed.email || parsed.uid || parsed.uniqueId) && !parsed.isGuest) {
             parsed.isGuest = false;
             return parsed;
           }
@@ -881,18 +885,17 @@ export default function App() {
         try { savedProfile = JSON.parse(savedUserRaw); } catch (e) {}
       }
 
-      if (savedProfile && (savedProfile.username || savedProfile.uniqueId)) {
-        setUser(savedProfile);
-        setIsLoggedIn(true);
+      // Never turn a cached profile into a logged-in session. The token must be
+      // present and must be accepted by the backend. This prevents an old
+      // account from reappearing after logout or when another email is used.
+      if (!token) {
+        localStorage.removeItem("pardais_is_logged_in");
+        localStorage.removeItem("pardais_user_profile");
+        return;
       }
 
-      if (!token) {
-        if (!savedProfile) {
-          refreshSession().then(() => {
-            setIsLoggedIn(true);
-          });
-        }
-        return;
+      if (savedProfile && (savedProfile.email || savedProfile.uid || savedProfile.uniqueId) && !savedProfile.isGuest) {
+        setUser(savedProfile);
       }
 
       authenticatedFetch("/api/v1/auth/me")
@@ -927,7 +930,12 @@ export default function App() {
           }
         })
         .catch(err => {
-          console.warn("[PARDAIS AUTH RESTORE] Session verification notice:", err.message);
+          console.warn("[PARDAIS AUTH RESTORE] Session verification failed:", err.message);
+          localStorage.removeItem("pardais_auth_token");
+          localStorage.removeItem("pardais_is_logged_in");
+          localStorage.removeItem("pardais_user_profile");
+          setIsLoggedIn(false);
+          setUser({ ...DEFAULT_USER, username: "Guest_Visitor", fullName: "Guest Visitor", isGuest: true });
         });
     };
 
@@ -7291,6 +7299,56 @@ export default function App() {
     ]);
   };
 
+  // Unified persistent email auth used by the in-app auth modal.
+  // There is intentionally no local/fake fallback: credentials and account
+  // identity must always come from the backend.
+  const sendPersistentAuthOtp = async (email: string) => {
+    const res = await fetch(resolveApiUrl("/api/v1/auth/send-email-otp"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: email.toLowerCase().trim() })
+    });
+    const data = await res.json().catch(() => ({}));
+    return res.ok ? data : { success: false, error: data.error || "Could not send verification code." };
+  };
+
+  const verifyPersistentAuthOtp = async (email: string, otp: string) => {
+    const res = await fetch(resolveApiUrl("/api/v1/auth/verify-email-otp"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: email.toLowerCase().trim(), otp: otp.trim() })
+    });
+    const data = await res.json().catch(() => ({}));
+    return res.ok ? data : { success: false, error: data.error || "Invalid verification code." };
+  };
+
+  const handlePersistentAuthenticated = (payload: any) => {
+    if (!payload?.token || !payload?.user) {
+      setLoginError("Authentication response is incomplete. Please try again.");
+      return;
+    }
+    const incomingEmail = String(payload.user.email || "").toLowerCase().trim();
+    const previousEmail = String(localStorage.getItem("pardais_auth_email") || "").toLowerCase().trim();
+    if (previousEmail && incomingEmail && previousEmail !== incomingEmail) {
+      localStorage.removeItem("pardais_user_profile");
+    }
+    localStorage.setItem("pardais_auth_token", payload.token);
+    localStorage.setItem("pardais_auth_email", incomingEmail);
+    localStorage.setItem("pardais_is_logged_in", "true");
+    localStorage.setItem("pardais_user_profile", JSON.stringify(payload.user));
+    lastSavedUserRef.current = JSON.stringify(payload.user);
+    setUser(payload.user);
+    setIsLoggedIn(true);
+    setShowAuthModal(false);
+    setLoginError("");
+    setLoginSuccessMsg("Logged in successfully.");
+    if (pendingAuthCallback) {
+      const cb = pendingAuthCallback;
+      setPendingAuthCallback(null);
+      try { cb(); } catch (e) {}
+    }
+  };
+
   // Email OTP Login Handlers
   const handleSendEmailOtp = (e: React.FormEvent) => {
     e.preventDefault();
@@ -7358,49 +7416,9 @@ export default function App() {
         }
       })
       .catch(err => {
-        console.warn("Verify Email OTP fallback mode:", err);
-        const cleanEmail = loginEmail.toLowerCase().trim();
-        const uid = "email_" + cleanEmail.replace(/[^a-zA-Z0-9]/g, "_");
-        const username = cleanEmail.split("@")[0].replace(/[^a-zA-Z0-9_]/g, "_") || "pardais_member";
-        const token = `pardais_session_${uid}_${Math.random().toString(36).substring(2, 10)}`;
-        const fallbackUser: UserProfile = {
-          uid,
-          email: cleanEmail,
-          username,
-          uniqueId: `pardes_${Math.floor(1000 + Math.random() * 9000)}`,
-          fullName: username,
-          avatar: `https://api.dicebear.com/7.x/adventurer/svg?seed=${encodeURIComponent(cleanEmail)}`,
-          coverPhoto: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=800&q=80",
-          bio: "Pardais Party Member 🇵🇰",
-          gender: "Male",
-          country: "Pakistan",
-          language: "Urdu / Hinglish",
-          familyId: "",
-          agencyId: "",
-          isVerified: false,
-          isBanned: false,
-          twoFactorEnabled: false,
-          coins: 1000000,
-          diamonds: 0,
-          vipLevel: 0,
-          userLevel: 1,
-          hostLevel: 1,
-          wealthLevel: 1,
-          xp: 0
-        };
-        localStorage.setItem("pardais_auth_token", token);
-        localStorage.setItem("pardais_is_logged_in", "true");
-        localStorage.setItem("pardais_user_profile", JSON.stringify(fallbackUser));
-        setUser(fallbackUser);
-        setIsLoggedIn(true);
-        setShowAuthModal(false);
-        if (pendingAuthCallback) {
-          const cb = pendingAuthCallback;
-          setPendingAuthCallback(null);
-          try { cb(); } catch (e) {}
-        }
-        setShowProfileSetupModal(true);
-      });
+        console.error("[EMAIL AUTH] Verification failed:", err);
+        setLoginError(err?.message || "Email verification failed. Please try again.");
+      })
   };
 
   // Process authenticated Firebase Google User with Pardais Party Backend
@@ -7555,6 +7573,9 @@ export default function App() {
 
   // Quick One-Tap Guest Login Handler
   const handleQuickGuestLogin = () => {
+    setLoginError("Guest login is disabled. Please use your email and password.");
+    return;
+    /* legacy guest flow intentionally disabled */
     if (!termsAccepted) setTermsAccepted(true);
     setLoginError("");
     setLoginSuccessMsg("");
@@ -7655,14 +7676,18 @@ export default function App() {
     try {
       await signOut(clientAuth).catch(() => {});
       if (token) {
-        await fetch("/api/v1/auth/logout", {
+        await fetch(resolveApiUrl("/api/v1/auth/logout"), {
           method: "POST",
           headers: { "Authorization": `Bearer ${token}` }
         }).catch(() => {});
       }
     } finally {
+      // Logout must destroy every client-side identity artifact. Keeping the old
+      // profile was causing the first account to return automatically.
       localStorage.removeItem("pardais_auth_token");
-      localStorage.setItem("pardais_is_logged_in", "false");
+      localStorage.removeItem("pardais_user_profile");
+      localStorage.removeItem("pardais_is_logged_in");
+      localStorage.removeItem("pardais_avatar_user_set");
       setIsLoggedIn(false);
       setUser({
         ...DEFAULT_USER,
@@ -7670,6 +7695,9 @@ export default function App() {
         fullName: "Guest Visitor",
         isGuest: true
       });
+      // Reload so the mandatory auth gate is created again. No guest session is
+      // generated during this transition.
+      window.location.reload();
     }
   };
 
@@ -30694,16 +30722,6 @@ export default function App() {
               </button>
             </div>
 
-            {/* Instant One-Tap Quick Account Button */}
-            <button
-              type="button"
-              onClick={handleQuickGuestLogin}
-              className="w-full py-2.5 px-4 bg-gradient-to-r from-[#00f5ff]/20 via-[#7b2cbf]/20 to-[#ff007f]/20 hover:from-[#00f5ff]/30 hover:to-[#ff007f]/30 border border-[#00f5ff]/40 rounded-2xl flex items-center justify-center space-x-2 text-white shadow-lg transition-all active:scale-[0.98] cursor-pointer"
-            >
-              <Zap className="w-4 h-4 text-[#00f5ff] animate-pulse" />
-              <span className="text-xs font-black tracking-wide">⚡ One-Tap Instant Registration</span>
-            </button>
-
             {/* Error / Success Alerts */}
             {loginError && (
               <div className="p-2.5 bg-red-950/40 border border-red-500/50 rounded-xl text-[10px] text-red-200 flex items-start space-x-2">
@@ -30719,46 +30737,11 @@ export default function App() {
             )}
 
             {selectedAuthMethod === "email" ? (
-              <form onSubmit={isOtpSent ? handleVerifyEmailOtp : handleSendEmailOtp} className="space-y-3">
-                <div>
-                  <label className="text-[9px] uppercase tracking-wider text-gray-400 block mb-1 font-bold font-mono">Email Address</label>
-                  <input
-                    type="email"
-                    placeholder="user@example.com"
-                    value={loginEmail}
-                    onChange={(e) => {
-                      setLoginEmail(e.target.value);
-                      if (loginError) setLoginError("");
-                    }}
-                    disabled={isOtpSent}
-                    className="w-full bg-[#1e1e2d] border border-[#303040] rounded-xl px-3 py-2 text-white text-xs focus:outline-none focus:border-[#ff007f] font-mono"
-                  />
-                </div>
-
-                {isOtpSent && (
-                  <div className="animate-pop-gift bg-[#1e1e2d] p-3 rounded-xl border border-[#ff007f]/20 space-y-1">
-                    <label className="text-[9px] uppercase tracking-wider text-[#00f5ff] block font-bold font-mono">Enter 6-Digit OTP Code</label>
-                    <input
-                      type="text"
-                      placeholder="123456"
-                      value={loginOtp}
-                      onChange={(e) => {
-                        setLoginOtp(e.target.value);
-                        if (loginError) setLoginError("");
-                      }}
-                      className="w-full bg-[#12121a] border border-[#00f5ff] rounded-lg px-3 py-2 text-white text-center text-sm font-black focus:outline-none tracking-widest font-mono"
-                    />
-                  </div>
-                )}
-
-                <button
-                  type="submit"
-                  className="w-full bg-gradient-to-r from-[#ff007f] to-[#7b2cbf] text-white py-2.5 rounded-xl text-xs font-bold shadow-lg hover:opacity-95 transition-all cursor-pointer"
-                >
-                  {isOtpSent ? "Verify Code & Log In" : "Send Email OTP Code"}
-                </button>
-              </form>
-            ) : (
+              <PersistentEmailAuth
+                onAuthenticated={handlePersistentAuthenticated}
+                onSendOtp={sendPersistentAuthOtp}
+                onVerifyOtp={verifyPersistentAuthOtp}
+              />            ) : (
               <div className="space-y-2">
                 <button
                   type="button"
