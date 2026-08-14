@@ -199,6 +199,15 @@ export const authenticatedFetch = async (
 // ------------------------------------------------------------------
 // Pardais Party persistent email authentication helpers
 // ------------------------------------------------------------------
+export async function emailStatus(email: string) {
+  const res = await fetch(resolveApiUrl("/api/v1/auth/email-status"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: email.trim().toLowerCase() })
+  });
+  return res.json();
+}
+
 export async function emailPasswordLogin(email: string, password: string) {
   const res = await fetch(resolveApiUrl("/api/v1/auth/password-login"), {
     method: "POST",
