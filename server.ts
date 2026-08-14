@@ -675,9 +675,31 @@ function createSession(user: any) {
 
 function findEmailUser(email: string) {
   const cleanEmail = email.toLowerCase().trim();
-  return dbData.users?.find((u: any) =>
+  const canonicalUid = `email_${cleanEmail.replace(/[^a-zA-Z0-9]/g, "_")}`;
+  const matches = (dbData.users || []).filter((u: any) =>
     u && typeof u.email === "string" && u.email.toLowerCase().trim() === cleanEmail
   );
+
+  if (matches.length === 0) return undefined;
+
+  // Older builds could create multiple records for the same email. Always
+  // resolve that email to one deterministic canonical account instead of
+  // letting array/snapshot order choose a different ID after refresh.
+  matches.sort((a: any, b: any) => {
+    const aCanonical = a.uid === canonicalUid ? 1 : 0;
+    const bCanonical = b.uid === canonicalUid ? 1 : 0;
+    if (aCanonical !== bCanonical) return bCanonical - aCanonical;
+
+    const aPassword = a.passwordHash ? 1 : 0;
+    const bPassword = b.passwordHash ? 1 : 0;
+    if (aPassword !== bPassword) return bPassword - aPassword;
+
+    const aComplete = Number(Boolean(a.fullName)) + Number(Boolean(a.avatar)) + Number(Boolean(a.phoneNumber)) + Number(Boolean(a.uniqueId));
+    const bComplete = Number(Boolean(b.fullName)) + Number(Boolean(b.avatar)) + Number(Boolean(b.phoneNumber)) + Number(Boolean(b.uniqueId));
+    return bComplete - aComplete;
+  });
+
+  return matches[0];
 }
 
 function ensureStableEmailIdentity(user: any, email: string) {
@@ -1374,8 +1396,9 @@ app.post("/api/v1/user", authenticateUser, (req: any, res) => {
     dbData.users.push(updatedUser);
   }
 
-  // Keep legacy user reference synchronized
-  dbData.user = updatedUser;
+  // Account-scoped profile update only. Do not write this user's data into
+  // the legacy global dbData.user reference, which can make two accounts
+  // alternate after a refresh.
 
   // Keep synced in admin list as well
   const idx = dbData.adminUsersList.findIndex((u: any) => u.username === updatedUser.username);
@@ -1390,9 +1413,8 @@ app.post("/api/v1/user", authenticateUser, (req: any, res) => {
   }
   saveDatabase();
 
-  // Sync to Firestore
-  syncDocument("users", updatedUser.username, updatedUser);
-  writeMetadata("user_profile", updatedUser);
+  // Sync to account-scoped Firestore user documents only.
+  persistUser(updatedUser);
   if (idx !== -1) {
     syncDocument("adminUsersList", updatedUser.username, dbData.adminUsersList[idx]);
   }
@@ -5819,6 +5841,47 @@ const avatarMulterUpload = multer({
   }
 });
 
+// Public profile-avatar playback proxy.
+// R2 objects are private in some production configurations, so the client must
+// never depend on the R2_PUBLIC_URL being directly readable. The API proxies only
+// objects under the avatars/ prefix and preserves the stored image content type.
+app.get("/api/v1/user/avatar-media", async (req: any, res: any) => {
+  try {
+    const objectKey = typeof req.query?.key === "string" ? req.query.key : "";
+    if (!objectKey || !objectKey.startsWith("avatars/") || objectKey.includes("..")) {
+      return res.status(400).json({ error: "Invalid avatar media key." });
+    }
+
+    if (!process.env.R2_ACCESS_KEY_ID || !process.env.R2_SECRET_ACCESS_KEY || !process.env.R2_ENDPOINT) {
+      return res.status(503).json({ error: "Profile media storage is temporarily unavailable." });
+    }
+
+    const client = getS3Client();
+    const bucketName = process.env.R2_BUCKET_NAME || "pardaisparty-reels";
+    const result: any = await client.send(new GetObjectCommand({
+      Bucket: bucketName,
+      Key: objectKey,
+    }));
+
+    const contentType = String(result.ContentType || "image/webp");
+    res.setHeader("Content-Type", contentType);
+    res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+    if (result.ContentLength != null) res.setHeader("Content-Length", String(result.ContentLength));
+
+    if (result.Body && typeof result.Body.pipe === "function") {
+      result.Body.pipe(res);
+    } else if (result.Body) {
+      const bytes = await result.Body.transformToByteArray();
+      res.end(Buffer.from(bytes));
+    } else {
+      res.status(404).json({ error: "Profile photo not found." });
+    }
+  } catch (err: any) {
+    console.error("[PARDAIS-PARTY AVATAR MEDIA] Playback failed:", err?.message || err);
+    return res.status(404).json({ error: "Profile photo not found." });
+  }
+});
+
 // Production profile avatar upload endpoint to Cloudflare R2.
 // The client sends the image file; the server stores an optimized WebP and returns a durable CDN URL.
 app.post("/api/v1/user/avatar", authenticateUser, avatarMulterUpload.single("avatar"), async (req: any, res) => {
@@ -5892,9 +5955,8 @@ app.post("/api/v1/user/avatar", authenticateUser, avatarMulterUpload.single("ava
         )
       ]);
 
-      const publicBaseUrl = process.env.R2_PUBLIC_URL || "https://media.pardaisparty.soulverseapps.com";
-      const cleanBase = publicBaseUrl.endsWith("/") ? publicBaseUrl.slice(0, -1) : publicBaseUrl;
-      avatarUrl = `${cleanBase}/${objectKey}`;
+      const requestBaseUrl = `${req.protocol || "https"}://${req.get("host")}`;
+      avatarUrl = `${requestBaseUrl}/api/v1/user/avatar-media?key=${encodeURIComponent(objectKey)}`;
     } catch (r2Err: any) {
       // Fallback: save the already-optimized image to the API's persistent public
       // uploads directory. This guarantees profile editing still completes even
@@ -5942,15 +6004,13 @@ app.post("/api/v1/user/avatar", authenticateUser, avatarMulterUpload.single("ava
       dbData.users.push(updatedUser);
     }
 
-    dbData.user = updatedUser;
+    // Keep profile data account-scoped. Never overwrite the legacy global
+    // metadata user_profile document from a specific user's avatar update.
     saveDatabase();
 
     // Do not make the profile-photo UI wait for Firestore propagation.
-    void Promise.resolve(syncDocument("users", updatedUser.username, updatedUser)).catch((err: any) => {
+    void Promise.resolve(persistUser(updatedUser)).catch((err: any) => {
       console.warn("[PARDAIS-PARTY AVATAR] Firestore profile sync queued/failed:", err?.message || err);
-    });
-    void Promise.resolve(writeMetadata("user_profile", updatedUser)).catch((err: any) => {
-      console.warn("[PARDAIS-PARTY AVATAR] Metadata profile sync queued/failed:", err?.message || err);
     });
 
     return res.json({

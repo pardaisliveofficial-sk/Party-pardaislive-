@@ -306,7 +306,32 @@ export function startFirestoreSynchronization() {
       snapshot.forEach(docSnap => {
         items.push(docSnap.data());
       });
-      if (colName === "hosts") {
+      if (colName === "users") {
+        // Multiple legacy user documents may exist for one account (username,
+        // uid_*, and email_* mirrors). Collapse them into one deterministic
+        // in-memory user per stable email/UID so refresh order can never switch
+        // the active account between two IDs.
+        const byIdentity = new Map<string, any>();
+        const score = (u: any) =>
+          Number(Boolean(u?.passwordHash)) * 100 +
+          Number(Boolean(u?.avatar)) * 10 +
+          Number(Boolean(u?.fullName)) * 5 +
+          Number(Boolean(u?.phoneNumber)) * 2 +
+          Number(Boolean(u?.uniqueId));
+
+        for (const item of items) {
+          if (!item) continue;
+          const email = typeof item.email === "string" ? item.email.toLowerCase().trim() : "";
+          const uid = String(item.uid || "");
+          const identity = email ? `email:${email}` : (uid ? `uid:${uid}` : `username:${String(item.username || "")}`);
+          const current = byIdentity.get(identity);
+          if (!current || score(item) > score(current)) {
+            byIdentity.set(identity, item);
+          }
+        }
+
+        dbDataCache.users = Array.from(byIdentity.values());
+      } else if (colName === "hosts") {
         dbDataCache.hosts = items.filter((h: any) => h && (h.isLive === true || h.status === "live") && h.status !== "ended" && h.status !== "offline");
       } else if (colName === "gifts") {
         if (items.length > 0) {

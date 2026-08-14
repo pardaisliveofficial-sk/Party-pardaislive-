@@ -898,23 +898,29 @@ export default function App() {
         })
         .then(data => {
           if (data && data.user) {
-            const preservedAvatar = data.user.avatar || savedProfile?.avatar || "";
+            // The authenticated backend response is the single source of truth
+            // for account identity. Never restore uid/username/uniqueId/email from
+            // stale localStorage; doing that can make two old IDs alternate after
+            // a refresh. Local storage is only allowed to fill non-identity fields.
+            const serverUser = data.user as UserProfile;
+            const preservedAvatar = serverUser.avatar || savedProfile?.avatar || "";
             const mergedUser: UserProfile = {
-              ...data.user,
-              // Keep local profile fields that are not replaced by the backend. Avatar comes from production storage.
+              ...serverUser,
+              uid: serverUser.uid,
+              email: serverUser.email,
+              username: serverUser.username,
+              uniqueId: serverUser.uniqueId,
               fullName: (savedProfile?.fullName && savedProfile.fullName.trim() !== "" && savedProfile.fullName !== "Pardais Member")
                 ? savedProfile.fullName
-                : (data.user.fullName || savedProfile?.fullName || ""),
-              username: savedProfile?.username || data.user.username,
-              uniqueId: savedProfile?.uniqueId || data.user.uniqueId,
+                : (serverUser.fullName || ""),
               avatar: preservedAvatar,
-              avatarUrl: data.user.avatarUrl || preservedAvatar,
-              bio: savedProfile?.bio || data.user.bio,
-              gender: savedProfile?.gender || data.user.gender,
-              dob: savedProfile?.dob || data.user.dob,
-              phoneNumber: savedProfile?.phoneNumber || data.user.phoneNumber,
-              kycStatus: savedProfile?.kycStatus || data.user.kycStatus,
-              isVerified: savedProfile?.isVerified !== undefined ? savedProfile.isVerified : data.user.isVerified,
+              avatarUrl: serverUser.avatarUrl || preservedAvatar,
+              bio: savedProfile?.bio || serverUser.bio,
+              gender: savedProfile?.gender || serverUser.gender,
+              dob: savedProfile?.dob || serverUser.dob,
+              phoneNumber: savedProfile?.phoneNumber || serverUser.phoneNumber,
+              kycStatus: savedProfile?.kycStatus || serverUser.kycStatus,
+              isVerified: serverUser.isVerified,
             };
             setUser(mergedUser);
             setIsLoggedIn(true);
