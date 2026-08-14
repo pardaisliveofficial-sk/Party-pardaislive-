@@ -1025,11 +1025,15 @@ app.post("/api/v1/auth/send-email-otp", async (req, res) => {
   const challenge = { otp, email: cleanEmail, type: "signup", expiresAt: Date.now() + 10 * 60 * 1000, createdAt: new Date().toISOString() };
   // Persist before sending. This prevents an email from arriving while another
   // API replica/restart has no matching OTP record.
-  const durable = await persistAuthChallenge(`email_${cleanEmail.replace(/[^a-zA-Z0-9]/g, "_")}`, challenge);
-  if (!durable) {
-    return res.status(503).json({ success: false, error: "Verification service is temporarily unavailable. Please try again." });
-  }
+  const challengeKey = `email_${cleanEmail.replace(/[^a-zA-Z0-9]/g, "_")}`;
+  const durable = await persistAuthChallenge(challengeKey, challenge);
   if (!dbData.emailOtps) dbData.emailOtps = {};
+  if (!durable) {
+    // Firestore may be temporarily unavailable (quota/network). Keep a local
+    // challenge so the same running API can still complete signup while the
+    // durable store recovers. The OTP remains short-lived (10 minutes).
+    console.warn("[PARDAIS PARTY EMAIL OTP] Firestore persistence unavailable; using short-lived local OTP fallback.");
+  }
   dbData.emailOtps[cleanEmail] = challenge;
   saveDatabase();
 
@@ -1214,10 +1218,10 @@ app.post("/api/v1/auth/forgot-password", async (req, res) => {
   const challengeKey = `reset_${email.replace(/[^a-zA-Z0-9]/g, "_")}`;
   const challenge = { otp, email, type: "password-reset", expiresAt: Date.now() + 10 * 60 * 1000, createdAt: new Date().toISOString() };
   const durable = await persistAuthChallenge(challengeKey, challenge);
-  if (!durable) {
-    return res.status(503).json({ success: false, error: "Recovery service is temporarily unavailable. Please try again." });
-  }
   if (!dbData.passwordResetOtps) dbData.passwordResetOtps = {};
+  if (!durable) {
+    console.warn("[PARDAIS PARTY PASSWORD RESET] Firestore persistence unavailable; using short-lived local recovery fallback.");
+  }
   dbData.passwordResetOtps[email] = challenge;
   saveDatabase();
 
