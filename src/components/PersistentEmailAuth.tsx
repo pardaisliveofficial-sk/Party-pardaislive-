@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { emailStatus, sendEmailOtp, verifyEmailOtp, emailPasswordLogin, createEmailPassword, requestPasswordReset, resetEmailPassword } from "../lib/apiClient";
 import { resolveApiUrl } from "../lib/apiClient";
 
@@ -17,6 +17,14 @@ export default function PersistentEmailAuth({ onAuthenticated }: Props) {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [existingNeedsPassword, setExistingNeedsPassword] = useState(false);
+  const [otpNotice, setOtpNotice] = useState("");
+  const [resendCooldown, setResendCooldown] = useState(0);
+
+  useEffect(() => {
+    if (resendCooldown <= 0) return;
+    const timer = window.setInterval(() => setResendCooldown(v => Math.max(0, v - 1)), 1000);
+    return () => window.clearInterval(timer);
+  }, [resendCooldown]);
 
   const fail = (e: any, fallback: string) => setError(e?.message || e?.error || fallback);
 
@@ -42,6 +50,8 @@ export default function PersistentEmailAuth({ onAuthenticated }: Props) {
         }
         throw new Error(sent?.error || "Could not send verification code.");
       }
+      setOtpNotice("Verification code sent. Check your email.");
+      setResendCooldown(60);
       setStep("otp");
     } catch (e) { fail(e, "Could not continue with this email."); }
     finally { setBusy(false); }
@@ -58,7 +68,7 @@ export default function PersistentEmailAuth({ onAuthenticated }: Props) {
   };
 
   const verifyFirstEmail = async () => {
-    setError(""); setBusy(true);
+    setError(""); setOtpNotice(""); setBusy(true);
     try {
       const r = await verifyEmailOtp(email, otp);
       if (!r?.success || !r?.token || !r?.user) throw new Error(r?.error || "Invalid verification code.");
@@ -128,10 +138,11 @@ export default function PersistentEmailAuth({ onAuthenticated }: Props) {
     </>}
     {step === "otp" && <>
       <p className="text-xs text-gray-300">Verification code sent to <b>{email}</b>.</p>
-      <input value={otp} onChange={e=>setOtp(e.target.value)} maxLength={6} inputMode="numeric" placeholder="6-digit code" className="w-full bg-[#12121a] border border-[#00f5ff] rounded-xl px-3 py-3 text-white text-center tracking-widest font-bold" />
-      <button type="button" disabled={busy} onClick={verifyFirstEmail} className="w-full bg-gradient-to-r from-[#ff007f] to-[#7b2cbf] text-white py-3 rounded-xl font-bold">Verify Email</button>
-      <button type="button" disabled={busy} onClick={async()=>{setError("");setBusy(true);try{const r=await sendEmailOtp(email.trim().toLowerCase());if(!r?.success)throw new Error(r?.error||"Could not resend verification code.");setError("");}catch(e){fail(e,"Could not resend verification code.");}finally{setBusy(false);}}} className="w-full py-2 text-gray-300 text-xs">Resend verification code</button>
-      <button type="button" onClick={()=>setStep("email")} className="w-full py-2 text-gray-400 text-xs">Use another email</button>
+      {otpNotice && <p className="text-green-300 text-xs bg-green-950/30 border border-green-500/30 rounded-xl p-3">{otpNotice}</p>}
+      <input value={otp} onChange={e=>setOtp(e.target.value.replace(/\D/g, "").slice(0, 6))} maxLength={6} inputMode="numeric" placeholder="6-digit code" className="w-full bg-[#12121a] border border-[#00f5ff] rounded-xl px-3 py-3 text-white text-center tracking-widest font-bold" />
+      <button type="button" disabled={busy || otp.trim().length !== 6} onClick={verifyFirstEmail} className="w-full bg-gradient-to-r from-[#ff007f] to-[#7b2cbf] text-white py-3 rounded-xl font-bold">{busy ? "Verifying…" : "Verify Email"}</button>
+      <button type="button" disabled={busy || resendCooldown > 0} onClick={async()=>{setError("");setOtpNotice("");setBusy(true);try{const r=await sendEmailOtp(email.trim().toLowerCase());if(!r?.success)throw new Error(r?.error||"Could not resend verification code.");setOtpNotice("Verification code sent. Check your email.");setResendCooldown(60);setOtp("");}catch(e){fail(e,"Could not resend verification code.");}finally{setBusy(false);}}} className="w-full py-2 text-gray-300 text-xs">{resendCooldown > 0 ? `Resend code in ${resendCooldown}s` : "Resend verification code"}</button>
+      <button type="button" disabled={busy} onClick={()=>setStep("email")} className="w-full py-2 text-gray-400 text-xs">Use another email</button>
     </>}
     {step === "profile" && <>
       <input value={name} onChange={e=>setName(e.target.value)} placeholder="Full name" className="w-full bg-[#1e1e2d] border border-[#303040] rounded-xl px-3 py-3 text-white text-sm" autoComplete="name" />

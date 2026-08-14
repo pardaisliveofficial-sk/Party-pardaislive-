@@ -738,10 +738,12 @@ async function persistUserDurably(user: any): Promise<boolean> {
     const email = String(user.email).toLowerCase().trim();
     user.email = email;
     user.registeredAt = user.registeredAt || new Date().toISOString();
-    const usernameSaved = await syncDocument("users", user.username, user);
-    const uidSaved = await syncDocument("users", `uid_${user.uid}`, user);
-    const emailSaved = await syncDocument("users", `email_${email.replace(/[^a-zA-Z0-9]/g, "_")}`, user);
-    const registrySaved = await persistEmailRegistry(email, user);
+    const [usernameSaved, uidSaved, emailSaved, registrySaved] = await Promise.all([
+      syncDocument("users", user.username, user),
+      syncDocument("users", `uid_${user.uid}`, user),
+      syncDocument("users", `email_${email.replace(/[^a-zA-Z0-9]/g, "_")}`, user),
+      persistEmailRegistry(email, user)
+    ]);
     return usernameSaved && uidSaved && emailSaved && registrySaved;
   } catch (err) {
     console.error("[PARDAIS AUTH] Durable user persistence failed:", err);
@@ -784,11 +786,9 @@ async function createSession(user: any) {
   };
   const token = encodeSessionToken(sessionData);
   dbData.sessions[token] = sessionData;
-  try {
-    await syncDocument("sessions", token, sessionData);
-  } catch (err) {
+  void syncDocument("sessions", token, sessionData).catch((err) => {
     console.warn("[PARDAIS AUTH] Session Firestore mirror unavailable; signed token remains valid.", err);
-  }
+  });
   return token;
 }
 
@@ -999,7 +999,7 @@ async function sendPardaisPartyOtpEmail(to: string, otp: string): Promise<void> 
   </div>`;
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 15000);
+  const timeout = setTimeout(() => controller.abort(), 7000);
 
   try {
     const response = await fetch("https://api.resend.com/emails", {
@@ -1036,6 +1036,8 @@ async function sendPardaisPartyOtpEmail(to: string, otp: string): Promise<void> 
   }
 }
 
+const otpSendLocks = new Map<string, number>();
+
 app.post("/api/v1/auth/send-email-otp", async (req, res) => {
   const { email } = req.body;
   if (!email || typeof email !== "string" || !email.includes("@")) {
@@ -1043,6 +1045,11 @@ app.post("/api/v1/auth/send-email-otp", async (req, res) => {
   }
 
   const cleanEmail = email.toLowerCase().trim();
+  const lastSentAt = otpSendLocks.get(cleanEmail) || 0;
+  const remaining = 60000 - (Date.now() - lastSentAt);
+  if (remaining > 0) {
+    return res.status(429).json({ success: false, code: "OTP_COOLDOWN", error: `Please wait ${Math.ceil(remaining / 1000)} seconds before requesting another code.`, retryAfterSeconds: Math.ceil(remaining / 1000) });
+  }
   const existingAccount = await findEmailUserDurably(cleanEmail);
   if (existingAccount) {
     return res.status(409).json({
@@ -1052,6 +1059,7 @@ app.post("/api/v1/auth/send-email-otp", async (req, res) => {
     });
   }
   const otp = Math.floor(100000 + Math.random() * 900000).toString();
+  otpSendLocks.set(cleanEmail, Date.now());
 
   const challenge = { otp, email: cleanEmail, type: "signup", expiresAt: Date.now() + 10 * 60 * 1000, createdAt: new Date().toISOString() };
   // Persist before sending. This prevents an email from arriving while another
@@ -1062,16 +1070,11 @@ app.post("/api/v1/auth/send-email-otp", async (req, res) => {
   dbData.emailOtps[cleanEmail] = challenge;
   saveDatabase();
 
-  // Durable challenge persistence is best-effort for the pre-registration OTP.
-  // It must never prevent the verification email from being dispatched.
-  try {
-    await Promise.race([
-      persistAuthChallenge(challengeKey, challenge),
-      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 5000))
-    ]);
-  } catch (err) {
+  // Persist in the background. The hot in-memory challenge is authoritative for
+  // the active request, so Firestore latency must never delay the OTP email response.
+  void persistAuthChallenge(challengeKey, challenge).catch((err) => {
     console.warn("[PARDAIS PARTY OTP] Durable challenge write delayed/unavailable; hot OTP retained.", err);
-  }
+  });
 
   console.log(`[PARDAIS PARTY EMAIL OTP GATEWAY] Generated and durably stored OTP for ${cleanEmail}`);
 
@@ -1082,10 +1085,16 @@ app.post("/api/v1/auth/send-email-otp", async (req, res) => {
       message: `Verification OTP code sent to ${cleanEmail}. Check your email inbox.`
     });
   } catch (emailErr) {
-    // Do not pretend the email was sent when SMTP actually failed.
+    // Delivery failed: release the cooldown and invalidate the hot challenge so
+    // the user can retry immediately instead of being locked out for 60 seconds.
+    otpSendLocks.delete(cleanEmail);
+    delete dbData.emailOtps[cleanEmail];
+    void deletePersistedAuthChallenge(challengeKey).catch(() => undefined);
+    saveDatabase();
     console.error("[PARDAIS PARTY EMAIL] Resend delivery failed:", emailErr instanceof Error ? emailErr.message : emailErr);
     return res.status(502).json({
       success: false,
+      code: "OTP_DELIVERY_FAILED",
       error: "Verification email could not be delivered. Please try again."
     });
   }
@@ -1126,9 +1135,12 @@ app.post("/api/v1/auth/verify-email-otp", async (req, res) => {
     return res.status(401).json({ error: "Invalid OTP code. Please check and try again." });
   }
 
-  // Delete used OTP code from both hot cache and durable store.
+  // Invalidate the hot challenge immediately. Durable deletion is background-only
+  // so Firestore latency cannot block successful verification.
   delete dbData.emailOtps[cleanEmail];
-  await deletePersistedAuthChallenge(challengeKey);
+  void deletePersistedAuthChallenge(challengeKey).catch((err) => {
+    console.warn("[PARDAIS PARTY OTP] Durable challenge cleanup delayed:", err);
+  });
 
   const uid = "email_" + cleanEmail.replace(/[^a-zA-Z0-9]/g, "_");
   let user = dbData.users.find((u: any) => (u.email && u.email.toLowerCase() === cleanEmail) || u.uid === uid);
