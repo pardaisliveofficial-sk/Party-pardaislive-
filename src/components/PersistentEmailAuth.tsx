@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { emailStatus, sendEmailOtp, verifyEmailOtp, emailPasswordLogin, createEmailPassword, requestPasswordReset, resetEmailPassword } from "../lib/apiClient";
+import { resolveApiUrl } from "../lib/apiClient";
 
 type Props = { onAuthenticated: (payload: any) => void; };
 
@@ -15,6 +16,7 @@ export default function PersistentEmailAuth({ onAuthenticated }: Props) {
   const [token, setToken] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [existingNeedsPassword, setExistingNeedsPassword] = useState(false);
 
   const fail = (e: any, fallback: string) => setError(e?.message || e?.error || fallback);
 
@@ -24,7 +26,12 @@ export default function PersistentEmailAuth({ onAuthenticated }: Props) {
     setError(""); setBusy(true);
     try {
       const status = await emailStatus(clean);
-      if (status?.exists && !status?.needsPassword) { setStep("password"); return; }
+      if (status?.exists) {
+        setExistingNeedsPassword(Boolean(status?.needsPassword));
+        setStep("password");
+        return;
+      }
+      setExistingNeedsPassword(false);
       const sent = await sendEmailOtp(clean);
       if (!sent?.success) throw new Error(sent?.error || "Could not send verification code.");
       setStep("otp");
@@ -63,7 +70,7 @@ export default function PersistentEmailAuth({ onAuthenticated }: Props) {
     try {
       const p = await createEmailPassword(token, password);
       if (!p?.success) throw new Error(p?.error || "Could not create password.");
-      const profile = await fetch("/api/v1/auth/setup-profile", {
+      const profile = await fetch(resolveApiUrl("/api/v1/auth/setup-profile"), {
         method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
         body: JSON.stringify({ fullName: name.trim(), username: username.trim().replace(/^@/, "") })
       }).then(async r => { const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.error || "Could not save profile."); return d; });
@@ -106,6 +113,7 @@ export default function PersistentEmailAuth({ onAuthenticated }: Props) {
         <input value={password} onChange={e=>setPassword(e.target.value)} type={showPassword ? "text" : "password"} placeholder="Password" className="w-full bg-[#1e1e2d] border border-[#303040] rounded-xl px-3 py-3 pr-12 text-white text-sm" autoComplete="current-password" />
         <button type="button" onClick={()=>setShowPassword(v=>!v)} className="absolute right-2 top-1/2 -translate-y-1/2 w-9 h-9 flex items-center justify-center text-lg" aria-label={showPassword ? "Hide password" : "Show password"}>{showPassword ? "🙈" : "👁️"}</button>
       </div>
+      {existingNeedsPassword && <p className="text-amber-300 text-xs bg-amber-950/30 border border-amber-500/30 rounded-xl p-3">This email is already registered. If you do not know the password, use Forgot Password to recover the account.</p>}
       <button type="button" disabled={busy} onClick={login} className="w-full bg-gradient-to-r from-[#ff007f] to-[#7b2cbf] text-white py-3 rounded-xl font-bold">Login</button>
       <button type="button" disabled={busy} onClick={startForgot} className="w-full py-2 bg-white/5 rounded-xl border border-white/10 text-gray-300 text-sm">Forgot Password?</button>
       <button type="button" disabled={busy} onClick={()=>{setPassword("");setStep("email");}} className="w-full py-2 text-gray-400 text-xs">Use another email</button>
@@ -114,6 +122,7 @@ export default function PersistentEmailAuth({ onAuthenticated }: Props) {
       <p className="text-xs text-gray-300">Verification code sent to <b>{email}</b>.</p>
       <input value={otp} onChange={e=>setOtp(e.target.value)} maxLength={6} inputMode="numeric" placeholder="6-digit code" className="w-full bg-[#12121a] border border-[#00f5ff] rounded-xl px-3 py-3 text-white text-center tracking-widest font-bold" />
       <button type="button" disabled={busy} onClick={verifyFirstEmail} className="w-full bg-gradient-to-r from-[#ff007f] to-[#7b2cbf] text-white py-3 rounded-xl font-bold">Verify Email</button>
+      <button type="button" disabled={busy} onClick={async()=>{setError("");setBusy(true);try{const r=await sendEmailOtp(email.trim().toLowerCase());if(!r?.success)throw new Error(r?.error||"Could not resend verification code.");setError("");}catch(e){fail(e,"Could not resend verification code.");}finally{setBusy(false);}}} className="w-full py-2 text-gray-300 text-xs">Resend verification code</button>
       <button type="button" onClick={()=>setStep("email")} className="w-full py-2 text-gray-400 text-xs">Use another email</button>
     </>}
     {step === "profile" && <>
@@ -134,6 +143,7 @@ export default function PersistentEmailAuth({ onAuthenticated }: Props) {
         <button type="button" onClick={()=>setShowPassword(v=>!v)} className="absolute right-2 top-1/2 -translate-y-1/2 w-9 h-9 flex items-center justify-center text-lg" aria-label={showPassword ? "Hide password" : "Show password"}>{showPassword ? "🙈" : "👁️"}</button>
       </div>
       <button type="button" disabled={busy} onClick={reset} className="w-full bg-gradient-to-r from-[#ff007f] to-[#7b2cbf] text-white py-3 rounded-xl font-bold">Reset Password & Login</button>
+      <button type="button" disabled={busy} onClick={async()=>{setError("");setBusy(true);try{const r=await requestPasswordReset(email.trim().toLowerCase());if(!r?.success)throw new Error(r?.error||"Could not resend recovery code.");setError("");}catch(e){fail(e,"Could not resend recovery code.");}finally{setBusy(false);}}} className="w-full py-2 text-gray-300 text-xs">Resend recovery code</button>
     </>}
     {error && <p className="text-red-300 text-xs bg-red-950/30 border border-red-500/30 rounded-xl p-3">{error}</p>}
   </div>;

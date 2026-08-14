@@ -22,7 +22,12 @@ import {
   hydrateReelsFromFirestore,
   clearAllHostsInFirestore,
   getPersistedSession,
-  getPersistedUserForSession
+  getPersistedUserForSession,
+  getPersistedUserForEmail,
+  persistEmailRegistry,
+  persistAuthChallenge,
+  getPersistedAuthChallenge,
+  deletePersistedAuthChallenge
 } from "./src/db/firebaseDb";
 
 dotenv.config();
@@ -711,6 +716,22 @@ function persistUser(user: any) {
   if (user.email) syncDocument("users", `email_${user.email.toLowerCase().replace(/[^a-zA-Z0-9]/g, "_")}`, user);
 }
 
+async function persistUserDurably(user: any): Promise<boolean> {
+  try {
+    if (!user?.uid || !user?.email) return false;
+    const email = String(user.email).toLowerCase().trim();
+    user.email = email;
+    user.registeredAt = user.registeredAt || new Date().toISOString();
+    await syncDocument("users", user.username, user);
+    await syncDocument("users", `uid_${user.uid}`, user);
+    await syncDocument("users", `email_${email.replace(/[^a-zA-Z0-9]/g, "_")}`, user);
+    return await persistEmailRegistry(email, user);
+  } catch (err) {
+    console.error("[PARDAIS AUTH] Durable user persistence failed:", err);
+    return false;
+  }
+}
+
 function getSessionSecret(): string {
   return process.env.SESSION_SECRET || process.env.JWT_SECRET || "pardais-party-session-v1";
 }
@@ -781,6 +802,14 @@ function findEmailUser(email: string) {
   });
 
   return matches[0];
+}
+
+async function findEmailUserDurably(email: string) {
+  const cleanEmail = String(email || "").toLowerCase().trim();
+  // Permanent Firestore identity wins over any stale/duplicate local cache.
+  const persisted = await getPersistedUserForEmail(cleanEmail);
+  if (persisted) return persisted;
+  return findEmailUser(cleanEmail);
 }
 
 function ensureStableEmailIdentity(user: any, email: string) {
@@ -857,7 +886,8 @@ app.post("/api/v1/auth/google-login", async (req, res) => {
       followingCount: 0,
       totalLikesCount: 0,
       selectedFrameId: "",
-      vipSuspended: false
+      vipSuspended: false,
+      registeredAt: new Date().toISOString()
     };
 
     dbData.users.push(user);
@@ -898,10 +928,10 @@ app.post("/api/v1/auth/google-login", async (req, res) => {
 });
 
 // Account status check — does NOT send an email.
-app.post("/api/v1/auth/email-status", (req, res) => {
+app.post("/api/v1/auth/email-status", async (req, res) => {
   const email = typeof req.body?.email === "string" ? req.body.email.toLowerCase().trim() : "";
   if (!email || !email.includes("@")) return res.status(400).json({ error: "A valid email address is required." });
-  const user = findEmailUser(email);
+  const user = await findEmailUserDurably(email);
   return res.json({
     success: true,
     exists: Boolean(user),
@@ -982,16 +1012,28 @@ app.post("/api/v1/auth/send-email-otp", async (req, res) => {
   }
 
   const cleanEmail = email.toLowerCase().trim();
+  const existingAccount = await findEmailUserDurably(cleanEmail);
+  if (existingAccount) {
+    return res.status(409).json({
+      success: false,
+      code: "EMAIL_ALREADY_REGISTERED",
+      error: "This email is already registered. Please log in. If you forgot the password, use Forgot Password."
+    });
+  }
   const otp = Math.floor(100000 + Math.random() * 900000).toString();
 
+  const challenge = { otp, email: cleanEmail, type: "signup", expiresAt: Date.now() + 10 * 60 * 1000, createdAt: new Date().toISOString() };
+  // Persist before sending. This prevents an email from arriving while another
+  // API replica/restart has no matching OTP record.
+  const durable = await persistAuthChallenge(`email_${cleanEmail.replace(/[^a-zA-Z0-9]/g, "_")}`, challenge);
+  if (!durable) {
+    return res.status(503).json({ success: false, error: "Verification service is temporarily unavailable. Please try again." });
+  }
   if (!dbData.emailOtps) dbData.emailOtps = {};
-  dbData.emailOtps[cleanEmail] = {
-    otp,
-    expiresAt: Date.now() + 10 * 60 * 1000
-  };
+  dbData.emailOtps[cleanEmail] = challenge;
   saveDatabase();
 
-  console.log(`[PARDAIS PARTY EMAIL OTP GATEWAY] Generated OTP for ${cleanEmail}`);
+  console.log(`[PARDAIS PARTY EMAIL OTP GATEWAY] Generated and durably stored OTP for ${cleanEmail}`);
 
   try {
     await sendPardaisPartyOtpEmail(cleanEmail, otp);
@@ -1017,14 +1059,25 @@ app.post("/api/v1/auth/verify-email-otp", async (req, res) => {
   }
 
   const cleanEmail = email.toLowerCase().trim();
-  const stored = dbData.emailOtps?.[cleanEmail];
+  const existingAccount = await findEmailUserDurably(cleanEmail);
+  if (existingAccount) {
+    return res.status(409).json({
+      success: false,
+      code: "EMAIL_ALREADY_REGISTERED",
+      error: "This email is already registered. Please log in instead of signing up again."
+    });
+  }
+  const challengeKey = `email_${cleanEmail.replace(/[^a-zA-Z0-9]/g, "_")}`;
+  let stored = dbData.emailOtps?.[cleanEmail] || null;
+  if (!stored) stored = await getPersistedAuthChallenge(challengeKey);
 
   if (!stored) {
-    return res.status(401).json({ error: "No OTP code requested for this email or OTP expired." });
+    return res.status(401).json({ error: "No OTP code requested for this email or OTP expired. Please request a new code." });
   }
 
   if (stored.expiresAt && Date.now() > stored.expiresAt) {
     delete dbData.emailOtps[cleanEmail];
+    await deletePersistedAuthChallenge(challengeKey);
     saveDatabase();
     return res.status(401).json({ error: "OTP code has expired. Please request a new OTP code." });
   }
@@ -1033,8 +1086,9 @@ app.post("/api/v1/auth/verify-email-otp", async (req, res) => {
     return res.status(401).json({ error: "Invalid OTP code. Please check and try again." });
   }
 
-  // Delete used OTP code
+  // Delete used OTP code from both hot cache and durable store.
   delete dbData.emailOtps[cleanEmail];
+  await deletePersistedAuthChallenge(challengeKey);
 
   const uid = "email_" + cleanEmail.replace(/[^a-zA-Z0-9]/g, "_");
   let user = dbData.users.find((u: any) => (u.email && u.email.toLowerCase() === cleanEmail) || u.uid === uid);
@@ -1084,7 +1138,10 @@ app.post("/api/v1/auth/verify-email-otp", async (req, res) => {
   }
 
   ensureStableEmailIdentity(user, cleanEmail);
-  persistUser(user);
+  const persisted = await persistUserDurably(user);
+  if (!persisted) {
+    return res.status(503).json({ success: false, error: "Account could not be permanently saved. Please try again." });
+  }
   saveDatabase();
 
   const token = await createSession(user);
@@ -1101,16 +1158,20 @@ app.post("/api/v1/auth/verify-email-otp", async (req, res) => {
 
 // 4. Create / change password after email verification.
 // Password login does NOT send an email/OTP.
-app.post("/api/v1/auth/set-password", authenticateUser, (req: any, res) => {
+app.post("/api/v1/auth/set-password", authenticateUser, async (req: any, res) => {
   const password = typeof req.body?.password === "string" ? req.body.password : "";
   if (password.length < 6) return res.status(400).json({ error: "Password must be at least 6 characters." });
   if (!req.user?.email) return res.status(400).json({ error: "This account does not have an email address." });
+  if (req.user.passwordHash) {
+    return res.status(409).json({ error: "Password is already set for this account. Use Login or Forgot Password to recover access." });
+  }
 
   req.user.passwordHash = hashPassword(password);
   req.user.authProvider = "email";
   req.user.isVerified = true;
   ensureStableEmailIdentity(req.user, req.user.email);
-  persistUser(req.user);
+  const persisted = await persistUserDurably(req.user);
+  if (!persisted) return res.status(503).json({ error: "Account could not be permanently saved. Please try again." });
   saveDatabase();
   res.json({ success: true, message: "Password created successfully.", user: req.user });
 });
@@ -1125,7 +1186,7 @@ app.post("/api/v1/auth/password-login", async (req, res) => {
 
   const normalized = identifier.toLowerCase().replace(/^@/, "");
   const user = normalized.includes("@")
-    ? findEmailUser(normalized)
+    ? await findEmailUserDurably(normalized)
     : (dbData.users || []).find((u: any) => String(u.username || "").toLowerCase() === normalized);
 
   if (!user || !user.passwordHash || !verifyPassword(password, user.passwordHash))
@@ -1133,7 +1194,8 @@ app.post("/api/v1/auth/password-login", async (req, res) => {
   if (user.isBanned) return res.status(403).json({ error: "ACCOUNT_BANNED" });
 
   if (user.email) ensureStableEmailIdentity(user, String(user.email).toLowerCase());
-  persistUser(user);
+  const persisted = await persistUserDurably(user);
+  if (!persisted) return res.status(503).json({ error: "Account could not be restored from permanent storage. Please try again." });
   const token = await createSession(user);
   saveDatabase();
   res.json({ success:true, message:"Logged in successfully.", token, isNewUser:false, needsPassword:false, user });
@@ -1144,13 +1206,19 @@ app.post("/api/v1/auth/forgot-password", async (req, res) => {
   const email = typeof req.body?.email === "string" ? req.body.email.toLowerCase().trim() : "";
   if (!email || !email.includes("@")) return res.status(400).json({ error: "A valid email address is required." });
 
-  const user = findEmailUser(email);
+  const user = await findEmailUserDurably(email);
   // Keep the response generic so account existence is not exposed.
   if (!user) return res.json({ success: true, message: "If an account exists for this email, a recovery code has been sent." });
 
   const otp = Math.floor(100000 + Math.random() * 900000).toString();
+  const challengeKey = `reset_${email.replace(/[^a-zA-Z0-9]/g, "_")}`;
+  const challenge = { otp, email, type: "password-reset", expiresAt: Date.now() + 10 * 60 * 1000, createdAt: new Date().toISOString() };
+  const durable = await persistAuthChallenge(challengeKey, challenge);
+  if (!durable) {
+    return res.status(503).json({ success: false, error: "Recovery service is temporarily unavailable. Please try again." });
+  }
   if (!dbData.passwordResetOtps) dbData.passwordResetOtps = {};
-  dbData.passwordResetOtps[email] = { otp, expiresAt: Date.now() + 10 * 60 * 1000 };
+  dbData.passwordResetOtps[email] = challenge;
   saveDatabase();
 
   try {
@@ -1173,19 +1241,23 @@ app.post("/api/v1/auth/reset-password", async (req, res) => {
     return res.status(400).json({ error: "Email, recovery code and a password of at least 6 characters are required." });
   }
 
-  const stored = dbData.passwordResetOtps?.[email];
+  const challengeKey = `reset_${email.replace(/[^a-zA-Z0-9]/g, "_")}`;
+  let stored = dbData.passwordResetOtps?.[email] || null;
+  if (!stored) stored = await getPersistedAuthChallenge(challengeKey);
   if (!stored || Date.now() > stored.expiresAt || String(stored.otp) !== otp) {
     return res.status(401).json({ error: "Invalid or expired recovery code." });
   }
 
-  const user = findEmailUser(email);
+  const user = await findEmailUserDurably(email);
   if (!user) return res.status(404).json({ error: "Account not found." });
 
   user.passwordHash = hashPassword(password);
   user.authProvider = "email";
   ensureStableEmailIdentity(user, email);
   delete dbData.passwordResetOtps[email];
-  persistUser(user);
+  await deletePersistedAuthChallenge(challengeKey);
+  const persisted = await persistUserDurably(user);
+  if (!persisted) return res.status(503).json({ success: false, error: "Password could not be permanently saved. Please try again." });
   saveDatabase();
 
   const token = await createSession(user);

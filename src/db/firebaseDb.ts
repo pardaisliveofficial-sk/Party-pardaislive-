@@ -183,6 +183,79 @@ export async function getPersistedSession(token: string): Promise<any | null> {
   }
 }
 
+
+// Durable email-auth challenge storage. OTPs must survive API restarts/replicas.
+export async function persistAuthChallenge(key: string, data: any): Promise<boolean> {
+  if (!key) return false;
+  try {
+    await setDoc(doc(db, "authChallenges", String(key)), sanitizeForFirestore(data), { merge: true });
+    return true;
+  } catch (err) {
+    handleQuotaError(err, `persist auth challenge ${key}`);
+    return false;
+  }
+}
+
+export async function getPersistedAuthChallenge(key: string): Promise<any | null> {
+  if (!key) return null;
+  try {
+    const snap = await getDoc(doc(db, "authChallenges", String(key)));
+    return snap.exists() ? snap.data() : null;
+  } catch (err) {
+    handleQuotaError(err, `get auth challenge ${key}`);
+    return null;
+  }
+}
+
+export async function deletePersistedAuthChallenge(key: string): Promise<void> {
+  if (!key) return;
+  try {
+    await deleteDoc(doc(db, "authChallenges", String(key)));
+  } catch (err) {
+    handleQuotaError(err, `delete auth challenge ${key}`);
+  }
+}
+
+export async function getPersistedUserForEmail(email: string): Promise<any | null> {
+  const cleanEmail = String(email || "").toLowerCase().trim();
+  if (!cleanEmail) return null;
+  const emailKey = cleanEmail.replace(/[^a-zA-Z0-9]/g, "_");
+  try {
+    const registrySnap = await getDoc(doc(db, "emailRegistry", emailKey));
+    if (registrySnap.exists()) {
+      const registry = registrySnap.data();
+      if (registry?.uid) {
+        const uidSnap = await getDoc(doc(db, "users", `uid_${registry.uid}`));
+        if (uidSnap.exists()) return uidSnap.data();
+      }
+    }
+    const emailSnap = await getDoc(doc(db, "users", `email_${emailKey}`));
+    return emailSnap.exists() ? emailSnap.data() : null;
+  } catch (err) {
+    handleQuotaError(err, "auth email account lookup");
+    return null;
+  }
+}
+
+export async function persistEmailRegistry(email: string, user: any): Promise<boolean> {
+  const cleanEmail = String(email || "").toLowerCase().trim();
+  if (!cleanEmail || !user?.uid) return false;
+  const emailKey = cleanEmail.replace(/[^a-zA-Z0-9]/g, "_");
+  try {
+    await setDoc(doc(db, "emailRegistry", emailKey), sanitizeForFirestore({
+      email: cleanEmail,
+      uid: user.uid,
+      username: user.username || "",
+      registeredAt: user.registeredAt || new Date().toISOString(),
+      locked: true
+    }), { merge: true });
+    return true;
+  } catch (err) {
+    handleQuotaError(err, `persist email registry ${emailKey}`);
+    return false;
+  }
+}
+
 export async function getPersistedUserForSession(session: any): Promise<any | null> {
   if (!session) return null;
   const candidates: any[] = [];
