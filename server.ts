@@ -145,7 +145,7 @@ loadDatabase();
 // ------------------------------------------------------------------
 // SECURE USER AUTHENTICATION & AUTHORIZATION MIDDLEWARE
 // ------------------------------------------------------------------
-async async function authenticateUser(req: any, res: any, next: any) {
+async function authenticateUser(req: any, res: any, next: any) {
   const authHeader = req.headers["authorization"];
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
     return res.status(401).json({ error: "Unauthorized. Authorization Bearer token is required." });
@@ -159,10 +159,14 @@ async async function authenticateUser(req: any, res: any, next: any) {
   // First use the hot in-memory cache.
   let session = dbData.sessions?.[token];
 
-  // IMPORTANT: after a Railway/production restart or when traffic reaches a
-  // different replica, the in-memory session map may not yet contain a token
-  // that is still valid in Firestore. Never turn that temporary cache miss into
-  // a false "session expired" response. Hydrate the session from Firestore.
+  // New signed sessions survive backend restarts/replicas without depending on
+  // Firestore being available for the authentication check.
+  if (!session && token.startsWith("pardais_v2.")) {
+    session = decodeSessionToken(token);
+    if (session) dbData.sessions[token] = session;
+  }
+
+  // Legacy sessions still fall back to Firestore.
   if (!session) {
     session = await getPersistedSession(token);
     if (session) {
@@ -703,19 +707,46 @@ function persistUser(user: any) {
   if (user.email) syncDocument("users", `email_${user.email.toLowerCase().replace(/[^a-zA-Z0-9]/g, "_")}`, user);
 }
 
+function getSessionSecret(): string {
+  return process.env.SESSION_SECRET || process.env.JWT_SECRET || "pardais-party-session-v1";
+}
+
+function encodeSessionToken(sessionData: any): string {
+  const payload = Buffer.from(JSON.stringify(sessionData), "utf8").toString("base64url");
+  const signature = crypto.createHmac("sha256", getSessionSecret()).update(payload).digest("base64url");
+  return `pardais_v2.${payload}.${signature}`;
+}
+
+function decodeSessionToken(token: string): any | null {
+  try {
+    const parts = String(token || "").split(".");
+    if (parts.length !== 3 || parts[0] !== "pardais_v2") return null;
+    const payload = parts[1];
+    const signature = parts[2];
+    const expected = crypto.createHmac("sha256", getSessionSecret()).update(payload).digest("base64url");
+    if (signature.length !== expected.length || !crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) return null;
+    const session = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+    if (!session?.uid || !session?.loginTime) return null;
+    return session;
+  } catch {
+    return null;
+  }
+}
+
 async function createSession(user: any) {
-  const token = `pardais_session_${user.uid}_${crypto.randomBytes(8).toString("hex")}`;
   const sessionData = {
     uid: user.uid,
     username: user.username,
     email: user.email,
     loginTime: new Date().toISOString()
   };
+  const token = encodeSessionToken(sessionData);
   dbData.sessions[token] = sessionData;
-  // IMPORTANT: wait for the durable session write before returning the token.
-  // Otherwise a restart/replica switch can immediately report the fresh token
-  // as invalid and profile uploads will fail with 401.
-  await syncDocument("sessions", token, sessionData);
+  try {
+    await syncDocument("sessions", token, sessionData);
+  } catch (err) {
+    console.warn("[PARDAIS AUTH] Session Firestore mirror unavailable; signed token remains valid.", err);
+  }
   return token;
 }
 
