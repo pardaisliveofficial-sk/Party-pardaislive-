@@ -200,19 +200,43 @@ export const authenticatedFetch = async (
 // Pardais Party persistent email authentication helpers
 // ------------------------------------------------------------------
 export async function emailStatus(email: string) {
-  const res = await fetch(resolveApiUrl("/api/v1/auth/email-status"), {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email: email.trim().toLowerCase() })
-  });
-  return res.json();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 9000);
+  try {
+    const res = await fetch(resolveApiUrl("/api/v1/auth/email-status"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: email.trim().toLowerCase() }),
+      signal: controller.signal
+    });
+    return await res.json().catch(() => ({ success: false }));
+  } catch (err: any) {
+    if (err?.name === "AbortError") return { success: false, exists: false, timedOut: true };
+    return { success: false, exists: false };
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 export async function sendEmailOtp(email: string) {
-  const res = await fetch(resolveApiUrl("/api/v1/auth/send-email-otp"), {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email: email.trim().toLowerCase() })
-  });
-  return res.json();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 18000);
+  try {
+    const res = await fetch(resolveApiUrl("/api/v1/auth/send-email-otp"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: email.trim().toLowerCase() }),
+      signal: controller.signal
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { success: false, error: data?.error || `Verification request failed (HTTP ${res.status}).`, code: data?.code };
+    return data;
+  } catch (err: any) {
+    if (err?.name === "AbortError") return { success: false, error: "Verification request timed out. Please try again." };
+    return { success: false, error: "Could not reach the verification service. Please try again." };
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 export async function verifyEmailOtp(email: string, otp: string) {
