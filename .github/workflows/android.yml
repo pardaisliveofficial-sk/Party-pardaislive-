@@ -15,32 +15,16 @@ jobs:
       - name: Checkout source code
         uses: actions/checkout@v4
 
-      - name: Check package-lock.json existence
-        id: check_lock
-        run: |
-          if [ -f "package-lock.json" ]; then
-            echo "exists=true" >> $GITHUB_OUTPUT
-          else
-            echo "exists=false" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Setup Node.js Environment (with Cache)
-        if: steps.check_lock.outputs.exists == 'true'
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: 'npm'
-
-      - name: Setup Node.js Environment (without Cache)
-        if: steps.check_lock.outputs.exists != 'true'
+      - name: Setup Node.js Environment
         uses: actions/setup-node@v4
         with:
           node-version: '22'
 
       - name: Install Dependencies
         run: |
-          # Reconcile package.json/package-lock.json changes during CI.
-          npm install --no-audit --no-fund
+          # Always resolve from package.json. This avoids stale lock-file failures
+          # after dependency updates and keeps CI reproducible from the declared manifest.
+          npm install --no-audit --no-fund --legacy-peer-deps
 
       - name: Recreate Android Assets from SVG (Icons & Splash)
         run: node android-recreate-icons.cjs
