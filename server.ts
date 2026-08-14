@@ -3,7 +3,7 @@ import path from "path";
 import dotenv from "dotenv";
 import fs from "fs";
 import sharp from "sharp";
-import { S3Client, PutObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
+import { S3Client, PutObjectCommand, GetObjectCommand, ListObjectsV2Command } from "@aws-sdk/client-s3";
 import multer from "multer";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
@@ -5046,6 +5046,68 @@ app.post("/api/v1/reports", (req, res) => {
   res.status(201).json(newReport);
 });
 
+
+// ------------------------------------------------------------------
+// R2 durable reel metadata mirror
+// Firestore remains the primary database; R2 keeps a durable copy of each
+// reel metadata record alongside the uploaded media.
+// ------------------------------------------------------------------
+async function persistReelMetadataToR2(reel: any) {
+  try {
+    const client = getS3Client();
+    const bucketName = process.env.R2_BUCKET_NAME || "pardaisparty-reels";
+    const key = `reels/_metadata/${encodeURIComponent(String(reel.id))}.json`;
+    await client.send(new PutObjectCommand({
+      Bucket: bucketName,
+      Key: key,
+      Body: Buffer.from(JSON.stringify(reel), "utf8"),
+      ContentType: "application/json",
+      CacheControl: "no-cache, no-store, must-revalidate"
+    }));
+    console.log(`[PARDAIS-PARTY R2] Durable reel metadata mirrored: ${key}`);
+    return true;
+  } catch (error: any) {
+    console.error("[PARDAIS-PARTY R2] Reel metadata mirror failed:", error?.message || error);
+    return false;
+  }
+}
+
+async function hydrateReelsFromR2Metadata(): Promise<any[]> {
+  try {
+    const client = getS3Client();
+    const bucketName = process.env.R2_BUCKET_NAME || "pardaisparty-reels";
+    const listed = await client.send(new ListObjectsV2Command({
+      Bucket: bucketName,
+      Prefix: "reels/_metadata/"
+    }));
+    const objects = (listed.Contents || []).filter((o: any) => o.Key && o.Key.endsWith(".json"));
+    const result: any[] = [];
+
+    for (const item of objects) {
+      try {
+        const obj: any = await client.send(new GetObjectCommand({
+          Bucket: bucketName,
+          Key: item.Key
+        }));
+        const chunks: Buffer[] = [];
+        const body: any = obj.Body;
+        if (!body) continue;
+        for await (const chunk of body as any) {
+          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+        }
+        const parsed = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+        if (parsed && parsed.id) result.push(parsed);
+      } catch (itemError: any) {
+        console.warn(`[PARDAIS-PARTY R2] Could not hydrate reel metadata ${item.Key}:`, itemError?.message || itemError);
+      }
+    }
+    return result;
+  } catch (error: any) {
+    console.error("[PARDAIS-PARTY R2] Reel metadata hydration failed:", error?.message || error);
+    return [];
+  }
+}
+
 // Reels endpoints
 app.get("/api/v1/reels", async (req, res) => {
   // Firestore is the durable source of truth. Hydrate the in-memory cache on
@@ -5053,9 +5115,28 @@ app.get("/api/v1/reels", async (req, res) => {
   // never turn a real reel collection into an empty feed.
   try {
     const hydrated = await hydrateReelsFromFirestore();
-    if (Array.isArray(hydrated) && hydrated.length > 0) {
-      dbData.reels = hydrated;
+    const durable = Array.isArray(hydrated) ? hydrated : [];
+    const r2Reels = await hydrateReelsFromR2Metadata();
+
+    const merged = new Map<string, any>();
+    [...durable, ...r2Reels, ...(Array.isArray(dbData.reels) ? dbData.reels : [])].forEach((r: any) => {
+      if (r && r.id) merged.set(String(r.id), r);
+    });
+
+    if (merged.size > 0) {
+      dbData.reels = Array.from(merged.values());
       saveDatabase();
+
+      // If R2 recovered records that Firestore did not return, repair Firestore
+      // in the background so the next deployment has two durable copies.
+      const firestoreIds = new Set(durable.map((r: any) => String(r.id)));
+      for (const reel of r2Reels) {
+        if (reel?.id && !firestoreIds.has(String(reel.id))) {
+          syncDocument("reels", String(reel.id), reel).catch((err: any) =>
+            console.warn("[PARDAIS-PARTY REELS] Firestore backfill from R2 failed:", err?.message || err)
+          );
+        }
+      }
     }
     res.json(dbData.reels || []);
   } catch (error) {
@@ -5085,6 +5166,7 @@ app.post("/api/v1/reels", async (req, res) => {
     // IMPORTANT: await the durable Firestore write before confirming success.
     // The previous fire-and-forget write could be lost during a deploy/restart.
     await syncDocument("reels", newReel.id, newReel);
+    await persistReelMetadataToR2(newReel);
     res.status(201).json(newReel);
   } catch (error: any) {
     console.error("[PARDAIS-PARTY REELS] Durable create failed:", error);
@@ -5100,6 +5182,7 @@ app.put("/api/v1/reels/:id", async (req, res) => {
       dbData.reels[index] = { ...dbData.reels[index], ...req.body };
       saveDatabase();
       await syncDocument("reels", id, dbData.reels[index]);
+      await persistReelMetadataToR2(dbData.reels[index]);
       res.json(dbData.reels[index]);
     } else {
       res.status(404).json({ error: "Reel not found" });
