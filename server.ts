@@ -28,7 +28,11 @@ import {
 dotenv.config();
 
 const app = express();
+// Railway/Cloudflare terminate TLS before Express. Trust the proxy so generated
+// media URLs are always HTTPS and never become mixed-content URLs in the app.
+app.set("trust proxy", 1);
 const PORT = Number(process.env.PORT || 3000);
+const PUBLIC_API_BASE = (process.env.PUBLIC_API_BASE || "https://api.pardaisparty.soulverseapps.com").replace(/\/+$/, "");
 
 // Production API Request Logging & Monitoring Middleware
 app.use((req, res, next) => {
@@ -1466,7 +1470,11 @@ app.post("/api/v1/user", authenticateUser, (req: any, res) => {
   req.user = updatedUser;
   
   // Sync changes in the persistent users list
-  const idxInUsers = dbData.users.findIndex((u: any) => u.username === user.username || (user.uid && u.uid === user.uid) || (user.email && u.email === user.email));
+  const idxInUsers = dbData.users.findIndex((u: any) =>
+    (user.uid && u.uid === user.uid) ||
+    (user.email && String(u.email || "").toLowerCase().trim() === String(user.email || "").toLowerCase().trim()) ||
+    u.username === user.username
+  );
   if (idxInUsers !== -1) {
     dbData.users[idxInUsers] = updatedUser;
   } else {
@@ -6032,8 +6040,7 @@ app.post("/api/v1/user/avatar", authenticateUser, avatarMulterUpload.single("ava
         )
       ]);
 
-      const requestBaseUrl = `${req.protocol || "https"}://${req.get("host")}`;
-      avatarUrl = `${requestBaseUrl}/api/v1/user/avatar-media?key=${encodeURIComponent(objectKey)}`;
+      avatarUrl = `${PUBLIC_API_BASE}/api/v1/user/avatar-media?key=${encodeURIComponent(objectKey)}`;
     } catch (r2Err: any) {
       // Fallback: save the already-optimized image to the API's persistent public
       // uploads directory. This guarantees profile editing still completes even
@@ -6050,8 +6057,7 @@ app.post("/api/v1/user/avatar", authenticateUser, avatarMulterUpload.single("ava
         const fallbackPath = path.join(uploadsDir, fallbackName);
         fs.writeFileSync(fallbackPath, uploadBuffer);
 
-        const requestBaseUrl = `${req.protocol || "https"}://${req.get("host")}`;
-        avatarUrl = `${requestBaseUrl}/uploads/${fallbackName}`;
+        avatarUrl = `${PUBLIC_API_BASE}/uploads/${fallbackName}`;
       } catch (localErr: any) {
         // Final fallback: persist the optimized image itself as a data URL.
         // This keeps the profile update successful even when both R2 and the
@@ -6070,9 +6076,9 @@ app.post("/api/v1/user/avatar", authenticateUser, avatarMulterUpload.single("ava
     req.user = updatedUser;
 
     const idxInUsers = dbData.users.findIndex((u: any) =>
-      (u.uid && u.uid === updatedUser.uid) ||
-      (u.username && u.username === updatedUser.username) ||
-      (u.email && u.email === updatedUser.email)
+      (updatedUser.uid && u.uid === updatedUser.uid) ||
+      (updatedUser.email && String(u.email || "").toLowerCase().trim() === String(updatedUser.email || "").toLowerCase().trim()) ||
+      (updatedUser.username && u.username === updatedUser.username)
     );
 
     if (idxInUsers !== -1) {

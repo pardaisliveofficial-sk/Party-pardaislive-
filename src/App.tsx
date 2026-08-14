@@ -1855,6 +1855,51 @@ export default function App() {
   const [clientView, setClientView] = useState<"feed" | "live-room" | "profile" | "wallet" | "family-agency" | "chat" | "reels" | "user-live" | "camera-prep" | "party-room" | "notifications" | "stream">("feed");
   const [viewHistory, setViewHistory] = useState<string[]>(["feed"]);
 
+  // Keep the device display awake while the user is actively inside Party/Live.
+  // Release the lock as soon as they leave those views so normal Android timeout
+  // behaviour returns everywhere else.
+  useEffect(() => {
+    const wakeEnabled = clientView === "party-room" || clientView === "live-room" || clientView === "user-live" || clientView === "stream";
+    if (!wakeEnabled) return;
+
+    let wakeLock: any = null;
+    let cancelled = false;
+
+    const acquireWakeLock = async () => {
+      try {
+        const wakeLockApi = (navigator as any).wakeLock;
+        if (!wakeLockApi?.request) return;
+        if (document.visibilityState !== "visible") return;
+        wakeLock = await wakeLockApi.request("screen");
+        if (cancelled) {
+          try { await wakeLock?.release?.(); } catch {}
+          wakeLock = null;
+        }
+      } catch (err) {
+        console.warn("[PARDAIS SCREEN WAKE] Wake Lock unavailable:", err);
+      }
+    };
+
+    const handleVisibility = () => {
+      if (!cancelled && document.visibilityState === "visible") {
+        acquireWakeLock();
+      }
+    };
+
+    acquireWakeLock();
+    document.addEventListener("visibilitychange", handleVisibility);
+    window.addEventListener("focus", handleVisibility);
+
+    return () => {
+      cancelled = true;
+      document.removeEventListener("visibilitychange", handleVisibility);
+      window.removeEventListener("focus", handleVisibility);
+      try { wakeLock?.release?.(); } catch {}
+      wakeLock = null;
+    };
+  }, [clientView]);
+
+
   useEffect(() => {
     if (clientView === "feed") {
       setViewHistory(["feed"]);
@@ -6072,8 +6117,29 @@ export default function App() {
     localStorage.removeItem("pardais_custom_avatar");
     localStorage.setItem("pardais_avatar_user_set", persistentAvatar ? "true" : "false");
 
-    saveAndSyncUserProfile(updatedUser);
-    setEditAvatar(persistentAvatar);
+    // Persist the account-scoped profile before closing the editor. This prevents
+    // a refresh from briefly restoring an older avatar/profile from stale cache.
+    try {
+      const syncRes = await authenticatedFetch("/api/v1/user", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(updatedUser)
+      });
+      const syncData = await syncRes.json().catch(() => ({}));
+      if (!syncRes.ok) {
+        throw new Error(syncData?.error || `Profile save failed (HTTP ${syncRes.status})`);
+      }
+      const canonicalUser = syncData?.user || updatedUser;
+      setUser(canonicalUser);
+      localStorage.setItem("pardais_user_profile", JSON.stringify(canonicalUser));
+      lastSavedUserRef.current = JSON.stringify(canonicalUser);
+      setEditAvatar(canonicalUser.avatar || persistentAvatar);
+    } catch (syncErr) {
+      console.error("[PARDAIS PROFILE] Profile sync failed:", syncErr);
+      alert(`Profile save failed. ${syncErr instanceof Error ? syncErr.message : "Please try again."}`);
+      return;
+    }
+
     setEditAvatarFile(null);
     setIsEditingProfile(false);
   };
