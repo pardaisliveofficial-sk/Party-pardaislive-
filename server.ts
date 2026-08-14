@@ -19,7 +19,8 @@ import {
   syncDocument,
   deleteDocument,
   writeMetadata,
-  clearAllHostsInFirestore
+  clearAllHostsInFirestore,
+  hydrateReelsFromFirestore
 } from "./src/db/firebaseDb";
 
 dotenv.config();
@@ -5037,8 +5038,21 @@ app.post("/api/v1/reports", (req, res) => {
 });
 
 // Reels endpoints
-app.get("/api/v1/reels", (req, res) => {
-  res.json(dbData.reels || []);
+app.get("/api/v1/reels", async (req, res) => {
+  // Firestore is the durable source of truth. Hydrate the in-memory cache on
+  // every feed bootstrap/reconnect so logout, refresh, deploy and app updates
+  // never turn a real reel collection into an empty feed.
+  try {
+    const hydrated = await hydrateReelsFromFirestore();
+    if (Array.isArray(hydrated) && hydrated.length > 0) {
+      dbData.reels = hydrated;
+      saveDatabase();
+    }
+    res.json(dbData.reels || []);
+  } catch (error) {
+    console.error("[PARDAIS-PARTY REELS] Durable reel hydration failed:", error);
+    res.json(dbData.reels || []);
+  }
 });
 
 app.post("/api/v1/reels", (req, res) => {

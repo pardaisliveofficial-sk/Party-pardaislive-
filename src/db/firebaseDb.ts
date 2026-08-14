@@ -357,6 +357,43 @@ export function startFirestoreSynchronization() {
   }, err => handleQuotaError(err, "Sync otps"));
 }
 
+export async function hydrateReelsFromFirestore(): Promise<any[]> {
+  if (isFirestoreQuotaExhausted) {
+    return Array.isArray(dbDataCache.reels) ? dbDataCache.reels : [];
+  }
+
+  try {
+    const snapshot = await getDocs(collection(db, "reels"));
+    const firestoreReels: any[] = [];
+    snapshot.forEach((docSnap) => {
+      const data = docSnap.data();
+      if (data && data.id) {
+        firestoreReels.push({ ...data, id: String(data.id || docSnap.id) });
+      } else if (data) {
+        firestoreReels.push({ ...data, id: docSnap.id });
+      }
+    });
+
+    // Firestore is the durable source of truth for reels. Never replace a
+    // non-empty cache with an empty/transient response.
+    if (firestoreReels.length > 0) {
+      const reelMap = new Map<string, any>();
+      (dbDataCache.reels || []).forEach((r: any) => {
+        if (r && r.id) reelMap.set(String(r.id), r);
+      });
+      firestoreReels.forEach((r: any) => {
+        if (r && r.id) reelMap.set(String(r.id), r);
+      });
+      dbDataCache.reels = Array.from(reelMap.values());
+    }
+
+    return dbDataCache.reels || [];
+  } catch (err) {
+    handleQuotaError(err, "hydrate reels from Firestore");
+    return Array.isArray(dbDataCache.reels) ? dbDataCache.reels : [];
+  }
+}
+
 export async function clearAllHostsInFirestore() {
   if (isFirestoreQuotaExhausted) return;
   try {
