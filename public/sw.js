@@ -1,12 +1,12 @@
 // Pardais Party — Android PWA Service Worker v7
-const CACHE_NAME = "pardais-party-v8";
+const CACHE_NAME = "pardais-party-v7";
 const ASSETS_TO_CACHE = [
   "/",
   "/?mode=standalone",
-  "/manifest.json?v=8",
-  "/icon-192.png?v=8",
-  "/icon-512.png?v=8",
-  "/icon.svg?v=8"
+  "/manifest.json?v=7",
+  "/icon-192.png?v=7",
+  "/icon-512.png?v=7",
+  "/icon.svg?v=7"
 ];
 
 self.addEventListener("install", (event) => {
@@ -39,14 +39,6 @@ self.addEventListener("activate", (event) => {
 
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
-
-  // API responses are live application state (party rooms, live streams, etc.).
-  // Never satisfy these requests from the PWA asset cache.
-  const requestUrl = new URL(event.request.url);
-  if (requestUrl.pathname.startsWith("/api/")) {
-    event.respondWith(fetch(event.request, { cache: "no-store" }));
-    return;
-  }
   
   // For navigation requests, try network first, then cache
   if (event.request.mode === "navigate") {

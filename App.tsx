@@ -344,6 +344,8 @@ export function recommendReels(
     isFollowed: boolean;
   }> = {}
 ) {
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   return [...reelsList].sort((a, b) => {
     // 1. Calculate general engagement score (baseline for trending/popular content)
     const popularityA = (a.likes || 0) * 1 + (a.commentsCount || 0) * 2 + (a.shares || 0) * 3 + (a.saves || 0) * 2;
@@ -937,6 +939,7 @@ export default function App() {
   const [isEditingProfile, setIsEditingProfile] = useState<boolean>(false);
   const [editFullName, setEditFullName] = useState<string>(DEFAULT_USER.fullName || "");
   const [editAvatar, setEditAvatar] = useState<string>(DEFAULT_USER.avatar);
+  const [editAvatarFile, setEditAvatarFile] = useState<File | null>(null);
   const [editDob, setEditDob] = useState<string>(DEFAULT_USER.dob || "");
   const [editGender, setEditGender] = useState<string>(DEFAULT_USER.gender);
   const [editPhoneNumber, setEditPhoneNumber] = useState<string>(DEFAULT_USER.phoneNumber || "");
@@ -4542,6 +4545,12 @@ export default function App() {
       if (!reelId) {
         throw new Error("Reel was uploaded but the server did not return a stable reel ID.");
       }
+
+      if (persistedReel?.persistencePending) {
+        setUploadStatus("Published! Saving Reel metadata in background...");
+      } else {
+        setUploadStatus("Reel Published Successfully!");
+      }
       
       // Save locally to profile reels
       const newProfileReel = {
@@ -6000,28 +6009,29 @@ export default function App() {
     let persistentAvatar = user.avatar;
     const selectedAvatar = editAvatar.trim();
 
-    // Upload newly selected gallery/camera image to production storage first.
-    // Never persist a base64 data URL in localStorage or the user profile.
-    if (selectedAvatar && selectedAvatar !== user.avatar && selectedAvatar.startsWith("data:image/")) {
+    // Upload the actual selected File directly. Do not round-trip through a data URL;
+    // Android WebView/camera images can otherwise fail during fetch(dataUrl).blob().
+    if (editAvatarFile) {
       try {
-        const blob = await (await fetch(selectedAvatar)).blob();
         const formData = new FormData();
-        formData.append("avatar", blob, `avatar-${Date.now()}.jpg`);
+        const extension = editAvatarFile.name?.split('.').pop() || 'jpg';
+        formData.append('avatar', editAvatarFile, `avatar-${Date.now()}.${extension}`);
 
-        const uploadRes = await authenticatedFetch("/api/v1/user/avatar", {
-          method: "POST",
+        const uploadRes = await authenticatedFetch('/api/v1/user/avatar', {
+          method: 'POST',
           body: formData
         });
         const uploadData = await uploadRes.json().catch(() => ({}));
 
         if (!uploadRes.ok || !uploadData?.url) {
-          throw new Error(uploadData?.error || "Profile photo upload failed");
+          const detail = uploadData?.error || `Profile photo upload failed (HTTP ${uploadRes.status})`;
+          throw new Error(detail);
         }
 
         persistentAvatar = uploadData.url;
       } catch (err) {
-        console.error("[PARDAIS PROFILE] Avatar upload failed:", err);
-        alert("Profile photo upload failed. Please try again.");
+        console.error('[PARDAIS PROFILE] Avatar upload failed:', err);
+        alert(`Profile photo upload failed. ${err instanceof Error ? err.message : 'Please try again.'}`);
         return;
       }
     }
@@ -6048,6 +6058,7 @@ export default function App() {
 
     saveAndSyncUserProfile(updatedUser);
     setEditAvatar(persistentAvatar);
+    setEditAvatarFile(null);
     setIsEditingProfile(false);
   };
 
@@ -13322,6 +13333,7 @@ export default function App() {
                                       } else {
                                         setEditFullName(user.fullName || "");
                                         setEditAvatar(user.avatar);
+                                        setEditAvatarFile(null);
                                         setEditDob(user.dob || "1998-05-15");
                                         setEditGender(user.gender);
                                         setEditPhoneNumber(user.phoneNumber || "+92 300 4567890");
@@ -13413,13 +13425,9 @@ export default function App() {
                                           onChange={(e) => {
                                             const file = e.target.files?.[0];
                                             if (file) {
-                                              const reader = new FileReader();
-                                              reader.onload = (ev) => {
-                                                if (ev.target?.result) {
-                                                  setEditAvatar(ev.target.result as string);
-                                                }
-                                              };
-                                              reader.readAsDataURL(file);
+                                              setEditAvatarFile(file);
+                                              const previewUrl = URL.createObjectURL(file);
+                                              setEditAvatar(previewUrl);
                                             }
                                           }}
                                         />
@@ -13433,13 +13441,9 @@ export default function App() {
                                           onChange={(e) => {
                                             const file = e.target.files?.[0];
                                             if (file) {
-                                              const reader = new FileReader();
-                                              reader.onload = (ev) => {
-                                                if (ev.target?.result) {
-                                                  setEditAvatar(ev.target.result as string);
-                                                }
-                                              };
-                                              reader.readAsDataURL(file);
+                                              setEditAvatarFile(file);
+                                              const previewUrl = URL.createObjectURL(file);
+                                              setEditAvatar(previewUrl);
                                             }
                                           }}
                                         />

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
-import { authenticatedFetch, resolveApiUrl, refreshSession, getAuthToken, isCapacitorOrAndroid } from "./lib/apiClient";
+import { authenticatedFetch, resolveApiUrl, getAuthToken, isCapacitorOrAndroid } from "./lib/apiClient";
 import { COUNTRIES_CURRENCIES, CountryCurrency, getCoinsCostInCurrency } from "./currencyUtils";
 import { ReelsView } from "./components/ReelsView";
 import { AgoraStream } from "./components/AgoraStream";
@@ -107,6 +107,7 @@ import { getRankingData } from "./rankingData";
 import { dbDataCache, db, auth as firebaseAuth } from "./db/firebaseDb";
 import { PardaisPartyLogo, PardaisLiveLogo } from "./components/PardaisPartyLogo";
 import { PardaisPartySplashScreen } from "./components/PardaisPartySplashScreen";
+import PersistentEmailAuth from "./components/PersistentEmailAuth";
 import { PartyGamesModal } from "./components/PartyGamesModal";
 import { initializeApp, getApps, getApp } from "firebase/app";
 import { getAuth, signInWithPopup, signInWithRedirect, getRedirectResult, GoogleAuthProvider, signOut } from "firebase/auth";
@@ -677,7 +678,7 @@ export default function App() {
   const [twoFactorCode, setTwoFactorCode] = useState<string>("");
 
   // Guest Mode & Auth Prompt Modal State
-  const [showAuthModal, setShowAuthModal] = useState<boolean>(false);
+  const [showAuthModal, setShowAuthModal] = useState<boolean>(() => !localStorage.getItem("pardais_auth_token"));
   const [authModalReason, setAuthModalReason] = useState<string>("interact with features");
   const [pendingAuthCallback, setPendingAuthCallback] = useState<(() => void) | null>(null);
 
@@ -850,10 +851,12 @@ export default function App() {
 
   // Automatically persist user profile state locally whenever updated
   useEffect(() => {
-    if (user && (user.username || user.uniqueId)) {
+    if (isLoggedIn && getAuthToken() && user && !user.isGuest && (user.username || user.uniqueId)) {
       localStorage.setItem("pardais_user_profile", JSON.stringify(user));
+    } else if (!isLoggedIn) {
+      localStorage.removeItem("pardais_user_profile");
     }
-  }, [user]);
+  }, [user, isLoggedIn]);
 
   // Restore authenticated session from backend on app load
   useEffect(() => {
@@ -881,18 +884,18 @@ export default function App() {
         try { savedProfile = JSON.parse(savedUserRaw); } catch (e) {}
       }
 
-      if (savedProfile && (savedProfile.username || savedProfile.uniqueId)) {
-        setUser(savedProfile);
-        setIsLoggedIn(true);
+      // A cached profile is NEVER an authentication credential. Only a real backend token may restore a session.
+      if (!token) {
+        localStorage.removeItem("pardais_user_profile");
+        localStorage.setItem("pardais_is_logged_in", "false");
+        setIsLoggedIn(false);
+        setUser({ ...DEFAULT_USER, username: "Guest_Visitor", fullName: "Guest Visitor", isGuest: true });
+        setShowAuthModal(true);
+        return;
       }
 
-      if (!token) {
-        if (!savedProfile) {
-          refreshSession().then(() => {
-            setIsLoggedIn(true);
-          });
-        }
-        return;
+      if (savedProfile && (savedProfile.username || savedProfile.uniqueId)) {
+        setUser(savedProfile);
       }
 
       authenticatedFetch("/api/v1/auth/me")
@@ -927,7 +930,13 @@ export default function App() {
           }
         })
         .catch(err => {
-          console.warn("[PARDAIS AUTH RESTORE] Session verification notice:", err.message);
+          console.warn("[PARDAIS AUTH RESTORE] Session invalid; clearing local account state:", err.message);
+          localStorage.removeItem("pardais_auth_token");
+          localStorage.removeItem("pardais_user_profile");
+          localStorage.setItem("pardais_is_logged_in", "false");
+          setIsLoggedIn(false);
+          setUser({ ...DEFAULT_USER, username: "Guest_Visitor", fullName: "Guest Visitor", isGuest: true });
+          setShowAuthModal(true);
         });
     };
 
@@ -943,6 +952,7 @@ export default function App() {
   const [isEditingProfile, setIsEditingProfile] = useState<boolean>(false);
   const [editFullName, setEditFullName] = useState<string>(DEFAULT_USER.fullName || "");
   const [editAvatar, setEditAvatar] = useState<string>(DEFAULT_USER.avatar);
+  const [editAvatarFile, setEditAvatarFile] = useState<File | null>(null);
   const [editDob, setEditDob] = useState<string>(DEFAULT_USER.dob || "");
   const [editGender, setEditGender] = useState<string>(DEFAULT_USER.gender);
   const [editPhoneNumber, setEditPhoneNumber] = useState<string>(DEFAULT_USER.phoneNumber || "");
@@ -2167,7 +2177,7 @@ export default function App() {
                 return [...prev, data];
               });
             } else {
-              fetch("/api/v1/parties", { cache: "no-store", headers: { "Cache-Control": "no-cache" } })
+              fetch("/api/v1/parties")
                 .then(r => r.json())
                 .then(all => {
                   if (Array.isArray(all) && all.length > 0) {
@@ -2179,7 +2189,7 @@ export default function App() {
             }
           })
           .catch(() => {
-            fetch("/api/v1/parties", { cache: "no-store", headers: { "Cache-Control": "no-cache" } })
+            fetch("/api/v1/parties")
               .then(r => r.json())
               .then(all => {
                 if (Array.isArray(all) && all.length > 0) {
@@ -5194,7 +5204,7 @@ export default function App() {
         .catch(() => {});
 
       // 4. Fetch reels list
-      fetch("/api/v1/reels")
+      fetch(resolveApiUrl("/api/v1/reels"))
         .then(res => res.ok ? res.json() : null)
         .then(data => {
           if (Array.isArray(data)) {
@@ -5319,7 +5329,7 @@ export default function App() {
         .catch(err => console.error("Error loading agency coin transactions:", err));
 
       // Fetch parties
-      fetch("/api/v1/parties", { cache: "no-store", headers: { "Cache-Control": "no-cache" } })
+      fetch("/api/v1/parties")
         .then(res => res.json())
         .then(data => {
           if (Array.isArray(data)) setPartiesList(data);
@@ -5345,7 +5355,7 @@ export default function App() {
         })
         .catch(() => {});
 
-      fetch("/api/v1/parties", { cache: "no-store", headers: { "Cache-Control": "no-cache" } })
+      fetch("/api/v1/parties")
         .then(res => res.ok ? res.json() : null)
         .then(data => {
           if (Array.isArray(data)) {
@@ -5420,7 +5430,7 @@ export default function App() {
         })
         .catch(() => {});
 
-      fetch("/api/v1/reels")
+      fetch(resolveApiUrl("/api/v1/reels"))
         .then(res => res.ok ? res.json() : null)
         .then(data => {
           if (Array.isArray(data)) {
@@ -6009,28 +6019,29 @@ export default function App() {
     let persistentAvatar = user.avatar;
     const selectedAvatar = editAvatar.trim();
 
-    // Upload newly selected gallery/camera image to production storage first.
-    // Never persist a base64 data URL in localStorage or the user profile.
-    if (selectedAvatar && selectedAvatar !== user.avatar && selectedAvatar.startsWith("data:image/")) {
+    // Upload the actual selected File directly. Do not round-trip through a data URL;
+    // Android WebView/camera images can otherwise fail during fetch(dataUrl).blob().
+    if (editAvatarFile) {
       try {
-        const blob = await (await fetch(selectedAvatar)).blob();
         const formData = new FormData();
-        formData.append("avatar", blob, `avatar-${Date.now()}.jpg`);
+        const extension = editAvatarFile.name?.split('.').pop() || 'jpg';
+        formData.append('avatar', editAvatarFile, `avatar-${Date.now()}.${extension}`);
 
-        const uploadRes = await authenticatedFetch("/api/v1/user/avatar", {
-          method: "POST",
+        const uploadRes = await authenticatedFetch('/api/v1/user/avatar', {
+          method: 'POST',
           body: formData
         });
         const uploadData = await uploadRes.json().catch(() => ({}));
 
         if (!uploadRes.ok || !uploadData?.url) {
-          throw new Error(uploadData?.error || "Profile photo upload failed");
+          const detail = uploadData?.error || `Profile photo upload failed (HTTP ${uploadRes.status})`;
+          throw new Error(detail);
         }
 
         persistentAvatar = uploadData.url;
       } catch (err) {
-        console.error("[PARDAIS PROFILE] Avatar upload failed:", err);
-        alert("Profile photo upload failed. Please try again.");
+        console.error('[PARDAIS PROFILE] Avatar upload failed:', err);
+        alert(`Profile photo upload failed. ${err instanceof Error ? err.message : 'Please try again.'}`);
         return;
       }
     }
@@ -6057,6 +6068,7 @@ export default function App() {
 
     saveAndSyncUserProfile(updatedUser);
     setEditAvatar(persistentAvatar);
+    setEditAvatarFile(null);
     setIsEditingProfile(false);
   };
 
@@ -7649,6 +7661,30 @@ export default function App() {
     setShowProfileSetupModal(false);
   };
 
+  // Persistent email/password authentication completion. Only a real backend token can log the user in.
+  const handlePersistentAuthenticated = (payload: any) => {
+    const token = payload?.token;
+    const authenticatedUser = payload?.user;
+    if (!token || !authenticatedUser) {
+      setLoginError("Authentication failed: no valid account session was returned.");
+      return;
+    }
+    localStorage.setItem("pardais_auth_token", token);
+    localStorage.setItem("pardais_is_logged_in", "true");
+    localStorage.setItem("pardais_user_profile", JSON.stringify({ ...authenticatedUser, isGuest: false }));
+    lastSavedUserRef.current = JSON.stringify(authenticatedUser);
+    setUser({ ...authenticatedUser, isGuest: false });
+    setIsLoggedIn(true);
+    setShowAuthModal(false);
+    setLoginError("");
+    setLoginSuccessMsg("");
+    if (pendingAuthCallback) {
+      const cb = pendingAuthCallback;
+      setPendingAuthCallback(null);
+      try { cb(); } catch {}
+    }
+  };
+
   // Universal Logout
   const handleLogout = async () => {
     const token = localStorage.getItem("pardais_auth_token");
@@ -7662,14 +7698,18 @@ export default function App() {
       }
     } finally {
       localStorage.removeItem("pardais_auth_token");
+      localStorage.removeItem("pardais_user_profile");
+      localStorage.removeItem("pardais_avatar_user_set");
       localStorage.setItem("pardais_is_logged_in", "false");
       setIsLoggedIn(false);
-      setUser({
-        ...DEFAULT_USER,
-        username: "Guest_Visitor",
-        fullName: "Guest Visitor",
-        isGuest: true
-      });
+      setUser({ ...DEFAULT_USER, username: "Guest_Visitor", fullName: "Guest Visitor", isGuest: true });
+      setLoginEmail("");
+      setLoginOtp("");
+      setLoginError("");
+      setLoginSuccessMsg("");
+      setShowProfileSetupModal(false);
+      setPendingAuthCallback(null);
+      setShowAuthModal(true);
     }
   };
 
@@ -8381,7 +8421,7 @@ export default function App() {
         }
       `}</style>
       {/* 2. MAIN PLATFORM WORKSPACE CONTAINER */}
-      <div className={`pardais-app-shell w-full h-[100dvh] sm:h-[92vh] sm:max-w-[430px] sm:rounded-[36px] ${getWallpaperClass()} sm:shadow-2xl sm:border-8 sm:border-purple-500/30 flex flex-col overflow-hidden relative`}>
+      <div className={`w-full h-[100dvh] sm:h-[92vh] sm:max-w-[430px] sm:rounded-[36px] ${getWallpaperClass()} sm:shadow-2xl sm:border-8 sm:border-purple-500/30 flex flex-col overflow-hidden relative`}>
         {/* PHONE CLIENT CORE VIEW */}
         <div id="pardais-phone-simulator" className={`flex-1 ${getWallpaperClass()} flex flex-col text-sm theme-${appTheme} min-h-0 overflow-hidden`}>
                 
@@ -8667,7 +8707,7 @@ export default function App() {
                           </div>
                           <button
                             onClick={() => {
-                              fetch("/api/v1/parties", { cache: "no-store", headers: { "Cache-Control": "no-cache" } })
+                              fetch("/api/v1/parties")
                                 .then(r => r.json())
                                 .then(data => {
                                   if (Array.isArray(data)) setPartiesList(data);
@@ -9322,7 +9362,7 @@ export default function App() {
                               </button>
                               <button
                                 onClick={() => {
-                                  fetch("/api/v1/parties", { cache: "no-store", headers: { "Cache-Control": "no-cache" } }).then(r => r.json()).then(data => {
+                                  fetch("/api/v1/parties").then(r => r.json()).then(data => {
                                     if (Array.isArray(data)) setPartiesList(data);
                                   }).catch(() => {});
                                 }}
@@ -9843,7 +9883,7 @@ export default function App() {
                             <div className="flex items-center justify-between p-2 px-3 border-b border-amber-500/30 bg-black/40 backdrop-blur-xl shadow-lg relative z-20">
                               <div 
                                 onClick={() => handleOpenPartyUserProfile(party.hostUsername, party.hostAvatar, 1)}
-                                className="pardais-party-header-host flex items-center space-x-2.5 bg-transparent text-left max-w-[65%] cursor-pointer group"
+                                className="flex items-center space-x-2.5 bg-transparent text-left max-w-[65%] cursor-pointer group"
                                 title="Click to view Host Profile"
                               >
                                 <div className="relative shrink-0">
@@ -9868,7 +9908,7 @@ export default function App() {
                               </div>
 
                               {/* Top Bar Actions */}
-                              <div className="pardais-party-header-actions flex items-center space-x-1.5 bg-transparent shrink-0">
+                              <div className="flex items-center space-x-1.5 bg-transparent shrink-0">
                                 {/* 🎡 Lucky Wheel Party Game Button */}
                                 <button
                                   onClick={() => setShowPartyGamesModal(true)}
@@ -9876,7 +9916,7 @@ export default function App() {
                                   title="Play Lucky Wheel & Games"
                                 >
                                   <span className="mr-1 text-xs">🎡</span>
-                                  <span className="party-game-label">GAMES</span>
+                                  <span>GAMES</span>
                                 </button>
 
                                 {/* Share Party Room Button */}
@@ -13331,6 +13371,7 @@ export default function App() {
                                       } else {
                                         setEditFullName(user.fullName || "");
                                         setEditAvatar(user.avatar);
+                                        setEditAvatarFile(null);
                                         setEditDob(user.dob || "1998-05-15");
                                         setEditGender(user.gender);
                                         setEditPhoneNumber(user.phoneNumber || "+92 300 4567890");
@@ -13422,13 +13463,9 @@ export default function App() {
                                           onChange={(e) => {
                                             const file = e.target.files?.[0];
                                             if (file) {
-                                              const reader = new FileReader();
-                                              reader.onload = (ev) => {
-                                                if (ev.target?.result) {
-                                                  setEditAvatar(ev.target.result as string);
-                                                }
-                                              };
-                                              reader.readAsDataURL(file);
+                                              setEditAvatarFile(file);
+                                              const previewUrl = URL.createObjectURL(file);
+                                              setEditAvatar(previewUrl);
                                             }
                                           }}
                                         />
@@ -13442,13 +13479,9 @@ export default function App() {
                                           onChange={(e) => {
                                             const file = e.target.files?.[0];
                                             if (file) {
-                                              const reader = new FileReader();
-                                              reader.onload = (ev) => {
-                                                if (ev.target?.result) {
-                                                  setEditAvatar(ev.target.result as string);
-                                                }
-                                              };
-                                              reader.readAsDataURL(file);
+                                              setEditAvatarFile(file);
+                                              const previewUrl = URL.createObjectURL(file);
+                                              setEditAvatar(previewUrl);
                                             }
                                           }}
                                         />
@@ -15539,7 +15572,7 @@ export default function App() {
                     {/* ===================================================================== */}
                     {/* VIEW: REELS (SHORT VERTICAL VIDEOS) WITH COMPLETE TIKTOK INTERACTIONS */}
                     {/* ===================================================================== */}
-                    {clientView === "reels" && (
+                    {false && clientView === "reels" && (
                       <ReelsView
                         reels={reels}
                         setReels={setReels}
@@ -15574,7 +15607,7 @@ export default function App() {
                       />
                     )}
 
-                    {false && (
+                    {clientView === "reels" && (
                       <div className="flex-1 flex flex-col bg-[#09090e] relative select-none pb-0">
                         {/* Floating Back Button */}
                         <button
@@ -30639,149 +30672,21 @@ export default function App() {
       {/* ========================================= */}
       {/* AUTHENTICATION REQUIRED MODAL (GUEST PROMPT) */}
       {/* ========================================= */}
-      {showAuthModal && (
-        <div className="fixed inset-0 bg-black/85 z-[9999] flex items-center justify-center p-4 backdrop-blur-md animate-fade-in safe-padding-top safe-padding-bottom">
-          <div className="bg-gradient-to-b from-[#1c082b] via-[#100a1c] to-[#0a0a12] border border-[#ff007f]/50 rounded-3xl w-full max-w-[400px] p-5 shadow-[0_0_40px_rgba(255,0,127,0.3)] flex flex-col text-white space-y-4 relative animate-pop-gift max-h-[90vh] overflow-y-auto">
-            
-            {/* Close / Dismiss Button */}
-            <button
-              type="button"
-              onClick={() => {
-                setShowAuthModal(false);
-                setPendingAuthCallback(null);
-              }}
-              className="absolute top-3.5 right-3.5 w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-gray-300 hover:text-white transition-all cursor-pointer z-10"
-            >
-              <X className="w-4 h-4" />
-            </button>
-
-            {/* Header & Lock Badge */}
-            <div className="text-center space-y-2 pt-1">
-              <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-[#ff007f] via-[#7b2cbf] to-[#00f5ff] p-0.5 mx-auto shadow-lg flex items-center justify-center">
-                <div className="w-full h-full bg-[#0a0a12] rounded-[14px] flex items-center justify-center">
-                  <Lock className="w-6 h-6 text-[#00f5ff] animate-pulse" />
-                </div>
+      {showAuthModal && !showSplash && (
+        <div className="fixed inset-0 bg-black/90 z-[9999] flex items-center justify-center p-4 backdrop-blur-md">
+          <div className="bg-gradient-to-b from-[#1c082b] via-[#100a1c] to-[#0a0a12] border border-[#ff007f]/50 rounded-3xl w-full max-w-[400px] p-5 shadow-[0_0_40px_rgba(255,0,127,0.3)] text-white">
+            <div className="text-center space-y-2 mb-5">
+              <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-[#ff007f] via-[#7b2cbf] to-[#00f5ff] p-0.5 mx-auto flex items-center justify-center">
+                <div className="w-full h-full bg-[#0a0a12] rounded-[14px] flex items-center justify-center"><Lock className="w-6 h-6 text-[#00f5ff]" /></div>
               </div>
-              <h3 className="text-base font-black text-white tracking-wide uppercase font-mono">Log in or Register First</h3>
-              <p className="text-[11px] text-pink-200 leading-snug px-2 font-medium">
-                Please log in or create an account to <strong className="text-[#00f5ff] underline">{authModalReason}</strong>.
-              </p>
+              <h3 className="text-base font-black text-white tracking-wide uppercase font-mono">Login to Pardais Party</h3>
+              <p className="text-[11px] text-pink-200 leading-snug px-2">Use your registered email and password, or create a new account.</p>
             </div>
-
-            {/* Login method toggle */}
-            <div className="grid grid-cols-2 gap-2 bg-[#1f2833]/40 p-1 rounded-xl border border-[#1f2833]">
-              <button
-                type="button"
-                onClick={() => { setSelectedAuthMethod("email"); setLoginError(""); setLoginSuccessMsg(""); }}
-                className={`py-2 text-xs font-bold rounded-lg transition-all ${
-                  selectedAuthMethod === "email"
-                    ? "bg-gradient-to-r from-[#7b2cbf] to-[#00f5ff] text-white shadow-md"
-                    : "text-gray-400 hover:text-white"
-                }`}
-              >
-                Email OTP
-              </button>
-              <button
-                type="button"
-                onClick={() => { setSelectedAuthMethod("google"); setLoginError(""); setLoginSuccessMsg(""); }}
-                className={`py-2 text-xs font-bold rounded-lg transition-all ${
-                  selectedAuthMethod === "google"
-                    ? "bg-gradient-to-r from-[#7b2cbf] to-[#00f5ff] text-white shadow-md"
-                    : "text-gray-400 hover:text-white"
-                }`}
-              >
-                Google Auth
-              </button>
+            <PersistentEmailAuth onAuthenticated={handlePersistentAuthenticated} />
+            <div className="mt-4 pt-3 border-t border-white/10">
+              <button type="button" onClick={()=>{ setSelectedAuthMethod(selectedAuthMethod === "email" ? "google" : "email"); }} className="w-full py-2 text-gray-400 text-xs">{selectedAuthMethod === "email" ? "Use Google instead" : "Use Email & Password instead"}</button>
+              {selectedAuthMethod === "google" && <button type="button" onClick={handleGoogleSignIn} className="w-full h-11 bg-white text-gray-900 font-bold rounded-2xl text-xs flex items-center justify-center">Sign In with Google</button>}
             </div>
-
-            {/* Instant One-Tap Quick Account Button */}
-            <button
-              type="button"
-              onClick={handleQuickGuestLogin}
-              className="w-full py-2.5 px-4 bg-gradient-to-r from-[#00f5ff]/20 via-[#7b2cbf]/20 to-[#ff007f]/20 hover:from-[#00f5ff]/30 hover:to-[#ff007f]/30 border border-[#00f5ff]/40 rounded-2xl flex items-center justify-center space-x-2 text-white shadow-lg transition-all active:scale-[0.98] cursor-pointer"
-            >
-              <Zap className="w-4 h-4 text-[#00f5ff] animate-pulse" />
-              <span className="text-xs font-black tracking-wide">⚡ One-Tap Instant Registration</span>
-            </button>
-
-            {/* Error / Success Alerts */}
-            {loginError && (
-              <div className="p-2.5 bg-red-950/40 border border-red-500/50 rounded-xl text-[10px] text-red-200 flex items-start space-x-2">
-                <AlertTriangle className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" />
-                <span className="flex-1 font-medium">{loginError}</span>
-              </div>
-            )}
-            {loginSuccessMsg && (
-              <div className="p-2.5 bg-green-950/40 border border-green-500/50 rounded-xl text-[10px] text-green-200 flex items-start space-x-2">
-                <BadgeCheck className="w-4 h-4 text-green-400 flex-shrink-0 mt-0.5" />
-                <span className="flex-1 font-medium">{loginSuccessMsg}</span>
-              </div>
-            )}
-
-            {selectedAuthMethod === "email" ? (
-              <form onSubmit={isOtpSent ? handleVerifyEmailOtp : handleSendEmailOtp} className="space-y-3">
-                <div>
-                  <label className="text-[9px] uppercase tracking-wider text-gray-400 block mb-1 font-bold font-mono">Email Address</label>
-                  <input
-                    type="email"
-                    placeholder="user@example.com"
-                    value={loginEmail}
-                    onChange={(e) => {
-                      setLoginEmail(e.target.value);
-                      if (loginError) setLoginError("");
-                    }}
-                    disabled={isOtpSent}
-                    className="w-full bg-[#1e1e2d] border border-[#303040] rounded-xl px-3 py-2 text-white text-xs focus:outline-none focus:border-[#ff007f] font-mono"
-                  />
-                </div>
-
-                {isOtpSent && (
-                  <div className="animate-pop-gift bg-[#1e1e2d] p-3 rounded-xl border border-[#ff007f]/20 space-y-1">
-                    <label className="text-[9px] uppercase tracking-wider text-[#00f5ff] block font-bold font-mono">Enter 6-Digit OTP Code</label>
-                    <input
-                      type="text"
-                      placeholder="123456"
-                      value={loginOtp}
-                      onChange={(e) => {
-                        setLoginOtp(e.target.value);
-                        if (loginError) setLoginError("");
-                      }}
-                      className="w-full bg-[#12121a] border border-[#00f5ff] rounded-lg px-3 py-2 text-white text-center text-sm font-black focus:outline-none tracking-widest font-mono"
-                    />
-                  </div>
-                )}
-
-                <button
-                  type="submit"
-                  className="w-full bg-gradient-to-r from-[#ff007f] to-[#7b2cbf] text-white py-2.5 rounded-xl text-xs font-bold shadow-lg hover:opacity-95 transition-all cursor-pointer"
-                >
-                  {isOtpSent ? "Verify Code & Log In" : "Send Email OTP Code"}
-                </button>
-              </form>
-            ) : (
-              <div className="space-y-2">
-                <button
-                  type="button"
-                  onClick={handleGoogleSignIn}
-                  className="w-full h-11 bg-white text-gray-900 font-bold rounded-2xl text-xs flex items-center justify-center space-x-2 hover:bg-gray-100 active:scale-[0.98] transition-all shadow-xl border border-gray-200 cursor-pointer"
-                >
-                  <Globe className="w-5 h-5 text-indigo-600" />
-                  <span>Sign In with Google</span>
-                </button>
-              </div>
-            )}
-
-            {/* Dismiss Button */}
-            <button
-              type="button"
-              onClick={() => {
-                setShowAuthModal(false);
-                setPendingAuthCallback(null);
-              }}
-              className="w-full py-2 bg-white/5 hover:bg-white/10 text-gray-300 font-bold text-xs rounded-xl border border-white/10 transition-all cursor-pointer text-center"
-            >
-              Continue Browsing as Guest 👁️
-            </button>
           </div>
         </div>
       )}

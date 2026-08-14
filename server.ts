@@ -3,7 +3,7 @@ import path from "path";
 import dotenv from "dotenv";
 import fs from "fs";
 import sharp from "sharp";
-import { S3Client, PutObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
+import { S3Client, PutObjectCommand, GetObjectCommand, ListObjectsV2Command } from "@aws-sdk/client-s3";
 import multer from "multer";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
@@ -19,6 +19,7 @@ import {
   syncDocument,
   deleteDocument,
   writeMetadata,
+  hydrateReelsFromFirestore,
   clearAllHostsInFirestore
 } from "./src/db/firebaseDb";
 
@@ -3656,9 +3657,6 @@ app.post("/api/v1/pk/end", (req, res) => {
 
 // Party Hub & 12-Seat Audio Party endpoints
 app.get("/api/v1/parties", (req, res) => {
-  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
-  res.setHeader("Pragma", "no-cache");
-  res.setHeader("Expires", "0");
   if (!Array.isArray(dbData.parties)) {
     dbData.parties = [];
   }
@@ -3667,9 +3665,6 @@ app.get("/api/v1/parties", (req, res) => {
 });
 
 app.get("/api/v1/parties/:id", (req, res) => {
-  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
-  res.setHeader("Pragma", "no-cache");
-  res.setHeader("Expires", "0");
   const { id } = req.params;
   if (!Array.isArray(dbData.parties)) {
     dbData.parties = [];
@@ -5042,14 +5037,83 @@ app.post("/api/v1/reports", (req, res) => {
   res.status(201).json(newReport);
 });
 
+// ------------------------------------------------------------------
+// DURABLE REEL METADATA MIRROR (Cloudflare R2)
+// ------------------------------------------------------------------
+// Firestore is the primary metadata store. R2 metadata is a durable second
+// copy so a Firestore quota/cold-start issue can never make an uploaded reel
+// disappear from the feed or Creator Hub after refresh/redeploy.
+async function persistReelMetadataToR2(reel: any) {
+  try {
+    const client = getS3Client();
+    const bucketName = process.env.R2_BUCKET_NAME || "pardaisparty-reels";
+    const key = `reels/_metadata/${String(reel.id)}.json`;
+    await client.send(new PutObjectCommand({
+      Bucket: bucketName,
+      Key: key,
+      Body: Buffer.from(JSON.stringify(reel), "utf-8"),
+      ContentType: "application/json",
+      CacheControl: "no-cache, no-store, must-revalidate",
+    }));
+    return true;
+  } catch (err: any) {
+    console.warn("[PARDAIS-PARTY REELS] R2 metadata mirror unavailable:", err?.message || err);
+    return false;
+  }
+}
+
+async function hydrateReelsFromR2Metadata() {
+  try {
+    const client = getS3Client();
+    const bucketName = process.env.R2_BUCKET_NAME || "pardaisparty-reels";
+    const listed = await client.send(new ListObjectsV2Command({ Bucket: bucketName, Prefix: "reels/_metadata/" }));
+    const keys = (listed.Contents || []).map((x: any) => x.Key).filter((k: any) => typeof k === "string" && k.endsWith(".json"));
+    if (!keys.length) return [];
+
+    const restored: any[] = [];
+    for (const key of keys) {
+      try {
+        const obj = await client.send(new GetObjectCommand({ Bucket: bucketName, Key: key }));
+        const body = obj.Body && typeof (obj.Body as any).transformToString === "function"
+          ? await (obj.Body as any).transformToString("utf-8")
+          : "";
+        if (body) {
+          const reel = JSON.parse(body);
+          if (reel && reel.id) restored.push(reel);
+        }
+      } catch (err: any) {
+        console.warn(`[PARDAIS-PARTY REELS] Failed reading R2 metadata ${key}:`, err?.message || err);
+      }
+    }
+
+    if (restored.length) {
+      const map = new Map<string, any>();
+      (dbData.reels || []).forEach((r: any) => { if (r?.id) map.set(String(r.id), r); });
+      restored.forEach((r: any) => map.set(String(r.id), r));
+      dbData.reels = Array.from(map.values()).sort((a: any, b: any) => {
+        const ta = Date.parse(a?.createdAt || "") || 0;
+        const tb = Date.parse(b?.createdAt || "") || 0;
+        return tb - ta;
+      });
+      saveDatabase();
+    }
+    return restored;
+  } catch (err: any) {
+    console.warn("[PARDAIS-PARTY REELS] R2 metadata hydration unavailable:", err?.message || err);
+    return [];
+  }
+}
+
 // Reels endpoints
-app.get("/api/v1/reels", (req, res) => {
+app.get("/api/v1/reels", async (req, res) => {
+  await hydrateReelsFromFirestore();
+  await hydrateReelsFromR2Metadata();
   res.json(dbData.reels || []);
 });
 
-app.post("/api/v1/reels", (req, res) => {
+app.post("/api/v1/reels", async (req, res) => {
   const newReel = {
-    id: `r-${Date.now()}`,
+    id: `r-${Date.now()}-${crypto.randomBytes(4).toString("hex")}`,
     views: 0,
     likes: 0,
     commentsCount: 0,
@@ -5061,20 +5125,67 @@ app.post("/api/v1/reels", (req, res) => {
     comments: [],
     ...req.body
   };
+
   if (!dbData.reels) dbData.reels = [];
   dbData.reels.unshift(newReel);
+
+  // IMPORTANT: the client must receive a success response immediately after the
+  // reel record is safely written locally. Firestore/R2 synchronization is
+  // deliberately performed in the background so a slow/temporary cloud write
+  // cannot keep the publish screen spinning at 100% or turn a successful upload
+  // into a false HTTP 502/timeout.
   saveDatabase();
-  syncDocument("reels", newReel.id, newReel);
-  res.status(201).json(newReel);
+
+  const syncReelDurably = async () => {
+    let firestoreOk = false;
+    let r2Ok = false;
+
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        await syncDocument("reels", newReel.id, newReel);
+        firestoreOk = true;
+        break;
+      } catch (err: any) {
+        console.warn(`[PARDAIS-PARTY REELS] Firestore metadata sync attempt ${attempt}/3 failed:`, err?.message || err);
+        await new Promise(resolve => setTimeout(resolve, attempt * 1500));
+      }
+    }
+
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        r2Ok = await persistReelMetadataToR2(newReel);
+        if (r2Ok) break;
+      } catch (err: any) {
+        console.warn(`[PARDAIS-PARTY REELS] R2 metadata sync attempt ${attempt}/3 failed:`, err?.message || err);
+      }
+      await new Promise(resolve => setTimeout(resolve, attempt * 1500));
+    }
+
+    console.log(`[PARDAIS-PARTY REELS] Durable metadata sync complete for ${newReel.id}: Firestore=${firestoreOk}, R2=${r2Ok}`);
+  };
+
+  // Never block the HTTP response on cloud metadata persistence.
+  void syncReelDurably().catch(err => {
+    console.error("[PARDAIS-PARTY REELS] Background metadata persistence failed:", err);
+  });
+
+  return res.status(201).json({
+    success: true,
+    persisted: true,
+    persistencePending: true,
+    message: "Reel uploaded and published successfully. Cloud metadata synchronization is continuing in the background.",
+    ...newReel
+  });
 });
 
-app.put("/api/v1/reels/:id", (req, res) => {
+app.put("/api/v1/reels/:id", async (req, res) => {
   const { id } = req.params;
   const index = dbData.reels.findIndex((r: any) => r.id === id);
   if (index !== -1) {
     dbData.reels[index] = { ...dbData.reels[index], ...req.body };
     saveDatabase();
-    syncDocument("reels", id, dbData.reels[index]);
+    await syncDocument("reels", id, dbData.reels[index]);
+    await persistReelMetadataToR2(dbData.reels[index]);
     res.json(dbData.reels[index]);
   } else {
     res.status(404).json({ error: "Reel not found" });
@@ -5725,29 +5836,91 @@ app.post("/api/v1/user/avatar", authenticateUser, avatarMulterUpload.single("ava
       return res.status(400).json({ success: false, error: "Only image files are allowed for profile photos." });
     }
 
-    const optimized = await sharp(file.buffer)
-      .rotate()
-      .resize(512, 512, { fit: "cover", withoutEnlargement: true })
-      .webp({ quality: 84 })
-      .toBuffer();
+    // Process normal JPEG/PNG/WebP images when Sharp can decode them.
+    // Some Android gallery/camera providers send HEIC/HEIF or other image
+    // containers that may not be compiled into Sharp on the production host.
+    // In that case, keep the original image bytes instead of failing the
+    // profile update after the user has already selected a valid image.
+    let uploadBuffer = file.buffer;
+    let uploadContentType = String(file.mimetype || "image/jpeg").toLowerCase();
+    let uploadExtension = uploadContentType === "image/png" ? "png"
+      : uploadContentType === "image/webp" ? "webp"
+      : uploadContentType === "image/gif" ? "gif"
+      : uploadContentType === "image/avif" ? "avif"
+      : uploadContentType === "image/heic" || uploadContentType === "image/heif" ? "heic"
+      : "jpg";
+
+    try {
+      uploadBuffer = await sharp(file.buffer)
+        .rotate()
+        .resize(512, 512, { fit: "cover", withoutEnlargement: true })
+        .webp({ quality: 84 })
+        .toBuffer();
+      uploadContentType = "image/webp";
+      uploadExtension = "webp";
+    } catch (imageProcessErr: any) {
+      console.warn(
+        "[PARDAIS-PARTY AVATAR] Sharp could not decode/process image; uploading original bytes instead:",
+        imageProcessErr?.message || imageProcessErr
+      );
+    }
 
     const safeUserId = String(req.user.uid || req.user.username || "user").replace(/[^a-zA-Z0-9_-]/g, "_");
-    const objectKey = `avatars/${safeUserId}/${Date.now()}-${crypto.randomBytes(5).toString("hex")}.webp`;
+    const objectKey = `avatars/${safeUserId}/${Date.now()}-${crypto.randomBytes(5).toString("hex")}.${uploadExtension}`;
 
-    const client = getS3Client();
-    const bucketName = process.env.R2_BUCKET_NAME || "pardaisparty-reels";
+    let avatarUrl = "";
 
-    await client.send(new PutObjectCommand({
-      Bucket: bucketName,
-      Key: objectKey,
-      Body: optimized,
-      ContentType: "image/webp",
-      CacheControl: "public, max-age=31536000, immutable",
-    }));
+    // Primary: Cloudflare R2.
+    try {
+      if (!process.env.R2_ACCESS_KEY_ID || !process.env.R2_SECRET_ACCESS_KEY || !process.env.R2_ENDPOINT) {
+        throw new Error("Cloudflare R2 credentials not configured");
+      }
 
-    const publicBaseUrl = process.env.R2_PUBLIC_URL || "https://media.pardaisparty.soulverseapps.com";
-    const cleanBase = publicBaseUrl.endsWith("/") ? publicBaseUrl.slice(0, -1) : publicBaseUrl;
-    const avatarUrl = `${cleanBase}/${objectKey}`;
+      const client = getS3Client();
+      const bucketName = process.env.R2_BUCKET_NAME || "pardaisparty-reels";
+
+      await Promise.race([
+        client.send(new PutObjectCommand({
+          Bucket: bucketName,
+          Key: objectKey,
+          Body: uploadBuffer,
+          ContentType: uploadContentType,
+          CacheControl: "public, max-age=31536000, immutable",
+        })),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("R2 profile photo upload timeout")), 30000)
+        )
+      ]);
+
+      const publicBaseUrl = process.env.R2_PUBLIC_URL || "https://media.pardaisparty.soulverseapps.com";
+      const cleanBase = publicBaseUrl.endsWith("/") ? publicBaseUrl.slice(0, -1) : publicBaseUrl;
+      avatarUrl = `${cleanBase}/${objectKey}`;
+    } catch (r2Err: any) {
+      // Fallback: save the already-optimized image to the API's persistent public
+      // uploads directory. This guarantees profile editing still completes even
+      // when R2 is temporarily unavailable.
+      console.warn("[PARDAIS-PARTY AVATAR] R2 upload unavailable; using API storage fallback:", r2Err?.message || r2Err);
+
+      const uploadsDir = path.join(process.cwd(), "public", "uploads");
+      if (!fs.existsSync(uploadsDir)) {
+        fs.mkdirSync(uploadsDir, { recursive: true });
+      }
+
+      try {
+        const fallbackName = `avatar_${safeUserId}_${Date.now()}_${crypto.randomBytes(4).toString("hex")}.webp`;
+        const fallbackPath = path.join(uploadsDir, fallbackName);
+        fs.writeFileSync(fallbackPath, uploadBuffer);
+
+        const requestBaseUrl = `${req.protocol || "https"}://${req.get("host")}`;
+        avatarUrl = `${requestBaseUrl}/uploads/${fallbackName}`;
+      } catch (localErr: any) {
+        // Final fallback: persist the optimized image itself as a data URL.
+        // This keeps the profile update successful even when both R2 and the
+        // platform filesystem are temporarily unavailable.
+        console.warn("[PARDAIS-PARTY AVATAR] API filesystem fallback unavailable:", localErr?.message || localErr);
+        avatarUrl = `data:${uploadContentType};base64,${uploadBuffer.toString("base64")}`;
+      }
+    }
 
     // Persist the URL against the authenticated account immediately.
     const updatedUser = {
@@ -5756,22 +5929,36 @@ app.post("/api/v1/user/avatar", authenticateUser, avatarMulterUpload.single("ava
       avatarUrl,
     };
     req.user = updatedUser;
+
     const idxInUsers = dbData.users.findIndex((u: any) =>
       (u.uid && u.uid === updatedUser.uid) ||
       (u.username && u.username === updatedUser.username) ||
       (u.email && u.email === updatedUser.email)
     );
+
     if (idxInUsers !== -1) {
       dbData.users[idxInUsers] = { ...dbData.users[idxInUsers], avatar: avatarUrl, avatarUrl };
     } else {
       dbData.users.push(updatedUser);
     }
+
     dbData.user = updatedUser;
     saveDatabase();
-    syncDocument("users", updatedUser.username, updatedUser);
-    writeMetadata("user_profile", updatedUser);
 
-    return res.json({ success: true, url: avatarUrl, avatar: avatarUrl });
+    // Do not make the profile-photo UI wait for Firestore propagation.
+    void Promise.resolve(syncDocument("users", updatedUser.username, updatedUser)).catch((err: any) => {
+      console.warn("[PARDAIS-PARTY AVATAR] Firestore profile sync queued/failed:", err?.message || err);
+    });
+    void Promise.resolve(writeMetadata("user_profile", updatedUser)).catch((err: any) => {
+      console.warn("[PARDAIS-PARTY AVATAR] Metadata profile sync queued/failed:", err?.message || err);
+    });
+
+    return res.json({
+      success: true,
+      url: avatarUrl,
+      avatar: avatarUrl,
+      message: "Profile photo updated successfully."
+    });
   } catch (err: any) {
     console.error("[PARDAIS-PARTY AVATAR] Upload failed:", err);
     return res.status(500).json({
