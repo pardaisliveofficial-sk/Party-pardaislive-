@@ -207,5 +207,39 @@
   restore();
 })();
 </script>
+
+<script id="pardais-password-eye">
+(function(){
+  function addEye(input){
+    if(!input || input.dataset.eyeReady==="1") return;
+    input.dataset.eyeReady="1";
+    const wrap=document.createElement("div");
+    wrap.className="pardais-password-wrap";
+    wrap.style.cssText="position:relative;width:100%;";
+    input.parentNode.insertBefore(wrap,input);
+    wrap.appendChild(input);
+    input.style.paddingRight="52px";
+    const btn=document.createElement("button");
+    btn.type="button";
+    btn.className="pardais-password-eye";
+    btn.textContent="👁️";
+    btn.setAttribute("aria-label","Show password");
+    btn.style.cssText="position:absolute;right:8px;top:50%;transform:translateY(-50%);width:40px;height:40px;margin:0;padding:0;background:transparent;border:0;color:#fff;font-size:21px;cursor:pointer;";
+    btn.onclick=function(){
+      const visible=input.type==="text";
+      input.type=visible?"password":"text";
+      btn.textContent=visible?"👁️":"🙈";
+      btn.setAttribute("aria-label",visible?"Show password":"Hide password");
+    };
+    wrap.appendChild(btn);
+  }
+  function scan(){
+    document.querySelectorAll('#pardais-auth-gate input[type="password"]').forEach(addEye);
+  }
+  scan();
+  new MutationObserver(scan).observe(document.documentElement,{childList:true,subtree:true});
+})();
+</script>
+
 </body>
 </html>

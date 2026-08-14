@@ -344,6 +344,8 @@ export function recommendReels(
     isFollowed: boolean;
   }> = {}
 ) {
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   return [...reelsList].sort((a, b) => {
     // 1. Calculate general engagement score (baseline for trending/popular content)
     const popularityA = (a.likes || 0) * 1 + (a.commentsCount || 0) * 2 + (a.shares || 0) * 3 + (a.saves || 0) * 2;

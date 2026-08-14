@@ -4,6 +4,8 @@ import { emailStatus, sendEmailOtp, verifyEmailOtp, emailPasswordLogin, createEm
 type Props = { onAuthenticated: (payload: any) => void; };
 
 export default function PersistentEmailAuth({ onAuthenticated }: Props) {
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [otp, setOtp] = useState("");
