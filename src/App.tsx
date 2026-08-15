@@ -902,23 +902,28 @@ export default function App() {
         })
         .then(data => {
           if (data && data.user) {
-            const preservedAvatar = data.user.avatar || savedProfile?.avatar || "";
+            const sameAccount = Boolean(
+              savedProfile &&
+              ((savedProfile.uid && data.user.uid && savedProfile.uid === data.user.uid) ||
+               (savedProfile.email && data.user.email && String(savedProfile.email).toLowerCase() === String(data.user.email).toLowerCase()))
+            );
+            const localProfile = sameAccount ? savedProfile : null;
+            const preservedAvatar = data.user.avatar || localProfile?.avatar || "";
             const mergedUser: UserProfile = {
               ...data.user,
-              // Keep local profile fields that are not replaced by the backend. Avatar comes from production storage.
-              fullName: (savedProfile?.fullName && savedProfile.fullName.trim() !== "" && savedProfile.fullName !== "Pardais Member")
-                ? savedProfile.fullName
-                : (data.user.fullName || savedProfile?.fullName || ""),
-              username: savedProfile?.username || data.user.username,
-              uniqueId: savedProfile?.uniqueId || data.user.uniqueId,
+              // Backend is authoritative for account identity. Never reuse a previous
+              // account's Pardais ID, username or name after a different account logs in.
+              fullName: data.user.fullName || localProfile?.fullName || "",
+              username: data.user.username || localProfile?.username || "",
+              uniqueId: data.user.uniqueId || localProfile?.uniqueId || "",
               avatar: preservedAvatar,
               avatarUrl: data.user.avatarUrl || preservedAvatar,
-              bio: savedProfile?.bio || data.user.bio,
-              gender: savedProfile?.gender || data.user.gender,
-              dob: savedProfile?.dob || data.user.dob,
-              phoneNumber: savedProfile?.phoneNumber || data.user.phoneNumber,
-              kycStatus: savedProfile?.kycStatus || data.user.kycStatus,
-              isVerified: savedProfile?.isVerified !== undefined ? savedProfile.isVerified : data.user.isVerified,
+              bio: localProfile?.bio || data.user.bio,
+              gender: localProfile?.gender || data.user.gender,
+              dob: localProfile?.dob || data.user.dob,
+              phoneNumber: localProfile?.phoneNumber || data.user.phoneNumber,
+              kycStatus: localProfile?.kycStatus || data.user.kycStatus,
+              isVerified: data.user.isVerified !== undefined ? data.user.isVerified : localProfile?.isVerified,
             };
             setUser(mergedUser);
             setIsLoggedIn(true);
@@ -7617,12 +7622,20 @@ export default function App() {
       }
     } finally {
       localStorage.removeItem("pardais_auth_token");
-      localStorage.setItem("pardais_is_logged_in", "false");
+      localStorage.removeItem("pardais_user_profile");
+      localStorage.removeItem("pardais_is_logged_in");
+      try { sessionStorage.removeItem("pardais_signup_token"); } catch {}
       setIsLoggedIn(false);
+      setShowAuthModal(false);
+      setPendingAuthCallback(null);
+      // Do not keep a guest account/guest Pardais ID after logout.
       setUser({
         ...DEFAULT_USER,
-        username: "Guest_Visitor",
-        fullName: "Guest Visitor",
+        uid: "",
+        email: "",
+        username: "",
+        uniqueId: "",
+        fullName: "",
         isGuest: true
       });
     }

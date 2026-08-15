@@ -7,6 +7,7 @@ type Props = { onAuthenticated: (payload: any) => void; onGoogleSignIn?: () => v
 export default function PersistentEmailAuth({ onAuthenticated, onGoogleSignIn }: Props) {
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [otp, setOtp] = useState("");
@@ -72,17 +73,31 @@ export default function PersistentEmailAuth({ onAuthenticated, onGoogleSignIn }:
     try {
       const r = await verifyEmailOtp(email.trim().toLowerCase(), otp.trim());
       if (!r?.success || !r?.token || !r?.user) throw new Error(r?.error || "Invalid verification code.");
-      setToken(r.token);
+      // Keep the verified session token durable across React re-renders/remounts.
+      // The Create Account step must never depend only on transient component state.
+      const verifiedToken = String(r.token || "").trim();
+      if (!verifiedToken) throw new Error("Verification succeeded but the signup session token was not returned.");
+      setToken(verifiedToken);
+      try { sessionStorage.setItem("pardais_signup_token", verifiedToken); } catch {}
       setName(r.user.fullName || "");
       setUsername(r.user.username || "");
+      setConfirmPassword("");
       setStep("profile");
     } catch (e) { fail(e, "Invalid verification code."); }
     finally { setBusy(false); }
   };
 
   const saveProfile = async () => {
-    if (!token) { setError("Verification session expired. Please start again."); return; }
+    // Read the verified signup session from state first, then durable sessionStorage.
+    // This fixes the case where the profile screen survives but the in-memory
+    // React token has been cleared/remounted before Create Account is pressed.
+    let verifiedToken = String(token || "").trim();
+    if (!verifiedToken) {
+      try { verifiedToken = String(sessionStorage.getItem("pardais_signup_token") || "").trim(); } catch {}
+    }
+    if (!verifiedToken) { setError("Verification session expired. Please verify your email again."); return; }
     if (!password || password.length < 6) { setError("Password must be at least 6 characters."); return; }
+    if (password !== confirmPassword) { setError("Passwords do not match."); return; }
     if (!name.trim() || username.trim().replace(/^@/, "").length < 3) { setError("Enter your name and a username of at least 3 characters."); return; }
     setError(""); setBusy(true);
     try {
@@ -95,12 +110,13 @@ export default function PersistentEmailAuth({ onAuthenticated, onGoogleSignIn }:
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`
+          "Authorization": `Bearer ${verifiedToken}`
         },
         body: JSON.stringify({
           fullName: name.trim(),
           username: username.trim().replace(/^@/, ""),
-          password
+          password,
+          verificationToken: verifiedToken
         })
       });
       const data = await response.json().catch(() => ({}));
@@ -109,9 +125,10 @@ export default function PersistentEmailAuth({ onAuthenticated, onGoogleSignIn }:
       }
       onAuthenticated({
         success: true,
-        token: data.token || token,
+        token: data.token || verifiedToken,
         user: data.user
       });
+      try { sessionStorage.removeItem("pardais_signup_token"); } catch {}
     } catch (e) { fail(e, "Could not create account."); }
     finally { setBusy(false); }
   };
@@ -157,7 +174,7 @@ export default function PersistentEmailAuth({ onAuthenticated, onGoogleSignIn }:
       {existingNeedsPassword && <p className="text-amber-300 text-xs bg-amber-950/30 border border-amber-500/30 rounded-xl p-3">This email is already registered. If you do not know the password, use Forgot Password to recover the account.</p>}
       <button type="button" disabled={busy} onClick={login} className="w-full bg-gradient-to-r from-[#ff007f] to-[#7b2cbf] text-white py-3 rounded-xl font-bold">Login</button>
       <button type="button" disabled={busy} onClick={startForgot} className="w-full py-2 bg-white/5 rounded-xl border border-white/10 text-gray-300 text-sm">Forgot Password?</button>
-      <button type="button" disabled={busy} onClick={()=>{setPassword("");setStep("email");}} className="w-full py-2 text-gray-400 text-xs">Use another email</button>
+      <button type="button" disabled={busy} onClick={()=>{setPassword("");setConfirmPassword("");setStep("email");}} className="w-full py-2 text-gray-400 text-xs">Use another email</button>
     </>}
     {step === "otp" && <>
       <p className="text-xs text-gray-300">Verification code sent to <b>{email}</b>.</p>
@@ -174,6 +191,10 @@ export default function PersistentEmailAuth({ onAuthenticated, onGoogleSignIn }:
       <div className="relative w-full">
         <input value={password} onChange={e=>setPassword(e.target.value)} type={showPassword ? "text" : "password"} placeholder="Create password (6+ characters)" className="w-full bg-[#1e1e2d] border border-[#303040] rounded-xl px-3 py-3 pr-12 text-white text-sm" autoComplete="new-password" />
         <button type="button" onClick={()=>setShowPassword(v=>!v)} className="absolute right-2 top-1/2 -translate-y-1/2 w-9 h-9 flex items-center justify-center text-lg" aria-label={showPassword ? "Hide password" : "Show password"}>{showPassword ? "🙈" : "👁️"}</button>
+      </div>
+      <div className="relative w-full">
+        <input value={confirmPassword} onChange={e=>setConfirmPassword(e.target.value)} type={showConfirmPassword ? "text" : "password"} placeholder="Confirm password" className="w-full bg-[#1e1e2d] border border-[#303040] rounded-xl px-3 py-3 pr-12 text-white text-sm" autoComplete="new-password" />
+        <button type="button" onClick={()=>setShowConfirmPassword(v=>!v)} className="absolute right-2 top-1/2 -translate-y-1/2 w-9 h-9 flex items-center justify-center text-lg" aria-label={showConfirmPassword ? "Hide confirm password" : "Show confirm password"}>{showConfirmPassword ? "🙈" : "👁️"}</button>
       </div>
       <button type="button" disabled={busy} onClick={saveProfile} className="w-full bg-gradient-to-r from-[#ff007f] to-[#7b2cbf] text-white py-3 rounded-xl font-bold">Create Account</button>
     </>}

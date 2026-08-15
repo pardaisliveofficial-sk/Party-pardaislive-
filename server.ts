@@ -175,12 +175,20 @@ loadDatabase();
 // SECURE USER AUTHENTICATION & AUTHORIZATION MIDDLEWARE
 // ------------------------------------------------------------------
 async function authenticateUser(req: any, res: any, next: any) {
+  // Signup/profile clients may provide the verified session in the body when
+  // browser header state is lost. Header remains the preferred transport.
   const authHeader = req.headers["authorization"];
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    return res.status(401).json({ error: "Unauthorized. Authorization Bearer token is required." });
-  }
+  const headerToken = authHeader && authHeader.startsWith("Bearer ")
+    ? authHeader.substring(7).trim()
+    : "";
+  const bodyToken = typeof req.body?.verificationToken === "string"
+    ? req.body.verificationToken.trim()
+    : "";
+  const token = headerToken || bodyToken;
 
-  const token = authHeader.substring(7).trim();
+  if (!token) {
+    return res.status(401).json({ error: "Unauthorized. Verification session token is required." });
+  }
   if (!token) {
     return res.status(401).json({ error: "Unauthorized. Authorization Bearer token is required." });
   }
@@ -1428,6 +1436,9 @@ app.post("/api/v1/auth/set-password", authenticateUser, async (req: any, res) =>
 
   // For a pending signup, always replace the stale/incomplete password hash
   // with the password the user entered on the current verified signup flow.
+  // A new email signup gets its own canonical Pardais ID derived from its email.
+  // Never carry an ID left behind by another/unfinished local signup session.
+  req.user.uniqueId = stablePardaisId(currentEmail);
   req.user.passwordHash = hashPassword(password);
   req.user.authProvider = "email";
   req.user.isVerified = true;
