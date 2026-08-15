@@ -86,13 +86,32 @@ export default function PersistentEmailAuth({ onAuthenticated, onGoogleSignIn }:
     if (!name.trim() || username.trim().replace(/^@/, "").length < 3) { setError("Enter your name and a username of at least 3 characters."); return; }
     setError(""); setBusy(true);
     try {
-      const p = await createEmailPassword(token, password);
-      if (!p?.success) throw new Error(p?.error || "Could not create password.");
-      const profile = await fetch(resolveApiUrl("/api/v1/auth/setup-profile"), {
-        method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
-        body: JSON.stringify({ fullName: name.trim(), username: username.trim().replace(/^@/, "") })
-      }).then(async r => { const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.error || "Could not save profile."); return d; });
-      onAuthenticated({ success: true, token, user: profile.user || p.user });
+      // OTP verification is already complete. Do NOT call the legacy
+      // set-password + setup-profile pair here: that split flow can leave a
+      // half-created account and can also reject the verified session.
+      // The backend's create-account route performs the complete transition
+      // (password + profile + registration state) in one operation.
+      const response = await fetch(resolveApiUrl("/api/v1/auth/create-account"), {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          fullName: name.trim(),
+          username: username.trim().replace(/^@/, ""),
+          password
+        })
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data?.success) {
+        throw new Error(data?.error || "Could not create account.");
+      }
+      onAuthenticated({
+        success: true,
+        token: data.token || token,
+        user: data.user
+      });
     } catch (e) { fail(e, "Could not create account."); }
     finally { setBusy(false); }
   };
