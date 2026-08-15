@@ -283,7 +283,7 @@ export async function createEmailPassword(token: string, password: string) {
 
 export async function requestPasswordReset(email: string) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 8000);
+  const timeout = setTimeout(() => controller.abort(), 20000);
   try {
     const res = await fetch(resolveApiUrl("/api/v1/auth/forgot-password"), {
       method: "POST",
@@ -304,7 +304,7 @@ export async function requestPasswordReset(email: string) {
 
 export async function resetEmailPassword(email: string, otp: string, password: string) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 8000);
+  const timeout = setTimeout(() => controller.abort(), 20000);
   try {
     const res = await fetch(resolveApiUrl("/api/v1/auth/reset-password"), {
       method: "POST",

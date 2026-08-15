@@ -1044,18 +1044,35 @@ async function findCompletedEmailUserDurably(email: string, timeoutMs = 1500) {
 }
 
 // Account status check — does NOT send an email.
+async function findAnyEmailUserDurably(email: string, timeoutMs = 2500) {
+  const cleanEmail = String(email || "").toLowerCase().trim();
+  const local = (dbData.users || []).find((u: any) =>
+    u && typeof u.email === "string" && u.email.toLowerCase().trim() === cleanEmail && !String(u.uid || "").startsWith("guest_")
+  );
+  if (local) return local;
+  try {
+    const persisted = await Promise.race([
+      getPersistedUserForEmail(cleanEmail),
+      new Promise<any | null>((resolve) => setTimeout(() => resolve(null), timeoutMs))
+    ]);
+    return persisted || undefined;
+  } catch { return undefined; }
+}
+
+// Account status check — distinguishes a completed account from an interrupted/pending signup.
 app.post("/api/v1/auth/email-status", async (req, res) => {
   const email = typeof req.body?.email === "string" ? req.body.email.toLowerCase().trim() : "";
   if (!email || !email.includes("@")) return res.status(400).json({ error: "A valid email address is required." });
-  const user = await findCompletedEmailUserDurably(email);
-  const registered = Boolean(user);
+  const user = await findAnyEmailUserDurably(email);
+  const registered = Boolean(user && isCompletedEmailAccount(user));
+  const exists = Boolean(user);
   return res.json({
     success: true,
-    exists: registered,
+    exists,
     registered,
     pendingSignup: Boolean(user && !registered),
-    needsPassword: Boolean(user && !user.passwordHash),
-    user: registered && user ? {
+    needsPassword: Boolean(user && !user.passwordHash) || Boolean(user && !registered),
+    user: user ? {
       uid: user.uid,
       email: user.email,
       username: user.username,
@@ -1497,13 +1514,10 @@ app.post("/api/v1/auth/create-account", authenticateUser, async (req: any, res) 
   req.user.profileUpdatedAt = new Date().toISOString();
   ensureStableEmailIdentity(req.user, currentEmail);
 
-  const persisted = await persistUserDurably(req.user);
-  if (!persisted) {
-    // Do not claim success when the account was not durably written.
-    return res.status(503).json({ success: false, error: "Account could not be permanently saved. Please try again." });
-  }
-
   saveDatabase();
+  // Do not hold the signup request open on a slow Firestore mirror. The local
+  // account is complete immediately and the durable mirrors are synced in the background.
+  void persistUserDurably(req.user).catch((err) => console.warn("[PARDAIS CREATE ACCOUNT] Background persistence delayed:", err));
   const token = await createSession(req.user);
   return res.status(201).json({
     success: true,
@@ -1524,13 +1538,19 @@ app.post("/api/v1/auth/password-login", async (req, res) => {
   if (!identifier || !password) return res.status(400).json({ error: "Email/username and password are required." });
 
   const normalized = identifier.toLowerCase().replace(/^@/, "");
-  const user = normalized.includes("@")
+  let user = normalized.includes("@")
     ? await findCompletedEmailUserDurably(normalized)
     : (dbData.users || []).find((u: any) =>
         String(u.username || "").toLowerCase() === normalized && isCompletedEmailAccount(u)
       );
 
   if (!user) {
+    const pending = normalized.includes("@")
+      ? await findAnyEmailUserDurably(normalized)
+      : (dbData.users || []).find((u: any) => String(u.username || "").toLowerCase() === normalized);
+    if (pending) {
+      return res.status(409).json({ success: false, code: "PASSWORD_NOT_SET", error: "This account is not fully set up yet. Continue signup or use Forgot Password to recover access." });
+    }
     return res.status(401).json({ success: false, code: "ACCOUNT_NOT_FOUND", error: "No account was found for this email/username. Please sign up first." });
   }
   if (!user.passwordHash) {
@@ -1569,7 +1589,6 @@ async function findRecoverableEmailUserDurably(email: string, timeoutMs = 4000) 
   const localMatches = (dbData.users || []).filter((u: any) =>
     u && typeof u.email === "string" &&
     u.email.toLowerCase().trim() === cleanEmail &&
-    isCompletedEmailAccount(u) &&
     !isGuestEmail &&
     !String(u.uid || "").startsWith("guest_")
   );
@@ -1683,17 +1702,21 @@ app.post("/api/v1/auth/reset-password", async (req, res) => {
     return res.status(401).json({ error: "Invalid or expired recovery code." });
   }
 
-  const user = await findCompletedEmailUserDurably(email, 6000);
-  if (!user) return res.status(404).json({ error: "Account not found or not fully registered." });
+  const user = await findRecoverableEmailUserDurably(email, 2500);
+  if (!user) return res.status(404).json({ error: "Account not found. Please complete Signup first." });
 
   user.passwordHash = hashPassword(password);
   user.authProvider = "email";
+  user.isVerified = true;
+  user.accountStatus = "registered";
+  user.registrationCompletedAt = user.registrationCompletedAt || new Date().toISOString();
+  user.profileCompleted = Boolean(user.fullName && user.username);
   ensureStableEmailIdentity(user, email);
   delete dbData.passwordResetOtps[email];
-  await deletePersistedAuthChallenge(challengeKey);
-  const persisted = await persistUserDurably(user);
-  if (!persisted) return res.status(503).json({ success: false, error: "Password could not be permanently saved. Please try again." });
+  void deletePersistedAuthChallenge(challengeKey).catch(() => undefined);
   saveDatabase();
+  // Respond immediately; durable Firestore mirrors continue in the background.
+  void persistUserDurably(user).catch((err) => console.warn("[PARDAIS PASSWORD RESET] Background persistence delayed:", err));
 
   const token = await createSession(user);
   res.json({ success: true, message: "Password reset successfully.", token, user });
