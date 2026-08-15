@@ -673,6 +673,11 @@ export default function App() {
   const [setupFullName, setSetupFullName] = useState<string>("");
   const [setupUsername, setSetupUsername] = useState<string>("");
   const [setupGender, setSetupGender] = useState<string>("Male");
+  const [googleRegistration, setGoogleRegistration] = useState<{token: string; user: any} | null>(null);
+  const [googleSetupName, setGoogleSetupName] = useState<string>("");
+  const [googleSetupUsername, setGoogleSetupUsername] = useState<string>("");
+  const [googleSetupPassword, setGoogleSetupPassword] = useState<string>("");
+  const [googleSetupBusy, setGoogleSetupBusy] = useState<boolean>(false);
   const [is2FAEnabled, setIs2FAEnabled] = useState<boolean>(false);
   const [showTwoFactorModal, setShowTwoFactorModal] = useState<boolean>(false);
   const [twoFactorCode, setTwoFactorCode] = useState<string>("");
@@ -7549,37 +7554,11 @@ export default function App() {
     }
 
     if (!data || !data.token || !data.user) {
-      const fallbackToken = `pardais_session_${userUid}_${Math.random().toString(36).substring(2, 10)}`;
-      const fallbackUser: UserProfile = {
-        uid: userUid,
-        email: userEmail,
-        username: userEmail.split("@")[0].replace(/[^a-zA-Z0-9_]/g, "_") || "google_user",
-        uniqueId: `pardes_${Math.floor(1000 + Math.random() * 9000)}`,
-        fullName: userDisplayName || "Pardais Member",
-        avatar: userPhotoURL,
-        coverPhoto: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=800&q=80",
-        bio: "Verified Google Member 🇵🇰",
-        gender: "Male",
-        country: "Pakistan",
-        language: "Urdu / Hinglish",
-        familyId: "",
-        agencyId: "",
-        isVerified: false,
-        isBanned: false,
-        twoFactorEnabled: false,
-        coins: 1000000,
-        diamonds: 0,
-        vipLevel: 0,
-        userLevel: 1,
-        hostLevel: 1,
-        wealthLevel: 1,
-        xp: 0
-      };
-      data = {
-        token: fallbackToken,
-        user: fallbackUser,
-        isNewUser: false
-      };
+      // Never fabricate a local Google account when the backend is unavailable.
+      // A fake session was the reason Google users could appear logged in but
+      // their account was not actually persisted.
+      setLoginError("Google account could not be registered with Pardais Party. Please try again.");
+      return;
     }
 
     // Save account to saved Google accounts list for rapid chooser
@@ -7588,28 +7567,47 @@ export default function App() {
     setSavedGoogleAccounts(newSaved);
     localStorage.setItem("pardais_saved_google_accounts", JSON.stringify(newSaved.slice(0, 5)));
 
+    setShowGoogleChooser(false);
+    setLoginError("");
+    setChooserError("");
+
+    // A brand-new Google account must complete the same permanent registration
+    // step as email signup: name, optional username and a password. Do not enter
+    // the app before that registration is saved to the backend.
+    const needsGoogleRegistration = Boolean(
+      data.isNewUser ||
+      !data.user.passwordHash ||
+      !data.user.profileCompleted
+    );
+    if (needsGoogleRegistration) {
+      const suggestedUsername = String(data.user.username || userEmail.split("@")[0] || "pardais_member")
+        .replace(/[^a-zA-Z0-9_]/g, "_");
+      setGoogleRegistration({ token: data.token, user: data.user });
+      setGoogleSetupName(data.user.fullName || userDisplayName || "");
+      setGoogleSetupUsername(suggestedUsername);
+      setGoogleSetupPassword("");
+      setShowAuthModal(true);
+      setIsLoggedIn(false);
+      return;
+    }
+
     localStorage.setItem("pardais_auth_token", data.token);
     localStorage.setItem("pardais_is_logged_in", "true");
     localStorage.setItem("pardais_user_profile", JSON.stringify(data.user));
     lastSavedUserRef.current = JSON.stringify(data.user);
     setUser(data.user);
     setIsLoggedIn(true);
-    setShowGoogleChooser(false);
     setShowAuthModal(false);
     if (pendingAuthCallback) {
       const cb = pendingAuthCallback;
       setPendingAuthCallback(null);
       try { cb(); } catch (e) {}
     }
-    setLoginError("");
-    setChooserError("");
-
-    if (data.isNewUser || !data.user.fullName || data.user.fullName === "Pardais Member") {
-      setShowProfileSetupModal(true);
-    }
   };
 
-  // Real Google Sign-In Handler with Popup, Redirect & Seamless Account Chooser Fallback
+  // Google Sign-In: use the real Firebase provider. Popup is fastest on the web;
+  // if the embedded environment blocks it, fall back to Firebase redirect rather
+  // than the old fake/local account chooser.
   const handleGoogleSignIn = async () => {
     if (!termsAccepted) setTermsAccepted(true);
     setLoginError("");
@@ -7617,25 +7615,24 @@ export default function App() {
     console.log("[GOOGLE AUTH] started");
 
     try {
-      let firebaseUser = null;
-      try {
-        const result = await signInWithPopup(clientAuth, googleProvider);
-        firebaseUser = result?.user;
-      } catch (popupErr: any) {
-        console.warn("[GOOGLE AUTH] signInWithPopup failed/blocked:", popupErr?.code || popupErr?.message);
-        // If popup blocked or failed in sandboxed iframe, show Google Account Chooser
-        setShowGoogleChooser(true);
+      googleProvider.setCustomParameters({ prompt: "select_account" });
+    } catch (_) {}
+
+    try {
+      const result = await signInWithPopup(clientAuth, googleProvider);
+      if (result?.user) {
+        await processGoogleAuthUser(result.user);
         return;
       }
+    } catch (popupErr: any) {
+      console.warn("[GOOGLE AUTH] popup unavailable; using redirect:", popupErr?.code || popupErr?.message);
+    }
 
-      if (firebaseUser) {
-        await processGoogleAuthUser(firebaseUser);
-      } else {
-        setShowGoogleChooser(true);
-      }
-    } catch (err: any) {
-      console.error("Google Sign-In Error, falling back to chooser:", err);
-      setShowGoogleChooser(true);
+    try {
+      await signInWithRedirect(clientAuth, googleProvider);
+    } catch (redirectErr: any) {
+      console.error("[GOOGLE AUTH] redirect failed:", redirectErr?.code || redirectErr?.message);
+      setLoginError("Google Sign-In could not start. Please enable Google sign-in in Firebase Authentication and try again.");
     }
   };
 
@@ -7684,6 +7681,65 @@ export default function App() {
       try { cb(); } catch (e) {}
     }
     setShowProfileSetupModal(true);
+  };
+
+  // Complete Google registration after Firebase has verified the Google account.
+  const handleCompleteGoogleRegistration = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!googleRegistration) return;
+    const name = googleSetupName.trim();
+    const username = googleSetupUsername.trim().replace(/^@/, "");
+    if (!name) { setLoginError("Please enter your name."); return; }
+    if (username && username.length < 3) { setLoginError("Username must be at least 3 characters."); return; }
+    if (googleSetupPassword.length < 6) { setLoginError("Password must be at least 6 characters."); return; }
+
+    setLoginError("");
+    setGoogleSetupBusy(true);
+    try {
+      const passwordRes = await fetch(resolveApiUrl("/api/v1/auth/set-password"), {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${googleRegistration.token}`
+        },
+        body: JSON.stringify({ password: googleSetupPassword })
+      });
+      const passwordData = await passwordRes.json().catch(() => ({}));
+      if (!passwordRes.ok || !passwordData.success) throw new Error(passwordData.error || "Could not save password.");
+
+      const profileRes = await fetch(resolveApiUrl("/api/v1/auth/setup-profile"), {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${googleRegistration.token}`
+        },
+        body: JSON.stringify({ fullName: name, username: username || undefined })
+      });
+      const profileData = await profileRes.json().catch(() => ({}));
+      if (!profileRes.ok || !profileData.success || !profileData.user) throw new Error(profileData.error || "Could not save registration details.");
+
+      const completedUser = profileData.user;
+      localStorage.setItem("pardais_auth_token", googleRegistration.token);
+      localStorage.setItem("pardais_is_logged_in", "true");
+      localStorage.setItem("pardais_user_profile", JSON.stringify(completedUser));
+      lastSavedUserRef.current = JSON.stringify(completedUser);
+      setUser(completedUser);
+      setIsLoggedIn(true);
+      setGoogleRegistration(null);
+      setGoogleSetupPassword("");
+      setShowAuthModal(false);
+      setLoginError("");
+      if (pendingAuthCallback) {
+        const cb = pendingAuthCallback;
+        setPendingAuthCallback(null);
+        try { cb(); } catch (_) {}
+      }
+    } catch (err: any) {
+      console.error("[GOOGLE REGISTRATION] failed:", err);
+      setLoginError(err?.message || "Could not complete Google registration.");
+    } finally {
+      setGoogleSetupBusy(false);
+    }
   };
 
   // Complete Profile Setup
@@ -30853,7 +30909,21 @@ export default function App() {
               <h3 className="text-base font-black text-white tracking-wide uppercase font-mono">Login to Pardais Party</h3>
               <p className="text-[11px] text-pink-200 leading-snug px-2">Use your registered email and password, or create a new account.</p>
             </div>
-            <PersistentEmailAuth onAuthenticated={handlePersistentAuthenticated} />
+            {googleRegistration ? (
+              <form onSubmit={handleCompleteGoogleRegistration} className="space-y-3">
+                <div className="text-center mb-2">
+                  <div className="text-sm font-black text-white">Complete your Pardais registration</div>
+                  <div className="text-[10px] text-gray-400 mt-1">Google verified: {googleRegistration.user?.email}</div>
+                </div>
+                <input value={googleSetupName} onChange={e=>setGoogleSetupName(e.target.value)} placeholder="Your name" className="w-full bg-[#1e1e2d] border border-[#303040] rounded-xl px-3 py-3 text-white text-sm" autoComplete="name" />
+                <input value={googleSetupUsername} onChange={e=>setGoogleSetupUsername(e.target.value.replace(/[^a-zA-Z0-9_]/g, "_"))} placeholder="Username (optional)" className="w-full bg-[#1e1e2d] border border-[#303040] rounded-xl px-3 py-3 text-white text-sm" autoComplete="username" />
+                <input value={googleRegistration.user?.email || ""} readOnly className="w-full bg-[#151520] border border-[#303040] rounded-xl px-3 py-3 text-gray-400 text-sm" />
+                <input value={googleSetupPassword} onChange={e=>setGoogleSetupPassword(e.target.value)} type="password" placeholder="Create password (6+ characters)" className="w-full bg-[#1e1e2d] border border-[#303040] rounded-xl px-3 py-3 text-white text-sm" autoComplete="new-password" />
+                <button type="submit" disabled={googleSetupBusy} className="w-full bg-gradient-to-r from-[#ff007f] to-[#7b2cbf] text-white py-3 rounded-xl font-bold">{googleSetupBusy ? "Saving registration…" : "Complete Registration"}</button>
+              </form>
+            ) : (
+              <PersistentEmailAuth onAuthenticated={handlePersistentAuthenticated} onGoogleSignIn={handleGoogleSignIn} />
+            )}
             <div className="mt-4 pt-3 border-t border-white/10">
               <button type="button" onClick={()=>{ setSelectedAuthMethod(selectedAuthMethod === "email" ? "google" : "email"); }} className="w-full py-2 text-gray-400 text-xs">{selectedAuthMethod === "email" ? "Use Google instead" : "Use Email & Password instead"}</button>
               {selectedAuthMethod === "google" && <button type="button" onClick={handleGoogleSignIn} className="w-full h-11 bg-white text-gray-900 font-bold rounded-2xl text-xs flex items-center justify-center">Sign In with Google</button>}

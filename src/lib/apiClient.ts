@@ -239,21 +239,21 @@ export async function sendEmailOtp(email: string) {
   }
 }
 
-export async function verifyEmailOtp(email: string, otp: string, challengeToken?: string) {
+export async function verifyEmailOtp(email: string, otp: string) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 20000);
+  const timeout = setTimeout(() => controller.abort(), 8000);
   try {
     const res = await fetch(resolveApiUrl("/api/v1/auth/verify-email-otp"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email: email.trim().toLowerCase(), otp: otp.trim(), ...(challengeToken ? { challengeToken } : {}) }),
+      body: JSON.stringify({ email: email.trim().toLowerCase(), otp: otp.trim() }),
       signal: controller.signal
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) return { success: false, error: data?.error || `Verification failed (HTTP ${res.status}).`, code: data?.code };
     return data;
   } catch (err: any) {
-    if (err?.name === "AbortError") return { success: false, error: "Verification service did not respond within 20 seconds. Please try again.", code: "VERIFY_TIMEOUT" };
+    if (err?.name === "AbortError") return { success: false, error: "Verification is taking too long. Please try again.", code: "VERIFY_TIMEOUT" };
     return { success: false, error: "Could not reach the verification service. Please try again.", code: "NETWORK_ERROR" };
   } finally {
     clearTimeout(timeout);

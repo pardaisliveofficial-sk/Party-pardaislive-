@@ -2,9 +2,9 @@ import React, { useEffect, useState } from "react";
 import { emailStatus, sendEmailOtp, verifyEmailOtp, emailPasswordLogin, createEmailPassword, requestPasswordReset, resetEmailPassword } from "../lib/apiClient";
 import { resolveApiUrl } from "../lib/apiClient";
 
-type Props = { onAuthenticated: (payload: any) => void; };
+type Props = { onAuthenticated: (payload: any) => void; onGoogleSignIn?: () => void | Promise<void>; };
 
-export default function PersistentEmailAuth({ onAuthenticated }: Props) {
+export default function PersistentEmailAuth({ onAuthenticated, onGoogleSignIn }: Props) {
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [email, setEmail] = useState("");
@@ -19,7 +19,7 @@ export default function PersistentEmailAuth({ onAuthenticated }: Props) {
   const [existingNeedsPassword, setExistingNeedsPassword] = useState(false);
   const [otpNotice, setOtpNotice] = useState("");
   const [resendCooldown, setResendCooldown] = useState(0);
-  const [otpChallengeToken, setOtpChallengeToken] = useState("");
+
   useEffect(() => {
     if (resendCooldown <= 0) return;
     const timer = window.setInterval(() => setResendCooldown(v => Math.max(0, v - 1)), 1000);
@@ -50,7 +50,6 @@ export default function PersistentEmailAuth({ onAuthenticated }: Props) {
         }
         throw new Error(sent?.error || "Could not send verification code.");
       }
-      setOtpChallengeToken(String(sent?.challengeToken || ""));
       setOtpNotice("Verification code sent. Check your email.");
       setResendCooldown(60);
       setStep("otp");
@@ -69,11 +68,9 @@ export default function PersistentEmailAuth({ onAuthenticated }: Props) {
   };
 
   const verifyFirstEmail = async () => {
-    const cleanOtp = otp.trim();
-    if (cleanOtp.length !== 6) { setError("Enter the 6-digit verification code."); return; }
     setError(""); setOtpNotice(""); setBusy(true);
     try {
-      const r = await verifyEmailOtp(email.trim().toLowerCase(), cleanOtp, otpChallengeToken);
+      const r = await verifyEmailOtp(email, otp);
       if (!r?.success || !r?.token || !r?.user) throw new Error(r?.error || "Invalid verification code.");
       setToken(r.token);
       setName(r.user.fullName || "");
@@ -125,8 +122,13 @@ export default function PersistentEmailAuth({ onAuthenticated }: Props) {
 
   return <div className="space-y-3">
     {step === "email" && <>
+      {onGoogleSignIn && <button type="button" disabled={busy} onClick={onGoogleSignIn} className="w-full h-12 bg-white text-gray-900 rounded-xl font-bold flex items-center justify-center gap-2 shadow-lg">
+        <span className="text-lg font-black">G</span>
+        <span>Continue with Google</span>
+      </button>}
+      {onGoogleSignIn && <div className="flex items-center gap-2 py-1"><div className="h-px bg-white/10 flex-1" /><span className="text-[10px] text-gray-500 uppercase tracking-widest">or</span><div className="h-px bg-white/10 flex-1" /></div>}
       <input value={email} onChange={e=>setEmail(e.target.value)} type="email" placeholder="Email address" className="w-full bg-[#1e1e2d] border border-[#303040] rounded-xl px-3 py-3 text-white text-sm" autoComplete="email" />
-      <button type="button" disabled={busy} onClick={continueEmail} className="w-full bg-gradient-to-r from-[#ff007f] to-[#7b2cbf] text-white py-3 rounded-xl font-bold">{busy ? "Please wait…" : "Continue"}</button>
+      <button type="button" disabled={busy} onClick={continueEmail} className="w-full bg-gradient-to-r from-[#ff007f] to-[#7b2cbf] text-white py-3 rounded-xl font-bold">{busy ? "Please wait…" : "Continue with Email"}</button>
     </>}
     {step === "password" && <>
       <input value={email} readOnly type="email" className="w-full bg-[#1e1e2d] border border-[#303040] rounded-xl px-3 py-3 text-white text-sm" />
@@ -144,7 +146,7 @@ export default function PersistentEmailAuth({ onAuthenticated }: Props) {
       {otpNotice && <p className="text-green-300 text-xs bg-green-950/30 border border-green-500/30 rounded-xl p-3">{otpNotice}</p>}
       <input value={otp} onChange={e=>setOtp(e.target.value.replace(/\D/g, "").slice(0, 6))} maxLength={6} inputMode="numeric" placeholder="6-digit code" className="w-full bg-[#12121a] border border-[#00f5ff] rounded-xl px-3 py-3 text-white text-center tracking-widest font-bold" />
       <button type="button" disabled={busy || otp.trim().length !== 6} onClick={verifyFirstEmail} className="w-full bg-gradient-to-r from-[#ff007f] to-[#7b2cbf] text-white py-3 rounded-xl font-bold">{busy ? "Verifying…" : "Verify Email"}</button>
-      <button type="button" disabled={busy || resendCooldown > 0} onClick={async()=>{setError("");setOtpNotice("");setBusy(true);try{const r=await sendEmailOtp(email.trim().toLowerCase());if(!r?.success)throw new Error(r?.error||"Could not resend verification code.");setOtpChallengeToken(String(r?.challengeToken || ""));setOtpNotice("Verification code sent. Check your email.");setResendCooldown(60);setVerifyDeadline(0);setVerifySecondsLeft(0);setOtp("");}catch(e){fail(e,"Could not resend verification code.");}finally{setBusy(false);}}} className="w-full py-2 text-gray-300 text-xs">{resendCooldown > 0 ? `Resend code in ${resendCooldown}s` : "Resend verification code"}</button>
+      <button type="button" disabled={busy || resendCooldown > 0} onClick={async()=>{setError("");setOtpNotice("");setBusy(true);try{const r=await sendEmailOtp(email.trim().toLowerCase());if(!r?.success)throw new Error(r?.error||"Could not resend verification code.");setOtpNotice("Verification code sent. Check your email.");setResendCooldown(60);setOtp("");}catch(e){fail(e,"Could not resend verification code.");}finally{setBusy(false);}}} className="w-full py-2 text-gray-300 text-xs">{resendCooldown > 0 ? `Resend code in ${resendCooldown}s` : "Resend verification code"}</button>
       <button type="button" disabled={busy} onClick={()=>setStep("email")} className="w-full py-2 text-gray-400 text-xs">Use another email</button>
     </>}
     {step === "profile" && <>
