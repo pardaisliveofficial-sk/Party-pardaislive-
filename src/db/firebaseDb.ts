@@ -162,6 +162,7 @@ export const dbDataCache: any = {
   messages: [],
   sessions: {},
   otps: {},
+  emailOtps: {},
   agencyRequests: [],
   purchaseRequests: [],
   coinTransactions: [],
@@ -527,6 +528,21 @@ export function startFirestoreSynchronization() {
     });
     dbDataCache.otps = dict;
   }, err => handleQuotaError(err, "Sync otps"));
+
+  // Sync active email verification challenges into the hot API cache. This
+  // makes verification fast on every Railway replica while Firestore remains
+  // the durable source of truth.
+  onSnapshot(collection(db, "authChallenges"), snapshot => {
+    const now = Date.now();
+    const dict: any = {};
+    snapshot.forEach(docSnap => {
+      const value: any = docSnap.data();
+      if (value && (!value.expiresAt || Number(value.expiresAt) > now) && value.used !== true) {
+        dict[String(value.email || "").toLowerCase().trim()] = value;
+      }
+    });
+    dbDataCache.emailOtps = { ...(dbDataCache.emailOtps || {}), ...dict };
+  }, err => handleQuotaError(err, "Sync authChallenges"));
 }
 
 export async function clearAllHostsInFirestore() {

@@ -19,7 +19,7 @@ export default function PersistentEmailAuth({ onAuthenticated }: Props) {
   const [existingNeedsPassword, setExistingNeedsPassword] = useState(false);
   const [otpNotice, setOtpNotice] = useState("");
   const [resendCooldown, setResendCooldown] = useState(0);
-
+  const [otpChallengeToken, setOtpChallengeToken] = useState("");
   useEffect(() => {
     if (resendCooldown <= 0) return;
     const timer = window.setInterval(() => setResendCooldown(v => Math.max(0, v - 1)), 1000);
@@ -50,6 +50,7 @@ export default function PersistentEmailAuth({ onAuthenticated }: Props) {
         }
         throw new Error(sent?.error || "Could not send verification code.");
       }
+      setOtpChallengeToken(String(sent?.challengeToken || ""));
       setOtpNotice("Verification code sent. Check your email.");
       setResendCooldown(60);
       setStep("otp");
@@ -68,9 +69,11 @@ export default function PersistentEmailAuth({ onAuthenticated }: Props) {
   };
 
   const verifyFirstEmail = async () => {
+    const cleanOtp = otp.trim();
+    if (cleanOtp.length !== 6) { setError("Enter the 6-digit verification code."); return; }
     setError(""); setOtpNotice(""); setBusy(true);
     try {
-      const r = await verifyEmailOtp(email, otp);
+      const r = await verifyEmailOtp(email.trim().toLowerCase(), cleanOtp, otpChallengeToken);
       if (!r?.success || !r?.token || !r?.user) throw new Error(r?.error || "Invalid verification code.");
       setToken(r.token);
       setName(r.user.fullName || "");
@@ -141,7 +144,7 @@ export default function PersistentEmailAuth({ onAuthenticated }: Props) {
       {otpNotice && <p className="text-green-300 text-xs bg-green-950/30 border border-green-500/30 rounded-xl p-3">{otpNotice}</p>}
       <input value={otp} onChange={e=>setOtp(e.target.value.replace(/\D/g, "").slice(0, 6))} maxLength={6} inputMode="numeric" placeholder="6-digit code" className="w-full bg-[#12121a] border border-[#00f5ff] rounded-xl px-3 py-3 text-white text-center tracking-widest font-bold" />
       <button type="button" disabled={busy || otp.trim().length !== 6} onClick={verifyFirstEmail} className="w-full bg-gradient-to-r from-[#ff007f] to-[#7b2cbf] text-white py-3 rounded-xl font-bold">{busy ? "Verifying…" : "Verify Email"}</button>
-      <button type="button" disabled={busy || resendCooldown > 0} onClick={async()=>{setError("");setOtpNotice("");setBusy(true);try{const r=await sendEmailOtp(email.trim().toLowerCase());if(!r?.success)throw new Error(r?.error||"Could not resend verification code.");setOtpNotice("Verification code sent. Check your email.");setResendCooldown(60);setOtp("");}catch(e){fail(e,"Could not resend verification code.");}finally{setBusy(false);}}} className="w-full py-2 text-gray-300 text-xs">{resendCooldown > 0 ? `Resend code in ${resendCooldown}s` : "Resend verification code"}</button>
+      <button type="button" disabled={busy || resendCooldown > 0} onClick={async()=>{setError("");setOtpNotice("");setBusy(true);try{const r=await sendEmailOtp(email.trim().toLowerCase());if(!r?.success)throw new Error(r?.error||"Could not resend verification code.");setOtpChallengeToken(String(r?.challengeToken || ""));setOtpNotice("Verification code sent. Check your email.");setResendCooldown(60);setVerifyDeadline(0);setVerifySecondsLeft(0);setOtp("");}catch(e){fail(e,"Could not resend verification code.");}finally{setBusy(false);}}} className="w-full py-2 text-gray-300 text-xs">{resendCooldown > 0 ? `Resend code in ${resendCooldown}s` : "Resend verification code"}</button>
       <button type="button" disabled={busy} onClick={()=>setStep("email")} className="w-full py-2 text-gray-400 text-xs">Use another email</button>
     </>}
     {step === "profile" && <>

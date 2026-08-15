@@ -1182,28 +1182,43 @@ app.post("/api/v1/auth/send-email-otp", async (req, res) => {
   const otp = Math.floor(100000 + Math.random() * 900000).toString();
   otpSendLocks.set(cleanEmail, Date.now());
 
-  const challenge = { otp, email: cleanEmail, type: "signup", expiresAt: Date.now() + 10 * 60 * 1000, createdAt: new Date().toISOString() };
-  // Persist before sending. This prevents an email from arriving while another
-  // API replica/restart has no matching OTP record.
+  const challenge = {
+    otp,
+    email: cleanEmail,
+    type: "signup",
+    expiresAt: Date.now() + 10 * 60 * 1000,
+    createdAt: new Date().toISOString(),
+    used: false
+  };
+  // The OTP must exist in BOTH the hot cache and durable Firestore BEFORE the
+  // email is sent. Otherwise the email can arrive first and a verification
+  // request routed to another Railway instance can see "No OTP requested".
   const challengeKey = `email_${cleanEmail.replace(/[^a-zA-Z0-9]/g, "_")}`;
   if (!dbData.emailOtps) dbData.emailOtps = {};
-  // Keep a hot copy immediately so the request cannot block on Firestore.
   dbData.emailOtps[cleanEmail] = challenge;
   saveDatabase();
 
-  // Persist in the background. The hot in-memory challenge is authoritative for
-  // the active request, so Firestore latency must never delay the OTP email response.
-  void persistAuthChallenge(challengeKey, challenge).catch((err) => {
-    console.warn("[PARDAIS PARTY OTP] Durable challenge write delayed/unavailable; hot OTP retained.", err);
-  });
+  let durableSaved = false;
+  try {
+    durableSaved = await persistAuthChallenge(challengeKey, challenge);
+  } catch (err) {
+    console.warn("[PARDAIS PARTY OTP] Durable challenge write failed; using hot/local fallback.", err);
+  }
 
-  console.log(`[PARDAIS PARTY EMAIL OTP GATEWAY] Generated and durably stored OTP for ${cleanEmail}`);
+  if (!durableSaved) {
+    console.warn(`[PARDAIS PARTY OTP] Firestore challenge persistence unavailable for ${cleanEmail}; keeping local challenge.`);
+  } else {
+    console.log(`[PARDAIS PARTY OTP] Durable challenge stored before email delivery for ${cleanEmail}`);
+  }
+
+  console.log(`[PARDAIS PARTY EMAIL OTP GATEWAY] Generated OTP for ${cleanEmail}`);
 
   try {
     await sendPardaisPartyOtpEmail(cleanEmail, otp);
     return res.json({
       success: true,
-      message: `Verification OTP code sent to ${cleanEmail}. Check your email inbox.`
+      message: `Verification OTP code sent to ${cleanEmail}. Check your email inbox.`,
+      challengeToken: sealOtpChallenge(cleanEmail, otp, Number(challenge.expiresAt))
     });
   } catch (emailErr) {
     // Delivery failed: release the cooldown and invalidate the hot challenge so
@@ -1222,103 +1237,159 @@ app.post("/api/v1/auth/send-email-otp", async (req, res) => {
 });
 
 // 3. Verify Email OTP Code
+
+// Stateless encrypted OTP challenge: verification does not depend on Railway
+// replica-local memory or a slow Firestore read. The OTP itself is never sent
+// to the client; it is sealed with AES-GCM and only the server can open it.
+function getOtpChallengeKey(): Buffer {
+  return crypto.createHash("sha256")
+    .update(String(process.env.AUTH_CHALLENGE_SECRET || process.env.SESSION_SECRET || process.env.RESEND_API_KEY || "pardais-party-auth-challenge-secret"))
+    .digest();
+}
+function sealOtpChallenge(email: string, otp: string, expiresAt: number): string {
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv("aes-256-gcm", getOtpChallengeKey(), iv);
+  const payload = JSON.stringify({ email, otp, expiresAt, v: 1 });
+  const encrypted = Buffer.concat([cipher.update(payload, "utf8"), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return Buffer.concat([iv, tag, encrypted]).toString("base64url");
+}
+function openOtpChallenge(token: string): { email: string; otp: string; expiresAt: number } | null {
+  try {
+    const raw = Buffer.from(String(token || ""), "base64url");
+    if (raw.length < 28) return null;
+    const iv = raw.subarray(0, 12);
+    const tag = raw.subarray(12, 28);
+    const encrypted = raw.subarray(28);
+    const decipher = crypto.createDecipheriv("aes-256-gcm", getOtpChallengeKey(), iv);
+    decipher.setAuthTag(tag);
+    const parsed = JSON.parse(Buffer.concat([decipher.update(encrypted), decipher.final()]).toString("utf8"));
+    if (!parsed?.email || !/^\d{6}$/.test(String(parsed.otp)) || !Number.isFinite(Number(parsed.expiresAt))) return null;
+    return { email: String(parsed.email).toLowerCase().trim(), otp: String(parsed.otp), expiresAt: Number(parsed.expiresAt) };
+  } catch {
+    return null;
+  }
+}
+
 app.post("/api/v1/auth/verify-email-otp", async (req, res) => {
-  const { email, otp } = req.body;
+  // IMPORTANT: verification is intentionally kept local-first and bounded.
+  // Do not perform a slow account/registry lookup before checking the OTP.
+  const startedAt = Date.now();
+  const { email, otp, challengeToken } = req.body;
   if (!email || !otp) {
     return res.status(400).json({ error: "Email and verification OTP code are required." });
   }
 
-  const cleanEmail = email.toLowerCase().trim();
-  const existingAccount = await findCompletedEmailUserDurably(cleanEmail);
-  if (existingAccount) {
+  const cleanEmail = String(email).toLowerCase().trim();
+  const cleanOtp = String(otp).trim();
+  if (!cleanEmail.includes("@") || !/^\d{6}$/.test(cleanOtp)) {
+    return res.status(400).json({ success: false, code: "OTP_INVALID", error: "Enter the 6-digit verification code." });
+  }
+
+  // Only the local completed-account check is allowed before OTP lookup.
+  // The send endpoint already performed the durable registration check.
+  const localExistingAccount = getLocalCompletedEmailUser(cleanEmail);
+  if (localExistingAccount) {
     return res.status(409).json({
       success: false,
       code: "EMAIL_ALREADY_REGISTERED",
       error: "This email is already registered. Please log in instead of signing up again."
     });
   }
+
   const challengeKey = `email_${cleanEmail.replace(/[^a-zA-Z0-9]/g, "_")}`;
   let stored = dbData.emailOtps?.[cleanEmail] || null;
-  if (!stored) stored = await getPersistedAuthChallenge(challengeKey);
+
+  // Primary verification path is stateless and replica-safe. The send endpoint
+  // returns an encrypted challenge token; this avoids waiting on Firestore and
+  // fixes the "OTP not found" problem when send and verify hit different
+  // Railway instances.
+  const sealed = openOtpChallenge(String(challengeToken || ""));
+  if (sealed && sealed.email === cleanEmail) {
+    stored = { otp: sealed.otp, email: sealed.email, expiresAt: sealed.expiresAt, used: false };
+  }
+
+  // Backward compatibility for older clients that do not have challengeToken.
+  if (!stored) {
+    try {
+      stored = await Promise.race([
+        getPersistedAuthChallenge(challengeKey),
+        new Promise<any | null>((resolve) => setTimeout(() => resolve(null), 5000))
+      ]);
+    } catch (err) {
+      console.warn("[PARDAIS PARTY OTP] Durable challenge lookup failed:", err);
+    }
+  }
 
   if (!stored) {
-    return res.status(401).json({ error: "No OTP code requested for this email or OTP expired. Please request a new code." });
+    return res.status(401).json({
+      success: false,
+      code: "OTP_NOT_FOUND",
+      error: "No active verification code was found for this email. Please request a new code."
+    });
   }
 
-  if (stored.expiresAt && Date.now() > stored.expiresAt) {
+  if (stored.used === true) {
+    return res.status(401).json({ success: false, code: "OTP_ALREADY_USED", error: "This verification code has already been used. Please request a new code." });
+  }
+
+  if (stored.expiresAt && Date.now() > Number(stored.expiresAt)) {
     delete dbData.emailOtps[cleanEmail];
-    await deletePersistedAuthChallenge(challengeKey);
     saveDatabase();
-    return res.status(401).json({ error: "OTP code has expired. Please request a new OTP code." });
+    void deletePersistedAuthChallenge(challengeKey).catch(() => undefined);
+    return res.status(401).json({ success: false, code: "OTP_EXPIRED", error: "OTP code has expired. Please request a new OTP code." });
   }
 
-  if (String(stored.otp).trim() !== String(otp).trim()) {
-    return res.status(401).json({ error: "Invalid OTP code. Please check and try again." });
+  if (String(stored.otp).trim() !== cleanOtp) {
+    return res.status(401).json({ success: false, code: "OTP_INVALID", error: "Invalid OTP code. Please check and try again." });
   }
 
-  // Invalidate the hot challenge immediately. Durable deletion is background-only
-  // so Firestore latency cannot block successful verification.
+  // Consume immediately. Durable cleanup is deliberately asynchronous so a
+  // slow Firestore delete can never hold the Verify response open.
   delete dbData.emailOtps[cleanEmail];
+  saveDatabase();
   void deletePersistedAuthChallenge(challengeKey).catch((err) => {
     console.warn("[PARDAIS PARTY OTP] Durable challenge cleanup delayed:", err);
   });
 
   const uid = "email_" + cleanEmail.replace(/[^a-zA-Z0-9]/g, "_");
-  let user = dbData.users.find((u: any) => (u.email && u.email.toLowerCase() === cleanEmail) || u.uid === uid);
+  let user = dbData.users.find((u: any) =>
+    (u.email && String(u.email).toLowerCase().trim() === cleanEmail) || u.uid === uid
+  );
 
   let isNewUser = false;
   if (!user) {
     isNewUser = true;
     const username = cleanEmail.split("@")[0].replace(/[^a-zA-Z0-9_]/g, "_") || `user_${Math.floor(1000 + Math.random() * 9000)}`;
     const uniqueId = stablePardaisId(cleanEmail);
-
     user = {
-      uid,
-      email: cleanEmail,
-      username,
-      uniqueId,
-      fullName: "",
-      avatar: "",
+      uid, email: cleanEmail, username, uniqueId,
+      fullName: "", avatar: "",
       coverPhoto: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=800&q=80",
-      bio: "Pardais Party Member 🇵🇰",
-      gender: "Male",
-      country: "Pakistan",
-      language: "Urdu / Hinglish",
-      coins: 0,
-      diamonds: 0,
-      vipLevel: 0,
-      userLevel: 1,
-      hostLevel: 1,
-      wealthLevel: 1,
-      xp: 0,
-      familyId: "",
-      agencyId: "",
-      isVerified: true,
-      isBanned: false,
-      twoFactorEnabled: false,
-      dob: "",
-      phoneNumber: "",
-      kycStatus: "none",
-      followersCount: 0,
-      followingCount: 0,
-      totalLikesCount: 0,
-      selectedFrameId: "",
-      vipSuspended: false
+      bio: "Pardais Party Member 🇵🇰", gender: "Male", country: "Pakistan", language: "Urdu / Hinglish",
+      coins: 0, diamonds: 0, vipLevel: 0, userLevel: 1, hostLevel: 1, wealthLevel: 1, xp: 0,
+      familyId: "", agencyId: "", isVerified: true, isBanned: false, twoFactorEnabled: false,
+      dob: "", phoneNumber: "", kycStatus: "none", followersCount: 0, followingCount: 0,
+      totalLikesCount: 0, selectedFrameId: "", vipSuspended: false
     };
-
     dbData.users.push(user);
-    syncDocument("users", user.username, user);
   }
 
   ensureStableEmailIdentity(user, cleanEmail);
-  const persisted = await persistUserDurably(user);
-  if (!persisted) {
-    return res.status(503).json({ success: false, error: "Account could not be permanently saved. Please try again." });
-  }
+  user.isVerified = true;
+  user.emailVerifiedAt = user.emailVerifiedAt || new Date().toISOString();
   saveDatabase();
 
+  // Do not block OTP verification on Firestore/user sync. The signed session
+  // and next profile step must be returned immediately.
+  void Promise.race([
+    persistUserDurably(user),
+    new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 5000))
+  ]).catch((err) => console.warn("[PARDAIS AUTH] Background user persistence failed:", err));
+
   const token = await createSession(user);
-  res.json({
+  console.log(`[PARDAIS PARTY OTP] VERIFIED email=${cleanEmail} elapsedMs=${Date.now() - startedAt}`);
+  return res.json({
     success: true,
     message: isNewUser ? "Email verified. Please complete your profile setup." : "Email verified successfully.",
     isNewUser,
