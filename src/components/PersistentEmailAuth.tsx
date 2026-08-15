@@ -70,7 +70,7 @@ export default function PersistentEmailAuth({ onAuthenticated, onGoogleSignIn }:
   const verifyFirstEmail = async () => {
     setError(""); setOtpNotice(""); setBusy(true);
     try {
-      const r = await verifyEmailOtp(email, otp);
+      const r = await verifyEmailOtp(email.trim().toLowerCase(), otp.trim());
       if (!r?.success || !r?.token || !r?.user) throw new Error(r?.error || "Invalid verification code.");
       setToken(r.token);
       setName(r.user.fullName || "");
@@ -123,12 +123,11 @@ export default function PersistentEmailAuth({ onAuthenticated, onGoogleSignIn }:
   return <div className="space-y-3">
     {step === "email" && <>
       {onGoogleSignIn && <button type="button" disabled={busy} onClick={onGoogleSignIn} className="w-full h-12 bg-white text-gray-900 rounded-xl font-bold flex items-center justify-center gap-2 shadow-lg">
-        <span className="text-lg font-black">G</span>
-        <span>Continue with Google</span>
+        <span className="text-lg font-black">G</span><span>Continue with Google</span>
       </button>}
       {onGoogleSignIn && <div className="flex items-center gap-2 py-1"><div className="h-px bg-white/10 flex-1" /><span className="text-[10px] text-gray-500 uppercase tracking-widest">or</span><div className="h-px bg-white/10 flex-1" /></div>}
       <input value={email} onChange={e=>setEmail(e.target.value)} type="email" placeholder="Email address" className="w-full bg-[#1e1e2d] border border-[#303040] rounded-xl px-3 py-3 text-white text-sm" autoComplete="email" />
-      <button type="button" disabled={busy} onClick={continueEmail} className="w-full bg-gradient-to-r from-[#ff007f] to-[#7b2cbf] text-white py-3 rounded-xl font-bold">{busy ? "Please wait…" : "Continue with Email"}</button>
+      <button type="button" disabled={busy} onClick={continueEmail} className="w-full bg-gradient-to-r from-[#ff007f] to-[#7b2cbf] text-white py-3 rounded-xl font-bold">{busy ? "Please wait…" : "Continue"}</button>
     </>}
     {step === "password" && <>
       <input value={email} readOnly type="email" className="w-full bg-[#1e1e2d] border border-[#303040] rounded-xl px-3 py-3 text-white text-sm" />

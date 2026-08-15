@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
-import { authenticatedFetch, resolveApiUrl, getAuthToken, isCapacitorOrAndroid } from "./lib/apiClient";
+import { authenticatedFetch, resolveApiUrl, refreshSession, getAuthToken, isCapacitorOrAndroid } from "./lib/apiClient";
 import { COUNTRIES_CURRENCIES, CountryCurrency, getCoinsCostInCurrency } from "./currencyUtils";
 import { ReelsView } from "./components/ReelsView";
 import { AgoraStream } from "./components/AgoraStream";
@@ -107,7 +107,6 @@ import { getRankingData } from "./rankingData";
 import { dbDataCache, db, auth as firebaseAuth } from "./db/firebaseDb";
 import { PardaisPartyLogo, PardaisLiveLogo } from "./components/PardaisPartyLogo";
 import { PardaisPartySplashScreen } from "./components/PardaisPartySplashScreen";
-import PersistentEmailAuth from "./components/PersistentEmailAuth";
 import { PartyGamesModal } from "./components/PartyGamesModal";
 import { initializeApp, getApps, getApp } from "firebase/app";
 import { getAuth, signInWithPopup, signInWithRedirect, getRedirectResult, GoogleAuthProvider, signOut } from "firebase/auth";
@@ -673,17 +672,12 @@ export default function App() {
   const [setupFullName, setSetupFullName] = useState<string>("");
   const [setupUsername, setSetupUsername] = useState<string>("");
   const [setupGender, setSetupGender] = useState<string>("Male");
-  const [googleRegistration, setGoogleRegistration] = useState<{token: string; user: any} | null>(null);
-  const [googleSetupName, setGoogleSetupName] = useState<string>("");
-  const [googleSetupUsername, setGoogleSetupUsername] = useState<string>("");
-  const [googleSetupPassword, setGoogleSetupPassword] = useState<string>("");
-  const [googleSetupBusy, setGoogleSetupBusy] = useState<boolean>(false);
   const [is2FAEnabled, setIs2FAEnabled] = useState<boolean>(false);
   const [showTwoFactorModal, setShowTwoFactorModal] = useState<boolean>(false);
   const [twoFactorCode, setTwoFactorCode] = useState<string>("");
 
   // Guest Mode & Auth Prompt Modal State
-  const [showAuthModal, setShowAuthModal] = useState<boolean>(() => !localStorage.getItem("pardais_auth_token"));
+  const [showAuthModal, setShowAuthModal] = useState<boolean>(false);
   const [authModalReason, setAuthModalReason] = useState<string>("interact with features");
   const [pendingAuthCallback, setPendingAuthCallback] = useState<(() => void) | null>(null);
 
@@ -856,12 +850,10 @@ export default function App() {
 
   // Automatically persist user profile state locally whenever updated
   useEffect(() => {
-    if (isLoggedIn && getAuthToken() && user && !user.isGuest && (user.username || user.uniqueId)) {
+    if (user && (user.username || user.uniqueId)) {
       localStorage.setItem("pardais_user_profile", JSON.stringify(user));
-    } else if (!isLoggedIn) {
-      localStorage.removeItem("pardais_user_profile");
     }
-  }, [user, isLoggedIn]);
+  }, [user]);
 
   // Restore authenticated session from backend on app load
   useEffect(() => {
@@ -889,18 +881,18 @@ export default function App() {
         try { savedProfile = JSON.parse(savedUserRaw); } catch (e) {}
       }
 
-      // A cached profile is NEVER an authentication credential. Only a real backend token may restore a session.
-      if (!token) {
-        localStorage.removeItem("pardais_user_profile");
-        localStorage.setItem("pardais_is_logged_in", "false");
-        setIsLoggedIn(false);
-        setUser({ ...DEFAULT_USER, username: "Guest_Visitor", fullName: "Guest Visitor", isGuest: true });
-        setShowAuthModal(true);
-        return;
-      }
-
       if (savedProfile && (savedProfile.username || savedProfile.uniqueId)) {
         setUser(savedProfile);
+        setIsLoggedIn(true);
+      }
+
+      if (!token) {
+        if (!savedProfile) {
+          refreshSession().then(() => {
+            setIsLoggedIn(true);
+          });
+        }
+        return;
       }
 
       authenticatedFetch("/api/v1/auth/me")
@@ -910,29 +902,23 @@ export default function App() {
         })
         .then(data => {
           if (data && data.user) {
-            // The authenticated backend response is the single source of truth
-            // for account identity. Never restore uid/username/uniqueId/email from
-            // stale localStorage; doing that can make two old IDs alternate after
-            // a refresh. Local storage is only allowed to fill non-identity fields.
-            const serverUser = data.user as UserProfile;
-            const preservedAvatar = serverUser.avatar || savedProfile?.avatar || "";
+            const preservedAvatar = data.user.avatar || savedProfile?.avatar || "";
             const mergedUser: UserProfile = {
-              ...serverUser,
-              uid: serverUser.uid,
-              email: serverUser.email,
-              username: serverUser.username,
-              uniqueId: serverUser.uniqueId,
+              ...data.user,
+              // Keep local profile fields that are not replaced by the backend. Avatar comes from production storage.
               fullName: (savedProfile?.fullName && savedProfile.fullName.trim() !== "" && savedProfile.fullName !== "Pardais Member")
                 ? savedProfile.fullName
-                : (serverUser.fullName || ""),
+                : (data.user.fullName || savedProfile?.fullName || ""),
+              username: savedProfile?.username || data.user.username,
+              uniqueId: savedProfile?.uniqueId || data.user.uniqueId,
               avatar: preservedAvatar,
-              avatarUrl: serverUser.avatarUrl || preservedAvatar,
-              bio: savedProfile?.bio || serverUser.bio,
-              gender: savedProfile?.gender || serverUser.gender,
-              dob: savedProfile?.dob || serverUser.dob,
-              phoneNumber: savedProfile?.phoneNumber || serverUser.phoneNumber,
-              kycStatus: savedProfile?.kycStatus || serverUser.kycStatus,
-              isVerified: serverUser.isVerified,
+              avatarUrl: data.user.avatarUrl || preservedAvatar,
+              bio: savedProfile?.bio || data.user.bio,
+              gender: savedProfile?.gender || data.user.gender,
+              dob: savedProfile?.dob || data.user.dob,
+              phoneNumber: savedProfile?.phoneNumber || data.user.phoneNumber,
+              kycStatus: savedProfile?.kycStatus || data.user.kycStatus,
+              isVerified: savedProfile?.isVerified !== undefined ? savedProfile.isVerified : data.user.isVerified,
             };
             setUser(mergedUser);
             setIsLoggedIn(true);
@@ -941,13 +927,7 @@ export default function App() {
           }
         })
         .catch(err => {
-          console.warn("[PARDAIS AUTH RESTORE] Session invalid; clearing local account state:", err.message);
-          localStorage.removeItem("pardais_auth_token");
-          localStorage.removeItem("pardais_user_profile");
-          localStorage.setItem("pardais_is_logged_in", "false");
-          setIsLoggedIn(false);
-          setUser({ ...DEFAULT_USER, username: "Guest_Visitor", fullName: "Guest Visitor", isGuest: true });
-          setShowAuthModal(true);
+          console.warn("[PARDAIS AUTH RESTORE] Session verification notice:", err.message);
         });
     };
 
@@ -963,7 +943,6 @@ export default function App() {
   const [isEditingProfile, setIsEditingProfile] = useState<boolean>(false);
   const [editFullName, setEditFullName] = useState<string>(DEFAULT_USER.fullName || "");
   const [editAvatar, setEditAvatar] = useState<string>(DEFAULT_USER.avatar);
-  const [editAvatarFile, setEditAvatarFile] = useState<File | null>(null);
   const [editDob, setEditDob] = useState<string>(DEFAULT_USER.dob || "");
   const [editGender, setEditGender] = useState<string>(DEFAULT_USER.gender);
   const [editPhoneNumber, setEditPhoneNumber] = useState<string>(DEFAULT_USER.phoneNumber || "");
@@ -1319,9 +1298,6 @@ export default function App() {
   const [showNotifications, setShowNotifications] = useState<boolean>(false);
   const [hasUnreadNotifications, setHasUnreadNotifications] = useState<boolean>(true);
   const [showSettingsDrawer, setShowSettingsDrawer] = useState<boolean>(false);
-  const [showDeleteAccountModal, setShowDeleteAccountModal] = useState<boolean>(false);
-  const [deleteAccountBusy, setDeleteAccountBusy] = useState<boolean>(false);
-  const [deleteAccountSchedule, setDeleteAccountSchedule] = useState<string | null>(null);
 
   // Android App Conversion & PWA Install State
   const [showAndroidInstallModal, setShowAndroidInstallModal] = useState<boolean>(false);
@@ -1862,51 +1838,6 @@ export default function App() {
   // Client Navigation View (within mobile)
   const [clientView, setClientView] = useState<"feed" | "live-room" | "profile" | "wallet" | "family-agency" | "chat" | "reels" | "user-live" | "camera-prep" | "party-room" | "notifications" | "stream">("feed");
   const [viewHistory, setViewHistory] = useState<string[]>(["feed"]);
-
-  // Keep the device display awake while the user is actively inside Party/Live.
-  // Release the lock as soon as they leave those views so normal Android timeout
-  // behaviour returns everywhere else.
-  useEffect(() => {
-    const wakeEnabled = clientView === "party-room" || clientView === "live-room" || clientView === "user-live" || clientView === "stream";
-    if (!wakeEnabled) return;
-
-    let wakeLock: any = null;
-    let cancelled = false;
-
-    const acquireWakeLock = async () => {
-      try {
-        const wakeLockApi = (navigator as any).wakeLock;
-        if (!wakeLockApi?.request) return;
-        if (document.visibilityState !== "visible") return;
-        wakeLock = await wakeLockApi.request("screen");
-        if (cancelled) {
-          try { await wakeLock?.release?.(); } catch {}
-          wakeLock = null;
-        }
-      } catch (err) {
-        console.warn("[PARDAIS SCREEN WAKE] Wake Lock unavailable:", err);
-      }
-    };
-
-    const handleVisibility = () => {
-      if (!cancelled && document.visibilityState === "visible") {
-        acquireWakeLock();
-      }
-    };
-
-    acquireWakeLock();
-    document.addEventListener("visibilitychange", handleVisibility);
-    window.addEventListener("focus", handleVisibility);
-
-    return () => {
-      cancelled = true;
-      document.removeEventListener("visibilitychange", handleVisibility);
-      window.removeEventListener("focus", handleVisibility);
-      try { wakeLock?.release?.(); } catch {}
-      wakeLock = null;
-    };
-  }, [clientView]);
-
 
   useEffect(() => {
     if (clientView === "feed") {
@@ -5263,7 +5194,7 @@ export default function App() {
         .catch(() => {});
 
       // 4. Fetch reels list
-      fetch(resolveApiUrl("/api/v1/reels"))
+      fetch("/api/v1/reels")
         .then(res => res.ok ? res.json() : null)
         .then(data => {
           if (Array.isArray(data)) {
@@ -5489,7 +5420,7 @@ export default function App() {
         })
         .catch(() => {});
 
-      fetch(resolveApiUrl("/api/v1/reels"))
+      fetch("/api/v1/reels")
         .then(res => res.ok ? res.json() : null)
         .then(data => {
           if (Array.isArray(data)) {
@@ -6078,29 +6009,28 @@ export default function App() {
     let persistentAvatar = user.avatar;
     const selectedAvatar = editAvatar.trim();
 
-    // Upload the actual selected File directly. Do not round-trip through a data URL;
-    // Android WebView/camera images can otherwise fail during fetch(dataUrl).blob().
-    if (editAvatarFile) {
+    // Upload newly selected gallery/camera image to production storage first.
+    // Never persist a base64 data URL in localStorage or the user profile.
+    if (selectedAvatar && selectedAvatar !== user.avatar && selectedAvatar.startsWith("data:image/")) {
       try {
+        const blob = await (await fetch(selectedAvatar)).blob();
         const formData = new FormData();
-        const extension = editAvatarFile.name?.split('.').pop() || 'jpg';
-        formData.append('avatar', editAvatarFile, `avatar-${Date.now()}.${extension}`);
+        formData.append("avatar", blob, `avatar-${Date.now()}.jpg`);
 
-        const uploadRes = await authenticatedFetch('/api/v1/user/avatar', {
-          method: 'POST',
+        const uploadRes = await authenticatedFetch("/api/v1/user/avatar", {
+          method: "POST",
           body: formData
         });
         const uploadData = await uploadRes.json().catch(() => ({}));
 
         if (!uploadRes.ok || !uploadData?.url) {
-          const detail = uploadData?.error || `Profile photo upload failed (HTTP ${uploadRes.status})`;
-          throw new Error(detail);
+          throw new Error(uploadData?.error || "Profile photo upload failed");
         }
 
         persistentAvatar = uploadData.url;
       } catch (err) {
-        console.error('[PARDAIS PROFILE] Avatar upload failed:', err);
-        alert(`Profile photo upload failed. ${err instanceof Error ? err.message : 'Please try again.'}`);
+        console.error("[PARDAIS PROFILE] Avatar upload failed:", err);
+        alert("Profile photo upload failed. Please try again.");
         return;
       }
     }
@@ -6125,30 +6055,8 @@ export default function App() {
     localStorage.removeItem("pardais_custom_avatar");
     localStorage.setItem("pardais_avatar_user_set", persistentAvatar ? "true" : "false");
 
-    // Persist the account-scoped profile before closing the editor. This prevents
-    // a refresh from briefly restoring an older avatar/profile from stale cache.
-    try {
-      const syncRes = await authenticatedFetch("/api/v1/user", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(updatedUser)
-      });
-      const syncData = await syncRes.json().catch(() => ({}));
-      if (!syncRes.ok) {
-        throw new Error(syncData?.error || `Profile save failed (HTTP ${syncRes.status})`);
-      }
-      const canonicalUser = syncData?.user || updatedUser;
-      setUser(canonicalUser);
-      localStorage.setItem("pardais_user_profile", JSON.stringify(canonicalUser));
-      lastSavedUserRef.current = JSON.stringify(canonicalUser);
-      setEditAvatar(canonicalUser.avatar || persistentAvatar);
-    } catch (syncErr) {
-      console.error("[PARDAIS PROFILE] Profile sync failed:", syncErr);
-      alert(`Profile save failed. ${syncErr instanceof Error ? syncErr.message : "Please try again."}`);
-      return;
-    }
-
-    setEditAvatarFile(null);
+    saveAndSyncUserProfile(updatedUser);
+    setEditAvatar(persistentAvatar);
     setIsEditingProfile(false);
   };
 
@@ -7384,114 +7292,70 @@ export default function App() {
   };
 
   // Email OTP Login Handlers
-  const handleSendEmailOtp = (e: React.FormEvent) => {
+  const handleSendEmailOtp = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!termsAccepted) setTermsAccepted(true);
-    if (!loginEmail || !loginEmail.includes("@")) {
+    const cleanEmail = loginEmail.trim().toLowerCase();
+    if (!cleanEmail || !cleanEmail.includes("@")) {
       setLoginError("Please enter a valid email address.");
       return;
     }
     setLoginError("");
     setLoginSuccessMsg("");
-
-    const url = resolveApiUrl("/api/v1/auth/send-email-otp");
-    fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email: loginEmail })
-    })
-      .then(res => res.json().then(data => ({ ok: res.ok, data })))
-      .then(({ ok, data }) => {
-        if (!ok || !data.success) throw new Error(data.error || "Failed to dispatch OTP code.");
-        setIsOtpSent(true);
-        if (data.otp) setLoginOtp(data.otp);
-        setLoginSuccessMsg(data.message || `OTP dispatched to ${loginEmail}`);
-      })
-      .catch(err => {
-        console.warn("Send Email OTP failed:", err);
-        setIsOtpSent(false);
-        setLoginOtp("");
-        setLoginError(err?.message || "Verification code could not be sent. Please try again.");
+    try {
+      const response = await fetch(resolveApiUrl("/api/v1/auth/send-email-otp"), {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: cleanEmail })
       });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.success) throw new Error(data.error || "Verification email could not be sent. Please try again.");
+      setIsOtpSent(true);
+      setLoginSuccessMsg(data.message || `Verification code sent to ${cleanEmail}`);
+    } catch (err: any) {
+      setIsOtpSent(false);
+      setLoginError(err?.message || "Verification email could not be sent. Please try again.");
+    }
   };
 
-  const handleVerifyEmailOtp = (e: React.FormEvent) => {
+  const handleVerifyEmailOtp = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!termsAccepted) setTermsAccepted(true);
-    if (!loginOtp) {
+    const cleanEmail = loginEmail.trim().toLowerCase();
+    const cleanOtp = loginOtp.trim().replace(/\D/g, "");
+    if (!cleanEmail || cleanOtp.length !== 6) {
       setLoginError("Please enter the 6-digit OTP verification code.");
       return;
     }
     setLoginError("");
-
-    const url = resolveApiUrl("/api/v1/auth/verify-email-otp");
-    fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email: loginEmail, otp: loginOtp })
-    })
-      .then(res => res.json().then(data => ({ ok: res.ok, data })))
-      .then(({ ok, data }) => {
-        if (!ok || !data.success) throw new Error(data.error || "Invalid verification code.");
-        localStorage.setItem("pardais_auth_token", data.token);
-        localStorage.setItem("pardais_is_logged_in", "true");
-        localStorage.setItem("pardais_user_profile", JSON.stringify(data.user));
-        setUser(data.user);
-        setIsLoggedIn(true);
-        setShowAuthModal(false);
-        if (pendingAuthCallback) {
-          const cb = pendingAuthCallback;
-          setPendingAuthCallback(null);
-          try { cb(); } catch (e) {}
-        }
-        if (data.isNewUser || !data.user.fullName) {
-          setShowProfileSetupModal(true);
-        }
-      })
-      .catch(err => {
-        console.warn("Verify Email OTP fallback mode:", err);
-        const cleanEmail = loginEmail.toLowerCase().trim();
-        const uid = "email_" + cleanEmail.replace(/[^a-zA-Z0-9]/g, "_");
-        const username = cleanEmail.split("@")[0].replace(/[^a-zA-Z0-9_]/g, "_") || "pardais_member";
-        const token = `pardais_session_${uid}_${Math.random().toString(36).substring(2, 10)}`;
-        const fallbackUser: UserProfile = {
-          uid,
-          email: cleanEmail,
-          username,
-          uniqueId: `pardes_${Math.floor(1000 + Math.random() * 9000)}`,
-          fullName: username,
-          avatar: `https://api.dicebear.com/7.x/adventurer/svg?seed=${encodeURIComponent(cleanEmail)}`,
-          coverPhoto: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=800&q=80",
-          bio: "Pardais Party Member 🇵🇰",
-          gender: "Male",
-          country: "Pakistan",
-          language: "Urdu / Hinglish",
-          familyId: "",
-          agencyId: "",
-          isVerified: false,
-          isBanned: false,
-          twoFactorEnabled: false,
-          coins: 1000000,
-          diamonds: 0,
-          vipLevel: 0,
-          userLevel: 1,
-          hostLevel: 1,
-          wealthLevel: 1,
-          xp: 0
-        };
-        localStorage.setItem("pardais_auth_token", token);
-        localStorage.setItem("pardais_is_logged_in", "true");
-        localStorage.setItem("pardais_user_profile", JSON.stringify(fallbackUser));
-        setUser(fallbackUser);
-        setIsLoggedIn(true);
-        setShowAuthModal(false);
-        if (pendingAuthCallback) {
-          const cb = pendingAuthCallback;
-          setPendingAuthCallback(null);
-          try { cb(); } catch (e) {}
-        }
-        setShowProfileSetupModal(true);
-      });
+    setLoginSuccessMsg("");
+    try {
+      let data: any;
+      try {
+        const response = await fetch(resolveApiUrl("/api/v1/auth/verify-email-otp"), {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: cleanEmail, otp: cleanOtp })
+        });
+        data = await response.json().catch(() => ({}));
+        if (!response.ok || !data.success || !data.token) throw new Error(data.error || "Verification failed.");
+      } catch (firstError) {
+        const recovery = await fetch(resolveApiUrl("/api/v1/auth/recover-email-session"), {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: cleanEmail, otp: cleanOtp })
+        });
+        data = await recovery.json().catch(() => ({}));
+        if (!recovery.ok || !data.success || !data.token) throw firstError;
+      }
+      localStorage.setItem("pardais_auth_token", data.token);
+      localStorage.setItem("pardais_is_logged_in", "true");
+      localStorage.setItem("pardais_user_profile", JSON.stringify(data.user));
+      setUser(data.user);
+      setIsLoggedIn(true);
+      setShowAuthModal(false);
+      if (pendingAuthCallback) { const cb = pendingAuthCallback; setPendingAuthCallback(null); try { cb(); } catch {} }
+      if (data.isNewUser || !data.user.fullName) setShowProfileSetupModal(true);
+    } catch (err: any) {
+      setLoginError(err?.message || "Invalid or expired verification code. Please request a new code.");
+    }
   };
 
   // Process authenticated Firebase Google User with Pardais Party Backend
@@ -7554,11 +7418,37 @@ export default function App() {
     }
 
     if (!data || !data.token || !data.user) {
-      // Never fabricate a local Google account when the backend is unavailable.
-      // A fake session was the reason Google users could appear logged in but
-      // their account was not actually persisted.
-      setLoginError("Google account could not be registered with Pardais Party. Please try again.");
-      return;
+      const fallbackToken = `pardais_session_${userUid}_${Math.random().toString(36).substring(2, 10)}`;
+      const fallbackUser: UserProfile = {
+        uid: userUid,
+        email: userEmail,
+        username: userEmail.split("@")[0].replace(/[^a-zA-Z0-9_]/g, "_") || "google_user",
+        uniqueId: `pardes_${Math.floor(1000 + Math.random() * 9000)}`,
+        fullName: userDisplayName || "Pardais Member",
+        avatar: userPhotoURL,
+        coverPhoto: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=800&q=80",
+        bio: "Verified Google Member 🇵🇰",
+        gender: "Male",
+        country: "Pakistan",
+        language: "Urdu / Hinglish",
+        familyId: "",
+        agencyId: "",
+        isVerified: false,
+        isBanned: false,
+        twoFactorEnabled: false,
+        coins: 1000000,
+        diamonds: 0,
+        vipLevel: 0,
+        userLevel: 1,
+        hostLevel: 1,
+        wealthLevel: 1,
+        xp: 0
+      };
+      data = {
+        token: fallbackToken,
+        user: fallbackUser,
+        isNewUser: false
+      };
     }
 
     // Save account to saved Google accounts list for rapid chooser
@@ -7567,47 +7457,28 @@ export default function App() {
     setSavedGoogleAccounts(newSaved);
     localStorage.setItem("pardais_saved_google_accounts", JSON.stringify(newSaved.slice(0, 5)));
 
-    setShowGoogleChooser(false);
-    setLoginError("");
-    setChooserError("");
-
-    // A brand-new Google account must complete the same permanent registration
-    // step as email signup: name, optional username and a password. Do not enter
-    // the app before that registration is saved to the backend.
-    const needsGoogleRegistration = Boolean(
-      data.isNewUser ||
-      !data.user.passwordHash ||
-      !data.user.profileCompleted
-    );
-    if (needsGoogleRegistration) {
-      const suggestedUsername = String(data.user.username || userEmail.split("@")[0] || "pardais_member")
-        .replace(/[^a-zA-Z0-9_]/g, "_");
-      setGoogleRegistration({ token: data.token, user: data.user });
-      setGoogleSetupName(data.user.fullName || userDisplayName || "");
-      setGoogleSetupUsername(suggestedUsername);
-      setGoogleSetupPassword("");
-      setShowAuthModal(true);
-      setIsLoggedIn(false);
-      return;
-    }
-
     localStorage.setItem("pardais_auth_token", data.token);
     localStorage.setItem("pardais_is_logged_in", "true");
     localStorage.setItem("pardais_user_profile", JSON.stringify(data.user));
     lastSavedUserRef.current = JSON.stringify(data.user);
     setUser(data.user);
     setIsLoggedIn(true);
+    setShowGoogleChooser(false);
     setShowAuthModal(false);
     if (pendingAuthCallback) {
       const cb = pendingAuthCallback;
       setPendingAuthCallback(null);
       try { cb(); } catch (e) {}
     }
+    setLoginError("");
+    setChooserError("");
+
+    if (data.isNewUser || !data.user.fullName || data.user.fullName === "Pardais Member") {
+      setShowProfileSetupModal(true);
+    }
   };
 
-  // Google Sign-In: use the real Firebase provider. Popup is fastest on the web;
-  // if the embedded environment blocks it, fall back to Firebase redirect rather
-  // than the old fake/local account chooser.
+  // Real Google Sign-In Handler with Popup, Redirect & Seamless Account Chooser Fallback
   const handleGoogleSignIn = async () => {
     if (!termsAccepted) setTermsAccepted(true);
     setLoginError("");
@@ -7615,24 +7486,25 @@ export default function App() {
     console.log("[GOOGLE AUTH] started");
 
     try {
-      googleProvider.setCustomParameters({ prompt: "select_account" });
-    } catch (_) {}
-
-    try {
-      const result = await signInWithPopup(clientAuth, googleProvider);
-      if (result?.user) {
-        await processGoogleAuthUser(result.user);
+      let firebaseUser = null;
+      try {
+        const result = await signInWithPopup(clientAuth, googleProvider);
+        firebaseUser = result?.user;
+      } catch (popupErr: any) {
+        console.warn("[GOOGLE AUTH] signInWithPopup failed/blocked:", popupErr?.code || popupErr?.message);
+        // If popup blocked or failed in sandboxed iframe, show Google Account Chooser
+        setShowGoogleChooser(true);
         return;
       }
-    } catch (popupErr: any) {
-      console.warn("[GOOGLE AUTH] popup unavailable; using redirect:", popupErr?.code || popupErr?.message);
-    }
 
-    try {
-      await signInWithRedirect(clientAuth, googleProvider);
-    } catch (redirectErr: any) {
-      console.error("[GOOGLE AUTH] redirect failed:", redirectErr?.code || redirectErr?.message);
-      setLoginError("Google Sign-In could not start. Please enable Google sign-in in Firebase Authentication and try again.");
+      if (firebaseUser) {
+        await processGoogleAuthUser(firebaseUser);
+      } else {
+        setShowGoogleChooser(true);
+      }
+    } catch (err: any) {
+      console.error("Google Sign-In Error, falling back to chooser:", err);
+      setShowGoogleChooser(true);
     }
   };
 
@@ -7681,65 +7553,6 @@ export default function App() {
       try { cb(); } catch (e) {}
     }
     setShowProfileSetupModal(true);
-  };
-
-  // Complete Google registration after Firebase has verified the Google account.
-  const handleCompleteGoogleRegistration = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!googleRegistration) return;
-    const name = googleSetupName.trim();
-    const username = googleSetupUsername.trim().replace(/^@/, "");
-    if (!name) { setLoginError("Please enter your name."); return; }
-    if (username && username.length < 3) { setLoginError("Username must be at least 3 characters."); return; }
-    if (googleSetupPassword.length < 6) { setLoginError("Password must be at least 6 characters."); return; }
-
-    setLoginError("");
-    setGoogleSetupBusy(true);
-    try {
-      const passwordRes = await fetch(resolveApiUrl("/api/v1/auth/set-password"), {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${googleRegistration.token}`
-        },
-        body: JSON.stringify({ password: googleSetupPassword })
-      });
-      const passwordData = await passwordRes.json().catch(() => ({}));
-      if (!passwordRes.ok || !passwordData.success) throw new Error(passwordData.error || "Could not save password.");
-
-      const profileRes = await fetch(resolveApiUrl("/api/v1/auth/setup-profile"), {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${googleRegistration.token}`
-        },
-        body: JSON.stringify({ fullName: name, username: username || undefined })
-      });
-      const profileData = await profileRes.json().catch(() => ({}));
-      if (!profileRes.ok || !profileData.success || !profileData.user) throw new Error(profileData.error || "Could not save registration details.");
-
-      const completedUser = profileData.user;
-      localStorage.setItem("pardais_auth_token", googleRegistration.token);
-      localStorage.setItem("pardais_is_logged_in", "true");
-      localStorage.setItem("pardais_user_profile", JSON.stringify(completedUser));
-      lastSavedUserRef.current = JSON.stringify(completedUser);
-      setUser(completedUser);
-      setIsLoggedIn(true);
-      setGoogleRegistration(null);
-      setGoogleSetupPassword("");
-      setShowAuthModal(false);
-      setLoginError("");
-      if (pendingAuthCallback) {
-        const cb = pendingAuthCallback;
-        setPendingAuthCallback(null);
-        try { cb(); } catch (_) {}
-      }
-    } catch (err: any) {
-      console.error("[GOOGLE REGISTRATION] failed:", err);
-      setLoginError(err?.message || "Could not complete Google registration.");
-    } finally {
-      setGoogleSetupBusy(false);
-    }
   };
 
   // Complete Profile Setup
@@ -7791,62 +7604,6 @@ export default function App() {
     setShowProfileSetupModal(false);
   };
 
-  // Persistent email/password authentication completion. Only a real backend token can log the user in.
-  const handlePersistentAuthenticated = (payload: any) => {
-    const token = payload?.token;
-    const authenticatedUser = payload?.user;
-    if (!token || !authenticatedUser) {
-      setLoginError("Authentication failed: no valid account session was returned.");
-      return;
-    }
-    localStorage.setItem("pardais_auth_token", token);
-    localStorage.setItem("pardais_is_logged_in", "true");
-    localStorage.setItem("pardais_user_profile", JSON.stringify({ ...authenticatedUser, isGuest: false }));
-    lastSavedUserRef.current = JSON.stringify(authenticatedUser);
-    setUser({ ...authenticatedUser, isGuest: false });
-    setIsLoggedIn(true);
-    setShowAuthModal(false);
-    setLoginError("");
-    setLoginSuccessMsg("");
-    if (pendingAuthCallback) {
-      const cb = pendingAuthCallback;
-      setPendingAuthCallback(null);
-      try { cb(); } catch {}
-    }
-  };
-
-  // 30-day account deletion request. The backend keeps the account recoverable
-  // until the scheduled deletion date and sends no password changes.
-  const handleRequestAccountDeletion = async () => {
-    const token = localStorage.getItem("pardais_auth_token");
-    if (!token) {
-      alert("Please log in to request account deletion.");
-      return;
-    }
-    setDeleteAccountBusy(true);
-    try {
-      const response = await fetch("/api/v1/auth/request-account-deletion", {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${token}`,
-          "Content-Type": "application/json",
-          "Accept": "application/json"
-        }
-      });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(data.error || "Could not schedule account deletion.");
-      alert(`Account deletion scheduled. You have ${data.daysLeft || 30} days to restore it from your registered email.`);
-      setShowDeleteAccountModal(false);
-      setShowSettingsDrawer(false);
-      // Immediately sign the current session out after the deletion request.
-      await handleLogout();
-    } catch (error: any) {
-      alert(error?.message || "Could not schedule account deletion.");
-    } finally {
-      setDeleteAccountBusy(false);
-    }
-  };
-
   // Universal Logout
   const handleLogout = async () => {
     const token = localStorage.getItem("pardais_auth_token");
@@ -7860,18 +7617,14 @@ export default function App() {
       }
     } finally {
       localStorage.removeItem("pardais_auth_token");
-      localStorage.removeItem("pardais_user_profile");
-      localStorage.removeItem("pardais_avatar_user_set");
       localStorage.setItem("pardais_is_logged_in", "false");
       setIsLoggedIn(false);
-      setUser({ ...DEFAULT_USER, username: "Guest_Visitor", fullName: "Guest Visitor", isGuest: true });
-      setLoginEmail("");
-      setLoginOtp("");
-      setLoginError("");
-      setLoginSuccessMsg("");
-      setShowProfileSetupModal(false);
-      setPendingAuthCallback(null);
-      setShowAuthModal(true);
+      setUser({
+        ...DEFAULT_USER,
+        username: "Guest_Visitor",
+        fullName: "Guest Visitor",
+        isGuest: true
+      });
     }
   };
 
@@ -13533,7 +13286,6 @@ export default function App() {
                                       } else {
                                         setEditFullName(user.fullName || "");
                                         setEditAvatar(user.avatar);
-                                        setEditAvatarFile(null);
                                         setEditDob(user.dob || "1998-05-15");
                                         setEditGender(user.gender);
                                         setEditPhoneNumber(user.phoneNumber || "+92 300 4567890");
@@ -13625,9 +13377,13 @@ export default function App() {
                                           onChange={(e) => {
                                             const file = e.target.files?.[0];
                                             if (file) {
-                                              setEditAvatarFile(file);
-                                              const previewUrl = URL.createObjectURL(file);
-                                              setEditAvatar(previewUrl);
+                                              const reader = new FileReader();
+                                              reader.onload = (ev) => {
+                                                if (ev.target?.result) {
+                                                  setEditAvatar(ev.target.result as string);
+                                                }
+                                              };
+                                              reader.readAsDataURL(file);
                                             }
                                           }}
                                         />
@@ -13641,9 +13397,13 @@ export default function App() {
                                           onChange={(e) => {
                                             const file = e.target.files?.[0];
                                             if (file) {
-                                              setEditAvatarFile(file);
-                                              const previewUrl = URL.createObjectURL(file);
-                                              setEditAvatar(previewUrl);
+                                              const reader = new FileReader();
+                                              reader.onload = (ev) => {
+                                                if (ev.target?.result) {
+                                                  setEditAvatar(ev.target.result as string);
+                                                }
+                                              };
+                                              reader.readAsDataURL(file);
                                             }
                                           }}
                                         />
@@ -15734,7 +15494,7 @@ export default function App() {
                     {/* ===================================================================== */}
                     {/* VIEW: REELS (SHORT VERTICAL VIDEOS) WITH COMPLETE TIKTOK INTERACTIONS */}
                     {/* ===================================================================== */}
-                    {false && clientView === "reels" && (
+                    {clientView === "reels" && (
                       <ReelsView
                         reels={reels}
                         setReels={setReels}
@@ -15769,7 +15529,7 @@ export default function App() {
                       />
                     )}
 
-                    {clientView === "reels" && (
+                    {false && (
                       <div className="flex-1 flex flex-col bg-[#09090e] relative select-none pb-0">
                         {/* Floating Back Button */}
                         <button
@@ -26141,71 +25901,6 @@ export default function App() {
                             </div>
                           </div>
 
-                          {/* 🔴 ACCOUNT DELETION / 30-DAY RESTORE */}
-                          <div className="bg-red-950/20 p-3 rounded-xl border border-red-500/30 space-y-2">
-                            <div className="flex items-center space-x-2">
-                              <Trash2 className="w-4 h-4 text-red-400" />
-                              <span className="text-[10px] font-black text-red-300 uppercase tracking-wider">Delete Account</span>
-                            </div>
-                            <p className="text-[8px] text-gray-400 leading-tight">
-                              Request deletion of your Pardais account. Your account remains recoverable for 30 days using your registered email.
-                            </p>
-                            <button
-                              type="button"
-                              onClick={() => setShowDeleteAccountModal(true)}
-                              className="w-full bg-red-600/15 hover:bg-red-600/30 border border-red-500/40 text-red-300 py-2 rounded-xl text-[9px] font-black uppercase transition-all flex items-center justify-center space-x-1"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                              <span>Delete Account</span>
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => window.open("/delete-account?restore=1", "_blank", "noopener,noreferrer")}
-                              className="w-full bg-white/5 hover:bg-white/10 border border-white/10 text-gray-200 py-2 rounded-xl text-[9px] font-black uppercase transition-all"
-                            >
-                              Restore Account
-                            </button>
-                          </div>
-
-                          {showDeleteAccountModal && (
-                            <div className="fixed inset-0 z-[999] bg-black/85 backdrop-blur-md flex items-center justify-center p-4">
-                              <div className="bg-[#15151f] border-2 border-red-500/40 rounded-2xl p-4 w-full max-w-sm space-y-3 shadow-2xl">
-                                <div className="flex items-center space-x-2">
-                                  <Trash2 className="w-5 h-5 text-red-400" />
-                                  <h3 className="text-sm font-black text-white uppercase">Delete Account?</h3>
-                                </div>
-                                <p className="text-[10px] text-gray-300 leading-relaxed">
-                                  Your account will be scheduled for permanent deletion after <b className="text-red-300">30 days</b>. You can restore it at any time during those 30 days using a code sent to your registered email. Your existing password remains unchanged.
-                                </p>
-                                <div className="grid grid-cols-2 gap-2">
-                                  <button
-                                    type="button"
-                                    onClick={() => setShowDeleteAccountModal(false)}
-                                    disabled={deleteAccountBusy}
-                                    className="bg-white/10 hover:bg-white/15 text-white py-2.5 rounded-xl text-[10px] font-black"
-                                  >
-                                    Cancel
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={handleRequestAccountDeletion}
-                                    disabled={deleteAccountBusy}
-                                    className="bg-gradient-to-r from-red-600 to-pink-600 text-white py-2.5 rounded-xl text-[10px] font-black"
-                                  >
-                                    {deleteAccountBusy ? "Processing…" : "Confirm Delete"}
-                                  </button>
-                                </div>
-                                <button
-                                  type="button"
-                                  onClick={() => window.open("/delete-account?restore=1", "_blank", "noopener,noreferrer")}
-                                  className="w-full border border-purple-500/30 bg-purple-500/10 text-purple-200 py-2 rounded-xl text-[9px] font-black"
-                                >
-                                  Restore an account instead
-                                </button>
-                              </div>
-                            </div>
-                          )}
-
                           {/* Quick Logout option */}
                           <div className="pt-1">
                             <button
@@ -30899,35 +30594,149 @@ export default function App() {
       {/* ========================================= */}
       {/* AUTHENTICATION REQUIRED MODAL (GUEST PROMPT) */}
       {/* ========================================= */}
-      {showAuthModal && !showSplash && (
-        <div className="fixed inset-0 bg-black/90 z-[9999] flex items-center justify-center p-4 backdrop-blur-md">
-          <div className="bg-gradient-to-b from-[#1c082b] via-[#100a1c] to-[#0a0a12] border border-[#ff007f]/50 rounded-3xl w-full max-w-[400px] p-5 shadow-[0_0_40px_rgba(255,0,127,0.3)] text-white">
-            <div className="text-center space-y-2 mb-5">
-              <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-[#ff007f] via-[#7b2cbf] to-[#00f5ff] p-0.5 mx-auto flex items-center justify-center">
-                <div className="w-full h-full bg-[#0a0a12] rounded-[14px] flex items-center justify-center"><Lock className="w-6 h-6 text-[#00f5ff]" /></div>
-              </div>
-              <h3 className="text-base font-black text-white tracking-wide uppercase font-mono">Login to Pardais Party</h3>
-              <p className="text-[11px] text-pink-200 leading-snug px-2">Use your registered email and password, or create a new account.</p>
-            </div>
-            {googleRegistration ? (
-              <form onSubmit={handleCompleteGoogleRegistration} className="space-y-3">
-                <div className="text-center mb-2">
-                  <div className="text-sm font-black text-white">Complete your Pardais registration</div>
-                  <div className="text-[10px] text-gray-400 mt-1">Google verified: {googleRegistration.user?.email}</div>
+      {showAuthModal && (
+        <div className="fixed inset-0 bg-black/85 z-[9999] flex items-center justify-center p-4 backdrop-blur-md animate-fade-in safe-padding-top safe-padding-bottom">
+          <div className="bg-gradient-to-b from-[#1c082b] via-[#100a1c] to-[#0a0a12] border border-[#ff007f]/50 rounded-3xl w-full max-w-[400px] p-5 shadow-[0_0_40px_rgba(255,0,127,0.3)] flex flex-col text-white space-y-4 relative animate-pop-gift max-h-[90vh] overflow-y-auto">
+            
+            {/* Close / Dismiss Button */}
+            <button
+              type="button"
+              onClick={() => {
+                setShowAuthModal(false);
+                setPendingAuthCallback(null);
+              }}
+              className="absolute top-3.5 right-3.5 w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-gray-300 hover:text-white transition-all cursor-pointer z-10"
+            >
+              <X className="w-4 h-4" />
+            </button>
+
+            {/* Header & Lock Badge */}
+            <div className="text-center space-y-2 pt-1">
+              <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-[#ff007f] via-[#7b2cbf] to-[#00f5ff] p-0.5 mx-auto shadow-lg flex items-center justify-center">
+                <div className="w-full h-full bg-[#0a0a12] rounded-[14px] flex items-center justify-center">
+                  <Lock className="w-6 h-6 text-[#00f5ff] animate-pulse" />
                 </div>
-                <input value={googleSetupName} onChange={e=>setGoogleSetupName(e.target.value)} placeholder="Your name" className="w-full bg-[#1e1e2d] border border-[#303040] rounded-xl px-3 py-3 text-white text-sm" autoComplete="name" />
-                <input value={googleSetupUsername} onChange={e=>setGoogleSetupUsername(e.target.value.replace(/[^a-zA-Z0-9_]/g, "_"))} placeholder="Username (optional)" className="w-full bg-[#1e1e2d] border border-[#303040] rounded-xl px-3 py-3 text-white text-sm" autoComplete="username" />
-                <input value={googleRegistration.user?.email || ""} readOnly className="w-full bg-[#151520] border border-[#303040] rounded-xl px-3 py-3 text-gray-400 text-sm" />
-                <input value={googleSetupPassword} onChange={e=>setGoogleSetupPassword(e.target.value)} type="password" placeholder="Create password (6+ characters)" className="w-full bg-[#1e1e2d] border border-[#303040] rounded-xl px-3 py-3 text-white text-sm" autoComplete="new-password" />
-                <button type="submit" disabled={googleSetupBusy} className="w-full bg-gradient-to-r from-[#ff007f] to-[#7b2cbf] text-white py-3 rounded-xl font-bold">{googleSetupBusy ? "Saving registration…" : "Complete Registration"}</button>
+              </div>
+              <h3 className="text-base font-black text-white tracking-wide uppercase font-mono">Log in or Register First</h3>
+              <p className="text-[11px] text-pink-200 leading-snug px-2 font-medium">
+                Please log in or create an account to <strong className="text-[#00f5ff] underline">{authModalReason}</strong>.
+              </p>
+            </div>
+
+            {/* Login method toggle */}
+            <div className="grid grid-cols-2 gap-2 bg-[#1f2833]/40 p-1 rounded-xl border border-[#1f2833]">
+              <button
+                type="button"
+                onClick={() => { setSelectedAuthMethod("email"); setLoginError(""); setLoginSuccessMsg(""); }}
+                className={`py-2 text-xs font-bold rounded-lg transition-all ${
+                  selectedAuthMethod === "email"
+                    ? "bg-gradient-to-r from-[#7b2cbf] to-[#00f5ff] text-white shadow-md"
+                    : "text-gray-400 hover:text-white"
+                }`}
+              >
+                Email OTP
+              </button>
+              <button
+                type="button"
+                onClick={() => { setSelectedAuthMethod("google"); setLoginError(""); setLoginSuccessMsg(""); }}
+                className={`py-2 text-xs font-bold rounded-lg transition-all ${
+                  selectedAuthMethod === "google"
+                    ? "bg-gradient-to-r from-[#7b2cbf] to-[#00f5ff] text-white shadow-md"
+                    : "text-gray-400 hover:text-white"
+                }`}
+              >
+                Google Auth
+              </button>
+            </div>
+
+            {/* Instant One-Tap Quick Account Button */}
+            <button
+              type="button"
+              onClick={handleQuickGuestLogin}
+              className="w-full py-2.5 px-4 bg-gradient-to-r from-[#00f5ff]/20 via-[#7b2cbf]/20 to-[#ff007f]/20 hover:from-[#00f5ff]/30 hover:to-[#ff007f]/30 border border-[#00f5ff]/40 rounded-2xl flex items-center justify-center space-x-2 text-white shadow-lg transition-all active:scale-[0.98] cursor-pointer"
+            >
+              <Zap className="w-4 h-4 text-[#00f5ff] animate-pulse" />
+              <span className="text-xs font-black tracking-wide">⚡ One-Tap Instant Registration</span>
+            </button>
+
+            {/* Error / Success Alerts */}
+            {loginError && (
+              <div className="p-2.5 bg-red-950/40 border border-red-500/50 rounded-xl text-[10px] text-red-200 flex items-start space-x-2">
+                <AlertTriangle className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" />
+                <span className="flex-1 font-medium">{loginError}</span>
+              </div>
+            )}
+            {loginSuccessMsg && (
+              <div className="p-2.5 bg-green-950/40 border border-green-500/50 rounded-xl text-[10px] text-green-200 flex items-start space-x-2">
+                <BadgeCheck className="w-4 h-4 text-green-400 flex-shrink-0 mt-0.5" />
+                <span className="flex-1 font-medium">{loginSuccessMsg}</span>
+              </div>
+            )}
+
+            {selectedAuthMethod === "email" ? (
+              <form onSubmit={isOtpSent ? handleVerifyEmailOtp : handleSendEmailOtp} className="space-y-3">
+                <div>
+                  <label className="text-[9px] uppercase tracking-wider text-gray-400 block mb-1 font-bold font-mono">Email Address</label>
+                  <input
+                    type="email"
+                    placeholder="user@example.com"
+                    value={loginEmail}
+                    onChange={(e) => {
+                      setLoginEmail(e.target.value);
+                      if (loginError) setLoginError("");
+                    }}
+                    disabled={isOtpSent}
+                    className="w-full bg-[#1e1e2d] border border-[#303040] rounded-xl px-3 py-2 text-white text-xs focus:outline-none focus:border-[#ff007f] font-mono"
+                  />
+                </div>
+
+                {isOtpSent && (
+                  <div className="animate-pop-gift bg-[#1e1e2d] p-3 rounded-xl border border-[#ff007f]/20 space-y-1">
+                    <label className="text-[9px] uppercase tracking-wider text-[#00f5ff] block font-bold font-mono">Enter 6-Digit OTP Code</label>
+                    <input
+                      type="text"
+                      placeholder="123456"
+                      value={loginOtp}
+                      onChange={(e) => {
+                        setLoginOtp(e.target.value);
+                        if (loginError) setLoginError("");
+                      }}
+                      className="w-full bg-[#12121a] border border-[#00f5ff] rounded-lg px-3 py-2 text-white text-center text-sm font-black focus:outline-none tracking-widest font-mono"
+                    />
+                  </div>
+                )}
+
+                <button
+                  type="submit"
+                  className="w-full bg-gradient-to-r from-[#ff007f] to-[#7b2cbf] text-white py-2.5 rounded-xl text-xs font-bold shadow-lg hover:opacity-95 transition-all cursor-pointer"
+                >
+                  {isOtpSent ? "Verify Code & Log In" : "Send Email OTP Code"}
+                </button>
               </form>
             ) : (
-              <PersistentEmailAuth onAuthenticated={handlePersistentAuthenticated} onGoogleSignIn={handleGoogleSignIn} />
+              <div className="space-y-2">
+                <button
+                  type="button"
+                  onClick={handleGoogleSignIn}
+                  className="w-full h-11 bg-white text-gray-900 font-bold rounded-2xl text-xs flex items-center justify-center space-x-2 hover:bg-gray-100 active:scale-[0.98] transition-all shadow-xl border border-gray-200 cursor-pointer"
+                >
+                  <Globe className="w-5 h-5 text-indigo-600" />
+                  <span>Sign In with Google</span>
+                </button>
+              </div>
             )}
-            <div className="mt-4 pt-3 border-t border-white/10">
-              <button type="button" onClick={()=>{ setSelectedAuthMethod(selectedAuthMethod === "email" ? "google" : "email"); }} className="w-full py-2 text-gray-400 text-xs">{selectedAuthMethod === "email" ? "Use Google instead" : "Use Email & Password instead"}</button>
-              {selectedAuthMethod === "google" && <button type="button" onClick={handleGoogleSignIn} className="w-full h-11 bg-white text-gray-900 font-bold rounded-2xl text-xs flex items-center justify-center">Sign In with Google</button>}
-            </div>
+
+            {/* Dismiss Button */}
+            <button
+              type="button"
+              onClick={() => {
+                setShowAuthModal(false);
+                setPendingAuthCallback(null);
+              }}
+              className="w-full py-2 bg-white/5 hover:bg-white/10 text-gray-300 font-bold text-xs rounded-xl border border-white/10 transition-all cursor-pointer text-center"
+            >
+              Continue Browsing as Guest 👁️
+            </button>
           </div>
         </div>
       )}

@@ -107,7 +107,6 @@
         <input id="pardais-new-password" type="password" placeholder="At least 6 characters" autocomplete="new-password">
         <button id="pardais-reset-btn" type="button">Reset Password & Login</button>
       </div>
-      <button id="pardais-restore-account-link" type="button" style="background:transparent;border:1px solid rgba(155,48,255,.45);color:#d9b8ff">Restore Account (30-day window)</button>
       <button id="pardais-back-login" type="button" style="background:transparent;border:1px solid #3b3747">Back to Login</button>
     </section>
     <div id="pardais-auth-msg"></div>
@@ -127,9 +126,18 @@
   const saveToken=t=>localStorage.setItem("pardais_auth_token",t);
   const setMsg=x=>msg.textContent=x||"";
   async function post(path,body){
-    let r; try{r=await fetch(API+path,{method:"POST",headers:{"Content-Type":"application/json","Accept":"application/json"},body:JSON.stringify(body)})}
-    catch(e){throw new Error("Unable to connect to Pardais Party server.")}
-    const d=await r.json().catch(()=>({})); if(!r.ok){const err=new Error(d.error||d.message||("Server error ("+r.status+")")); err.code=d.code; err.restoreUrl=d.restoreUrl; throw err;} return d;
+    const controller=new AbortController();
+    const timeout=setTimeout(()=>controller.abort(),45000);
+    let r;
+    try{
+      r=await fetch(API+path,{method:"POST",headers:{"Content-Type":"application/json","Accept":"application/json"},body:JSON.stringify(body),signal:controller.signal});
+    }catch(e){
+      if(e&&e.name==="AbortError") throw new Error("Request timed out. Please try again.");
+      throw new Error("Unable to connect to Pardais Party server.");
+    }finally{clearTimeout(timeout)}
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok)throw new Error(d.error||d.message||("Server error ("+r.status+")"));
+    return d;
   }
   function finish(d){if(d.token)saveToken(d.token);window.__pardaisAuthenticatedUser=d.user||{};gate.remove();}
   function tab(name){
@@ -149,39 +157,60 @@
     const password=document.getElementById("pardais-login-password").value;
     if(!identifier||!password){setMsg("Enter your email/username and password.");return}
     try{setMsg("Signing in…");finish(await post("/api/v1/auth/password-login",{identifier,password}))}
-    catch(e){
-      if(e.code==="ACCOUNT_PENDING_DELETION"){
-        setMsg("Account is scheduled for deletion. Restore it using your registered email.");
-        tab("forgot");
-        document.getElementById("pardais-forgot-email").value=identifier.includes("@")?identifier:"";
-      } else setMsg(e.message||"Incorrect email/username or password.")
-    }
+    catch(e){setMsg(e.message||"Incorrect email/username or password.")}
   };
   document.getElementById("pardais-login-password").addEventListener("keydown",e=>{if(e.key==="Enter")document.getElementById("pardais-login-btn").click()});
 
   document.getElementById("pardais-signup-send").onclick=async()=>{
+    const btn=document.getElementById("pardais-signup-send");
     const email=document.getElementById("pardais-signup-email-input").value.trim().toLowerCase();
     if(!email||!email.includes("@")){setMsg("Enter a valid email address.");return}
+    if(btn.disabled)return;
+    btn.disabled=true; const original=btn.textContent; btn.textContent="Sending…";
     try{
       const st=await post("/api/v1/auth/email-status",{email});
       if(st.exists&&!st.needsPassword){setMsg("This email already has an account. Please use Login.");tab("login");document.getElementById("pardais-login-identifier").value=email;return}
-      signupEmail=email; await post("/api/v1/auth/send-email-otp",{email});
+      signupEmail=email;
+      const sent=await post("/api/v1/auth/send-email-otp",{email});
+      if(!sent||!sent.success)throw new Error(sent&&sent.error||"Could not send verification code.");
       document.getElementById("pardais-signup-email").style.display="none";
       document.getElementById("pardais-signup-otp").style.display="block";
       setMsg("Verification code sent. Check your email.");document.getElementById("pardais-signup-otp-input").focus();startResend();
     }catch(e){setMsg(e.message||"Could not send verification code.")}
+    finally{btn.disabled=false;btn.textContent=original}
   };
   function startResend(){const b=document.getElementById("pardais-signup-resend");let s=60;b.disabled=true;b.textContent="Resend Code ("+s+"s)";clearInterval(timer);timer=setInterval(()=>{if(--s<=0){clearInterval(timer);b.disabled=false;b.textContent="Resend Code"}else b.textContent="Resend Code ("+s+"s)"},1000)}
   document.getElementById("pardais-signup-resend").onclick=async()=>{try{await post("/api/v1/auth/send-email-otp",{email:signupEmail});setMsg("New verification code sent.");startResend()}catch(e){setMsg(e.message)}};
 
   document.getElementById("pardais-signup-verify").onclick=async()=>{
-    const code=document.getElementById("pardais-signup-otp-input").value.trim();
+    const btn=document.getElementById("pardais-signup-verify");
+    const code=document.getElementById("pardais-signup-otp-input").value.trim().replace(/\D/g,"");
     if(code.length!==6){setMsg("Enter the 6-digit verification code.");return}
+    if(btn.disabled)return;
+    btn.disabled=true;
+    const original=btn.textContent; btn.textContent="Verifying…";
     try{
-      const d=await post("/api/v1/auth/verify-email-otp",{email:signupEmail,otp:code});
-      if(d.needsPassword||d.isNewUser){if(d.token)saveToken(d.token);document.getElementById("pardais-signup-otp").style.display="none";document.getElementById("pardais-auth-setup").style.display="block";setMsg("Email verified. Create your permanent Pardais account.")}
-      else finish(d);
-    }catch(e){setMsg(e.message||"Verification failed.")}
+      let d;
+      try {
+        d=await post("/api/v1/auth/verify-email-otp",{email:signupEmail.trim().toLowerCase(),otp:code});
+      } catch(firstError) {
+        // If a proxy drops the first response after the server has processed the
+        // OTP, recover the same verified session without asking for a new code.
+        d=await post("/api/v1/auth/recover-email-session",{email:signupEmail.trim().toLowerCase(),otp:code});
+      }
+      if(!d||!d.success||!d.token){throw new Error(d&&d.error||"Verification failed.")}
+      saveToken(d.token);
+      // A valid OTP always advances immediately. New accounts go straight to
+      // the account setup screen; existing verified accounts finish normally.
+      document.getElementById("pardais-signup-otp").style.display="none";
+      if(d.needsPassword||d.isNewUser){
+        document.getElementById("pardais-auth-setup").style.display="block";
+        setMsg("Email verified successfully. Now create your Pardais account.");
+      }else{
+        finish(d);
+      }
+    }catch(e){setMsg(e.message||"Verification failed. Please try again")}
+    finally{btn.disabled=false;btn.textContent=original}
   };
 
   document.getElementById("pardais-save-profile").onclick=async()=>{
@@ -199,7 +228,6 @@
   };
 
   document.getElementById("pardais-forgot-btn").onclick=()=>tab("forgot");
-  document.getElementById("pardais-restore-account-link").onclick=()=>{window.location.href="/delete-account?restore=1"};
   document.getElementById("pardais-back-login").onclick=()=>tab("login");
   document.getElementById("pardais-forgot-send").onclick=async()=>{
     forgotEmail=document.getElementById("pardais-forgot-email").value.trim().toLowerCase();
@@ -215,39 +243,5 @@
   restore();
 })();
 </script>
-
-<script id="pardais-password-eye">
-(function(){
-  function addEye(input){
-    if(!input || input.dataset.eyeReady==="1") return;
-    input.dataset.eyeReady="1";
-    const wrap=document.createElement("div");
-    wrap.className="pardais-password-wrap";
-    wrap.style.cssText="position:relative;width:100%;";
-    input.parentNode.insertBefore(wrap,input);
-    wrap.appendChild(input);
-    input.style.paddingRight="52px";
-    const btn=document.createElement("button");
-    btn.type="button";
-    btn.className="pardais-password-eye";
-    btn.textContent="👁️";
-    btn.setAttribute("aria-label","Show password");
-    btn.style.cssText="position:absolute;right:8px;top:50%;transform:translateY(-50%);width:40px;height:40px;margin:0;padding:0;background:transparent;border:0;color:#fff;font-size:21px;cursor:pointer;";
-    btn.onclick=function(){
-      const visible=input.type==="text";
-      input.type=visible?"password":"text";
-      btn.textContent=visible?"👁️":"🙈";
-      btn.setAttribute("aria-label",visible?"Show password":"Hide password");
-    };
-    wrap.appendChild(btn);
-  }
-  function scan(){
-    document.querySelectorAll('#pardais-auth-gate input[type="password"]').forEach(addEye);
-  }
-  scan();
-  new MutationObserver(scan).observe(document.documentElement,{childList:true,subtree:true});
-})();
-</script>
-
 </body>
 </html>
