@@ -107,6 +107,7 @@
         <input id="pardais-new-password" type="password" placeholder="At least 6 characters" autocomplete="new-password">
         <button id="pardais-reset-btn" type="button">Reset Password & Login</button>
       </div>
+      <button id="pardais-restore-account-link" type="button" style="background:transparent;border:1px solid rgba(155,48,255,.45);color:#d9b8ff">Restore Account (30-day window)</button>
       <button id="pardais-back-login" type="button" style="background:transparent;border:1px solid #3b3747">Back to Login</button>
     </section>
     <div id="pardais-auth-msg"></div>
@@ -128,7 +129,7 @@
   async function post(path,body){
     let r; try{r=await fetch(API+path,{method:"POST",headers:{"Content-Type":"application/json","Accept":"application/json"},body:JSON.stringify(body)})}
     catch(e){throw new Error("Unable to connect to Pardais Party server.")}
-    const d=await r.json().catch(()=>({})); if(!r.ok)throw new Error(d.error||d.message||("Server error ("+r.status+")")); return d;
+    const d=await r.json().catch(()=>({})); if(!r.ok){const err=new Error(d.error||d.message||("Server error ("+r.status+")")); err.code=d.code; err.restoreUrl=d.restoreUrl; throw err;} return d;
   }
   function finish(d){if(d.token)saveToken(d.token);window.__pardaisAuthenticatedUser=d.user||{};gate.remove();}
   function tab(name){
@@ -148,7 +149,13 @@
     const password=document.getElementById("pardais-login-password").value;
     if(!identifier||!password){setMsg("Enter your email/username and password.");return}
     try{setMsg("Signing in…");finish(await post("/api/v1/auth/password-login",{identifier,password}))}
-    catch(e){setMsg(e.message||"Incorrect email/username or password.")}
+    catch(e){
+      if(e.code==="ACCOUNT_PENDING_DELETION"){
+        setMsg("Account is scheduled for deletion. Restore it using your registered email.");
+        tab("forgot");
+        document.getElementById("pardais-forgot-email").value=identifier.includes("@")?identifier:"";
+      } else setMsg(e.message||"Incorrect email/username or password.")
+    }
   };
   document.getElementById("pardais-login-password").addEventListener("keydown",e=>{if(e.key==="Enter")document.getElementById("pardais-login-btn").click()});
 
@@ -192,6 +199,7 @@
   };
 
   document.getElementById("pardais-forgot-btn").onclick=()=>tab("forgot");
+  document.getElementById("pardais-restore-account-link").onclick=()=>{window.location.href="/delete-account?restore=1"};
   document.getElementById("pardais-back-login").onclick=()=>tab("login");
   document.getElementById("pardais-forgot-send").onclick=async()=>{
     forgotEmail=document.getElementById("pardais-forgot-email").value.trim().toLowerCase();

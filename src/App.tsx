@@ -1314,6 +1314,9 @@ export default function App() {
   const [showNotifications, setShowNotifications] = useState<boolean>(false);
   const [hasUnreadNotifications, setHasUnreadNotifications] = useState<boolean>(true);
   const [showSettingsDrawer, setShowSettingsDrawer] = useState<boolean>(false);
+  const [showDeleteAccountModal, setShowDeleteAccountModal] = useState<boolean>(false);
+  const [deleteAccountBusy, setDeleteAccountBusy] = useState<boolean>(false);
+  const [deleteAccountSchedule, setDeleteAccountSchedule] = useState<string | null>(null);
 
   // Android App Conversion & PWA Install State
   const [showAndroidInstallModal, setShowAndroidInstallModal] = useState<boolean>(false);
@@ -7753,6 +7756,38 @@ export default function App() {
       const cb = pendingAuthCallback;
       setPendingAuthCallback(null);
       try { cb(); } catch {}
+    }
+  };
+
+  // 30-day account deletion request. The backend keeps the account recoverable
+  // until the scheduled deletion date and sends no password changes.
+  const handleRequestAccountDeletion = async () => {
+    const token = localStorage.getItem("pardais_auth_token");
+    if (!token) {
+      alert("Please log in to request account deletion.");
+      return;
+    }
+    setDeleteAccountBusy(true);
+    try {
+      const response = await fetch("/api/v1/auth/request-account-deletion", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${token}`,
+          "Content-Type": "application/json",
+          "Accept": "application/json"
+        }
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || "Could not schedule account deletion.");
+      alert(`Account deletion scheduled. You have ${data.daysLeft || 30} days to restore it from your registered email.`);
+      setShowDeleteAccountModal(false);
+      setShowSettingsDrawer(false);
+      // Immediately sign the current session out after the deletion request.
+      await handleLogout();
+    } catch (error: any) {
+      alert(error?.message || "Could not schedule account deletion.");
+    } finally {
+      setDeleteAccountBusy(false);
     }
   };
 
@@ -26049,6 +26084,71 @@ export default function App() {
                               })}
                             </div>
                           </div>
+
+                          {/* 🔴 ACCOUNT DELETION / 30-DAY RESTORE */}
+                          <div className="bg-red-950/20 p-3 rounded-xl border border-red-500/30 space-y-2">
+                            <div className="flex items-center space-x-2">
+                              <Trash2 className="w-4 h-4 text-red-400" />
+                              <span className="text-[10px] font-black text-red-300 uppercase tracking-wider">Delete Account</span>
+                            </div>
+                            <p className="text-[8px] text-gray-400 leading-tight">
+                              Request deletion of your Pardais account. Your account remains recoverable for 30 days using your registered email.
+                            </p>
+                            <button
+                              type="button"
+                              onClick={() => setShowDeleteAccountModal(true)}
+                              className="w-full bg-red-600/15 hover:bg-red-600/30 border border-red-500/40 text-red-300 py-2 rounded-xl text-[9px] font-black uppercase transition-all flex items-center justify-center space-x-1"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                              <span>Delete Account</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => window.open("/delete-account?restore=1", "_blank", "noopener,noreferrer")}
+                              className="w-full bg-white/5 hover:bg-white/10 border border-white/10 text-gray-200 py-2 rounded-xl text-[9px] font-black uppercase transition-all"
+                            >
+                              Restore Account
+                            </button>
+                          </div>
+
+                          {showDeleteAccountModal && (
+                            <div className="fixed inset-0 z-[999] bg-black/85 backdrop-blur-md flex items-center justify-center p-4">
+                              <div className="bg-[#15151f] border-2 border-red-500/40 rounded-2xl p-4 w-full max-w-sm space-y-3 shadow-2xl">
+                                <div className="flex items-center space-x-2">
+                                  <Trash2 className="w-5 h-5 text-red-400" />
+                                  <h3 className="text-sm font-black text-white uppercase">Delete Account?</h3>
+                                </div>
+                                <p className="text-[10px] text-gray-300 leading-relaxed">
+                                  Your account will be scheduled for permanent deletion after <b className="text-red-300">30 days</b>. You can restore it at any time during those 30 days using a code sent to your registered email. Your existing password remains unchanged.
+                                </p>
+                                <div className="grid grid-cols-2 gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => setShowDeleteAccountModal(false)}
+                                    disabled={deleteAccountBusy}
+                                    className="bg-white/10 hover:bg-white/15 text-white py-2.5 rounded-xl text-[10px] font-black"
+                                  >
+                                    Cancel
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={handleRequestAccountDeletion}
+                                    disabled={deleteAccountBusy}
+                                    className="bg-gradient-to-r from-red-600 to-pink-600 text-white py-2.5 rounded-xl text-[10px] font-black"
+                                  >
+                                    {deleteAccountBusy ? "Processing…" : "Confirm Delete"}
+                                  </button>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => window.open("/delete-account?restore=1", "_blank", "noopener,noreferrer")}
+                                  className="w-full border border-purple-500/30 bg-purple-500/10 text-purple-200 py-2 rounded-xl text-[9px] font-black"
+                                >
+                                  Restore an account instead
+                                </button>
+                              </div>
+                            </div>
+                          )}
 
                           {/* Quick Logout option */}
                           <div className="pt-1">

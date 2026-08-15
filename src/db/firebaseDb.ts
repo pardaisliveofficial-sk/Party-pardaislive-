@@ -238,6 +238,19 @@ export async function getPersistedUserForEmail(email: string): Promise<any | nul
   }
 }
 
+export async function getPersistedEmailRegistry(email: string): Promise<any | null> {
+  const cleanEmail = String(email || "").toLowerCase().trim();
+  if (!cleanEmail) return null;
+  const emailKey = cleanEmail.replace(/[^a-zA-Z0-9]/g, "_");
+  try {
+    const snap = await getDoc(doc(db, "emailRegistry", emailKey));
+    return snap.exists() ? snap.data() : null;
+  } catch (err) {
+    handleQuotaError(err, `get email registry ${emailKey}`);
+    return null;
+  }
+}
+
 export async function persistEmailRegistry(email: string, user: any): Promise<boolean> {
   const cleanEmail = String(email || "").toLowerCase().trim();
   if (!cleanEmail || !user?.uid) return false;

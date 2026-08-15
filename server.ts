@@ -3,7 +3,7 @@ import path from "path";
 import dotenv from "dotenv";
 import fs from "fs";
 import sharp from "sharp";
-import { S3Client, PutObjectCommand, GetObjectCommand, ListObjectsV2Command } from "@aws-sdk/client-s3";
+import { S3Client, PutObjectCommand, GetObjectCommand, ListObjectsV2Command, DeleteObjectCommand } from "@aws-sdk/client-s3";
 import multer from "multer";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
@@ -24,6 +24,7 @@ import {
   getPersistedSession,
   getPersistedUserForSession,
   getPersistedUserForEmail,
+  getPersistedEmailRegistry,
   persistEmailRegistry,
   persistAuthChallenge,
   getPersistedAuthChallenge,
@@ -112,7 +113,10 @@ async function loadDatabase() {
       try {
         const users = Array.isArray(dbData.users) ? dbData.users : [];
         for (const existingUser of users) {
-          if (existingUser?.email && existingUser?.uid) {
+          // Only a completed email/password account is permanently registered.
+          // Google-only users and incomplete OTP/profile attempts must never
+          // reserve an email address for email signup.
+          if (existingUser?.email && existingUser?.uid && isCompletedEmailAccount(existingUser)) {
             await persistEmailRegistry(String(existingUser.email), existingUser);
           }
         }
@@ -738,13 +742,25 @@ async function persistUserDurably(user: any): Promise<boolean> {
     const email = String(user.email).toLowerCase().trim();
     user.email = email;
     user.registeredAt = user.registeredAt || new Date().toISOString();
-    const [usernameSaved, uidSaved, emailSaved, registrySaved] = await Promise.all([
+
+    // IMPORTANT:
+    // An email is NOT permanently registered merely because OTP verification
+    // created a pending user document. The email registry is locked only after
+    // the account has a real password/accountStatus=registered.
+    const saves = await Promise.all([
       syncDocument("users", user.username, user),
       syncDocument("users", `uid_${user.uid}`, user),
       syncDocument("users", `email_${email.replace(/[^a-zA-Z0-9]/g, "_")}`, user),
-      persistEmailRegistry(email, user)
     ]);
-    return usernameSaved && uidSaved && emailSaved && registrySaved;
+
+    if (!saves.every(Boolean)) return false;
+
+    if (isCompletedEmailAccount(user)) {
+      const registrySaved = await persistEmailRegistry(email, user);
+      return Boolean(registrySaved);
+    }
+
+    return true;
   } catch (err) {
     console.error("[PARDAIS AUTH] Durable user persistence failed:", err);
     return false;
@@ -958,16 +974,79 @@ app.post("/api/v1/auth/google-login", async (req, res) => {
   });
 });
 
+function isCompletedEmailAccount(user: any): boolean {
+  if (!user || typeof user.email !== "string" || !user.email.trim()) return false;
+  // A real email/password account is permanently registered as soon as a
+  // password exists. Do NOT require profileCompleted: users must be able to
+  // log in immediately after creating their password, even if profile setup
+  // was interrupted. Legacy accounts explicitly marked registered also count.
+  const hasPassword = typeof user.passwordHash === "string" && user.passwordHash.trim().length > 0;
+  return hasPassword || user.accountStatus === "registered";
+}
+
+function getLocalCompletedEmailUser(email: string) {
+  const cleanEmail = String(email || "").toLowerCase().trim();
+  const matches = (dbData.users || []).filter((u: any) =>
+    u && typeof u.email === "string" &&
+    u.email.toLowerCase().trim() === cleanEmail &&
+    isCompletedEmailAccount(u)
+  );
+  if (!matches.length) return undefined;
+
+  const canonicalUid = `email_${cleanEmail.replace(/[^a-zA-Z0-9]/g, "_")}`;
+  matches.sort((a: any, b: any) => {
+    const ac = a.uid === canonicalUid ? 1 : 0;
+    const bc = b.uid === canonicalUid ? 1 : 0;
+    if (ac !== bc) return bc - ac;
+    return String(b.registeredAt || "").localeCompare(String(a.registeredAt || ""));
+  });
+  return matches[0];
+}
+
+async function findCompletedEmailUserDurably(email: string, timeoutMs = 1500) {
+  const cleanEmail = String(email || "").toLowerCase().trim();
+  const local = getLocalCompletedEmailUser(cleanEmail);
+  if (local) return local;
+
+  try {
+    // A locked email registry entry is the durable proof that this email has
+    // already been registered, even if an old app version lost its password.
+    const registry = await Promise.race([
+      getPersistedEmailRegistry(cleanEmail),
+      new Promise<any | null>((resolve) => setTimeout(() => resolve(null), timeoutMs))
+    ]);
+    if (registry?.uid) {
+      const persisted = await Promise.race([
+        getPersistedUserForEmail(cleanEmail),
+        new Promise<any | null>((resolve) => setTimeout(() => resolve(null), timeoutMs))
+      ]);
+      if (persisted) return persisted;
+      return { email: cleanEmail, uid: registry.uid, username: registry.username || "", accountStatus: "registered", passwordHash: "" };
+    }
+
+    const persisted = await Promise.race([
+      getPersistedUserForEmail(cleanEmail),
+      new Promise<any | null>((resolve) => setTimeout(() => resolve(null), timeoutMs))
+    ]);
+    return isCompletedEmailAccount(persisted) ? persisted : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 // Account status check — does NOT send an email.
 app.post("/api/v1/auth/email-status", async (req, res) => {
   const email = typeof req.body?.email === "string" ? req.body.email.toLowerCase().trim() : "";
   if (!email || !email.includes("@")) return res.status(400).json({ error: "A valid email address is required." });
-  const user = await findEmailUserDurably(email);
+  const user = await findCompletedEmailUserDurably(email);
+  const registered = Boolean(user);
   return res.json({
     success: true,
-    exists: Boolean(user),
+    exists: registered,
+    registered,
+    pendingSignup: Boolean(user && !registered),
     needsPassword: Boolean(user && !user.passwordHash),
-    user: user ? {
+    user: registered && user ? {
       uid: user.uid,
       email: user.email,
       username: user.username,
@@ -981,19 +1060,39 @@ app.post("/api/v1/auth/email-status", async (req, res) => {
 // 2. Dispatch Email Verification OTP Code
 // Email delivery uses the Resend HTTPS API instead of SMTP. This avoids
 // Railway's outbound SMTP port restrictions and keeps the OTP logic unchanged.
-async function sendPardaisPartyOtpEmail(to: string, otp: string): Promise<void> {
+async function sendPardaisPartyOtpEmail(to: string, otp: string, purpose: "signup" | "password-reset" | "account-deletion" | "account-restore" = "signup"): Promise<void> {
   const resendApiKey = process.env.RESEND_API_KEY?.trim();
-  const fromEmail = "noreply@mail.pardaisparty.soulverseapps.com";
+  // IMPORTANT: never hard-code an unverified sender. Resend only delivers
+  // production mail when the From address belongs to a verified domain.
+  const fromEmail = (
+    process.env.RESEND_FROM_EMAIL?.trim() ||
+    "noreply@mail.pardaisparty.soulverseapps.com"
+  ).trim();
   const fromName = (process.env.RESEND_FROM_NAME || "Pardais Party").trim();
+  const replyTo = process.env.RESEND_REPLY_TO?.trim();
+
   console.log(`[PARDAIS PARTY EMAIL] Resend sender: ${fromName} <${fromEmail}>`);
 
   if (!resendApiKey) {
-    throw new Error("RESEND_API_KEY is missing");
+    throw new Error("RESEND_API_KEY is missing. Configure the Resend API key in Railway.");
+  }
+  if (!fromEmail.includes("@")) {
+    throw new Error("RESEND_FROM_EMAIL is invalid.");
   }
 
   const html = `<div style="font-family: Arial, sans-serif; padding: 20px; background: #0f0f18; color: #ffffff; border-radius: 12px;">
-    <h2 style="color: #ff007f;">Pardais Party Email Verification</h2>
-    <p>Your 6-digit verification code is:</p>
+    <h2 style="color: #ff007f;">Pardais Party ${
+      purpose === "password-reset" ? "Account Recovery"
+      : purpose === "account-deletion" ? "Account Deletion Confirmation"
+      : purpose === "account-restore" ? "Account Restore Code"
+      : "Email Verification"
+    }</h2>
+    <p>Your 6-digit ${
+      purpose === "password-reset" ? "account recovery"
+      : purpose === "account-deletion" ? "account deletion confirmation"
+      : purpose === "account-restore" ? "account restore"
+      : "verification"
+    } code is:</p>
     <div style="font-size: 32px; font-weight: bold; letter-spacing: 6px; color: #00f5ff; margin: 20px 0;">${otp}</div>
     <p style="color: #8888aa; font-size: 12px;">This code will expire in 10 minutes. If you did not request this, please ignore.</p>
   </div>`;
@@ -1011,7 +1110,14 @@ async function sendPardaisPartyOtpEmail(to: string, otp: string): Promise<void> 
       body: JSON.stringify({
         from: `${fromName} <${fromEmail}>`,
         to: [to],
-        subject: "Your Pardais Party Email Verification OTP Code",
+        subject: purpose === "password-reset"
+          ? "Your Pardais Party Account Recovery Code"
+          : purpose === "account-deletion"
+          ? "Your Pardais Party Account Deletion Code"
+          : purpose === "account-restore"
+          ? "Your Pardais Party Account Restore Code"
+          : "Your Pardais Party Email Verification Code",
+        ...(replyTo ? { reply_to: replyTo } : {}),
         html
       }),
       signal: controller.signal
@@ -1050,8 +1156,23 @@ app.post("/api/v1/auth/send-email-otp", async (req, res) => {
   if (remaining > 0) {
     return res.status(429).json({ success: false, code: "OTP_COOLDOWN", error: `Please wait ${Math.ceil(remaining / 1000)} seconds before requesting another code.`, retryAfterSeconds: Math.ceil(remaining / 1000) });
   }
-  const existingAccount = await findEmailUserDurably(cleanEmail);
-  if (existingAccount) {
+  // Fast path: only a fully registered local account blocks signup.
+  // Do not wait several seconds on Firestore just to prove that a brand-new
+  // email does not exist; that was the source of the slow/new-email failure.
+  const localExistingAccount = getLocalCompletedEmailUser(cleanEmail);
+  if (localExistingAccount) {
+    return res.status(409).json({
+      success: false,
+      code: "EMAIL_ALREADY_REGISTERED",
+      error: "This email is already registered. Please log in. If you forgot the password, use Forgot Password."
+    });
+  }
+
+  // If the durable registry has this email on another server/device, check it
+  // with a short bounded lookup. A genuinely new email should never wait for
+  // Firestore before the OTP flow can start.
+  const durableExistingAccount = await findCompletedEmailUserDurably(cleanEmail);
+  if (durableExistingAccount) {
     return res.status(409).json({
       success: false,
       code: "EMAIL_ALREADY_REGISTERED",
@@ -1108,7 +1229,7 @@ app.post("/api/v1/auth/verify-email-otp", async (req, res) => {
   }
 
   const cleanEmail = email.toLowerCase().trim();
-  const existingAccount = await findEmailUserDurably(cleanEmail);
+  const existingAccount = await findCompletedEmailUserDurably(cleanEmail);
   if (existingAccount) {
     return res.status(409).json({
       success: false,
@@ -1221,6 +1342,8 @@ app.post("/api/v1/auth/set-password", authenticateUser, async (req: any, res) =>
   req.user.passwordHash = hashPassword(password);
   req.user.authProvider = "email";
   req.user.isVerified = true;
+  req.user.accountStatus = "registered";
+  req.user.registrationCompletedAt = new Date().toISOString();
   ensureStableEmailIdentity(req.user, req.user.email);
   const persisted = await persistUserDurably(req.user);
   if (!persisted) return res.status(503).json({ error: "Account could not be permanently saved. Please try again." });
@@ -1238,11 +1361,30 @@ app.post("/api/v1/auth/password-login", async (req, res) => {
 
   const normalized = identifier.toLowerCase().replace(/^@/, "");
   const user = normalized.includes("@")
-    ? await findEmailUserDurably(normalized)
-    : (dbData.users || []).find((u: any) => String(u.username || "").toLowerCase() === normalized);
+    ? await findCompletedEmailUserDurably(normalized)
+    : (dbData.users || []).find((u: any) =>
+        String(u.username || "").toLowerCase() === normalized && isCompletedEmailAccount(u)
+      );
 
-  if (!user || !user.passwordHash || !verifyPassword(password, user.passwordHash))
-    return res.status(401).json({ error: "Incorrect email/username or password." });
+  if (!user) {
+    return res.status(401).json({ success: false, code: "ACCOUNT_NOT_FOUND", error: "No account was found for this email/username. Please sign up first." });
+  }
+  if (!user.passwordHash) {
+    return res.status(409).json({ success: false, code: "PASSWORD_NOT_SET", error: "This account is not fully set up yet. Continue signup or use Forgot Password to recover access." });
+  }
+  if (!verifyPassword(password, user.passwordHash)) {
+    return res.status(401).json({ success: false, code: "INVALID_PASSWORD", error: "Incorrect password. Use Forgot Password if you cannot remember it." });
+  }
+  if (user.deletionScheduledAt) {
+    const deletionDate = new Date(user.deletionScheduledAt);
+    const daysLeft = Math.max(0, Math.ceil((deletionDate.getTime() - Date.now()) / 86400000));
+    return res.status(409).json({
+      success: false,
+      code: "ACCOUNT_PENDING_DELETION",
+      error: `This account is scheduled for permanent deletion in ${daysLeft} day(s). Restore it from the Delete Account page to continue using it.`,
+      restoreUrl: "/delete-account?restore=1"
+    });
+  }
   if (user.isBanned) return res.status(403).json({ error: "ACCOUNT_BANNED" });
 
   if (user.email) ensureStableEmailIdentity(user, String(user.email).toLowerCase());
@@ -1253,34 +1395,110 @@ app.post("/api/v1/auth/password-login", async (req, res) => {
   res.json({ success:true, message:"Logged in successfully.", token, isNewUser:false, needsPassword:false, user });
 });
 
+// Recovery lookup intentionally accepts legacy accounts that already have a
+// passwordHash, even if an older build never wrote accountStatus/profileCompleted.
+// This prevents old valid accounts from being locked out of Forgot Password.
+async function findRecoverableEmailUserDurably(email: string, timeoutMs = 4000) {
+  const cleanEmail = String(email || "").toLowerCase().trim();
+  const isGuestEmail = cleanEmail.startsWith("guest_") || cleanEmail.endsWith("@pardaisparty.com");
+
+  const localMatches = (dbData.users || []).filter((u: any) =>
+    u && typeof u.email === "string" &&
+    u.email.toLowerCase().trim() === cleanEmail &&
+    !isGuestEmail &&
+    !String(u.uid || "").startsWith("guest_")
+  );
+
+  if (localMatches.length) {
+    const canonicalUid = `email_${cleanEmail.replace(/[^a-zA-Z0-9]/g, "_")}`;
+    localMatches.sort((a: any, b: any) => {
+      const ap = a.passwordHash ? 1 : 0;
+      const bp = b.passwordHash ? 1 : 0;
+      if (ap !== bp) return bp - ap;
+      const ac = a.uid === canonicalUid ? 1 : 0;
+      const bc = b.uid === canonicalUid ? 1 : 0;
+      if (ac !== bc) return bc - ac;
+      return String(b.registrationCompletedAt || b.registeredAt || "").localeCompare(
+        String(a.registrationCompletedAt || a.registeredAt || "")
+      );
+    });
+    return localMatches[0];
+  }
+
+  try {
+    const registry = await Promise.race([
+      getPersistedEmailRegistry(cleanEmail),
+      new Promise<any | null>((resolve) => setTimeout(() => resolve(null), timeoutMs))
+    ]);
+    const persisted = await Promise.race([
+      getPersistedUserForEmail(cleanEmail),
+      new Promise<any | null>((resolve) => setTimeout(() => resolve(null), timeoutMs))
+    ]);
+    if (registry?.uid && persisted) return persisted;
+    if (persisted && typeof persisted.email === "string" && !String(persisted.uid || "").startsWith("guest_")) return persisted;
+  } catch (err) {
+    console.warn("[PARDAIS PARTY RECOVERY] Account lookup failed:", err);
+  }
+
+  return undefined;
+}
+
 // Forgot password: send OTP only when the user explicitly requests recovery.
 app.post("/api/v1/auth/forgot-password", async (req, res) => {
   const email = typeof req.body?.email === "string" ? req.body.email.toLowerCase().trim() : "";
   if (!email || !email.includes("@")) return res.status(400).json({ error: "A valid email address is required." });
 
-  const user = await findEmailUserDurably(email);
-  // Keep the response generic so account existence is not exposed.
-  if (!user) return res.json({ success: true, message: "If an account exists for this email, a recovery code has been sent." });
+  const user = await findRecoverableEmailUserDurably(email, 6000);
+  // Recovery is available for every real email account that already has a
+  // password, including accounts created by older versions of the app.
+  if (!user) {
+    return res.status(404).json({
+      success: false,
+      code: "ACCOUNT_NOT_REGISTERED",
+      error: "No permanently registered Pardais account was found for this email. Please complete Signup first."
+    });
+  }
+
+  const recoveryLocks = (dbData as any).passwordResetLocks || ((dbData as any).passwordResetLocks = {});
+  const lastRecoveryAt = Number(recoveryLocks[email] || 0);
+  const recoveryRemaining = 60000 - (Date.now() - lastRecoveryAt);
+  if (recoveryRemaining > 0) {
+    return res.status(429).json({
+      success: false,
+      code: "RECOVERY_COOLDOWN",
+      error: `Please wait ${Math.ceil(recoveryRemaining / 1000)} seconds before requesting another recovery code.`,
+      retryAfterSeconds: Math.ceil(recoveryRemaining / 1000)
+    });
+  }
 
   const otp = Math.floor(100000 + Math.random() * 900000).toString();
+  recoveryLocks[email] = Date.now();
   const challengeKey = `reset_${email.replace(/[^a-zA-Z0-9]/g, "_")}`;
   const challenge = { otp, email, type: "password-reset", expiresAt: Date.now() + 10 * 60 * 1000, createdAt: new Date().toISOString() };
-  const durable = await persistAuthChallenge(challengeKey, challenge);
-  if (!durable) {
-    return res.status(503).json({ success: false, error: "Recovery service is temporarily unavailable. Please try again." });
-  }
+
+  // Hot challenge first: recovery must never wait for Firestore before sending.
   if (!dbData.passwordResetOtps) dbData.passwordResetOtps = {};
   dbData.passwordResetOtps[email] = challenge;
   saveDatabase();
+  void persistAuthChallenge(challengeKey, challenge).catch((err) => {
+    console.warn("[PARDAIS PARTY PASSWORD RESET] Durable challenge mirror delayed:", err);
+  });
 
   try {
-    await sendPardaisPartyOtpEmail(email, otp);
-    res.json({ success: true, message: "Recovery code sent to your email." });
-  } catch (err) {
+    await sendPardaisPartyOtpEmail(email, otp, "password-reset");
+    return res.json({ success: true, message: "Recovery code sent to your email.", code: "RECOVERY_SENT" });
+  } catch (err: any) {
     delete dbData.passwordResetOtps[email];
+    recoveryLocks[email] = 0;
     saveDatabase();
-    console.error("[PARDAIS PARTY PASSWORD RESET] Email failed:", err);
-    res.status(502).json({ success: false, error: "Recovery email could not be delivered. Please try again." });
+    const message = String(err?.message || "Recovery email could not be delivered.");
+    console.error("[PARDAIS PARTY PASSWORD RESET] Email failed:", message);
+    res.status(502).json({
+      success: false,
+      code: "RECOVERY_EMAIL_FAILED",
+      error: "Recovery email could not be delivered. Please try again.",
+      details: process.env.NODE_ENV === "production" ? undefined : message
+    });
   }
 });
 
@@ -1300,8 +1518,8 @@ app.post("/api/v1/auth/reset-password", async (req, res) => {
     return res.status(401).json({ error: "Invalid or expired recovery code." });
   }
 
-  const user = await findEmailUserDurably(email);
-  if (!user) return res.status(404).json({ error: "Account not found." });
+  const user = await findCompletedEmailUserDurably(email, 6000);
+  if (!user) return res.status(404).json({ error: "Account not found or not fully registered." });
 
   user.passwordHash = hashPassword(password);
   user.authProvider = "email";
@@ -1369,6 +1587,284 @@ app.post("/api/v1/auth/logout", authenticateUser, (req: any, res) => {
   }
   res.json({ success: true, message: "Logged out successfully" });
 });
+
+// ------------------------------------------------------------------
+// ACCOUNT DELETION / 30-DAY RESTORE SYSTEM
+// ------------------------------------------------------------------
+const ACCOUNT_DELETION_DAYS = 30;
+const accountDeletionOtpLocks = new Map<string, number>();
+const accountRestoreOtpLocks = new Map<string, number>();
+
+function normalizeAccountEmail(email: any): string {
+  return typeof email === "string" ? email.toLowerCase().trim() : "";
+}
+
+function getUserByEmailLocal(email: string): any | null {
+  const cleanEmail = normalizeAccountEmail(email);
+  return (dbData.users || []).find((u: any) =>
+    u && typeof u.email === "string" && u.email.toLowerCase().trim() === cleanEmail
+    && !String(u.uid || "").startsWith("guest_")
+  ) || null;
+}
+
+function getAccountDeletionDate(user: any): string | null {
+  return user?.deletionScheduledAt ? String(user.deletionScheduledAt) : null;
+}
+
+async function markAccountForDeletion(user: any) {
+  const now = new Date();
+  const scheduled = new Date(now.getTime() + ACCOUNT_DELETION_DAYS * 86400000);
+  user.deletionRequestedAt = now.toISOString();
+  user.deletionScheduledAt = scheduled.toISOString();
+  user.deletionStatus = "pending";
+  user.deletionRestoreUntil = scheduled.toISOString();
+  user.accountStatus = "pending_deletion";
+
+  if (dbData.sessions) {
+    for (const [sessionToken, session] of Object.entries(dbData.sessions)) {
+      if ((session as any)?.uid === user.uid || String((session as any)?.email || "").toLowerCase() === String(user.email || "").toLowerCase()) {
+        delete dbData.sessions[sessionToken];
+        void deleteDocument("sessions", sessionToken);
+      }
+    }
+  }
+
+  const persisted = await persistUserDurably(user);
+  saveDatabase();
+  return { persisted, scheduledAt: scheduled.toISOString() };
+}
+
+async function restorePendingAccount(user: any) {
+  user.deletionRequestedAt = undefined;
+  user.deletionScheduledAt = undefined;
+  user.deletionRestoreUntil = undefined;
+  user.deletionStatus = undefined;
+  if (user.accountStatus === "pending_deletion") user.accountStatus = "registered";
+  const persisted = await persistUserDurably(user);
+  saveDatabase();
+  return persisted;
+}
+
+function accountRecordBelongsToUser(record: any, user: any): boolean {
+  if (!record || !user) return false;
+  const uid = String(user.uid || "");
+  const username = String(user.username || "").toLowerCase();
+  const email = String(user.email || "").toLowerCase();
+  const values = [
+    record.uid, record.userId, record.userUid, record.user_id,
+    record.ownerUid, record.ownerId, record.ownerUserId,
+    record.creatorUid, record.creatorId, record.authorUid, record.authorId,
+    record.hostUid, record.senderUid, record.fromUid, record.toUid,
+    record.username, record.userName, record.ownerUsername, record.authorUsername,
+    record.creatorUsername, record.hostUsername, record.senderUsername,
+    record.email, record.userEmail, record.ownerEmail, record.authorEmail
+  ].filter(v => v !== undefined && v !== null).map(v => String(v).toLowerCase());
+  return values.includes(uid.toLowerCase()) || values.includes(username) || values.includes(email);
+}
+
+async function permanentlyDeleteAccount(user: any) {
+  const uid = String(user.uid || "");
+  const email = normalizeAccountEmail(user.email);
+  const username = String(user.username || "");
+
+  // Remove the user's primary profile documents and the email lock.
+  await Promise.all([
+    username ? deleteDocument("users", username) : Promise.resolve(),
+    uid ? deleteDocument("users", `uid_${uid}`) : Promise.resolve(),
+    email ? deleteDocument("users", `email_${email.replace(/[^a-zA-Z0-9]/g, "_")}`) : Promise.resolve(),
+    email ? deleteDocument("emailRegistry", email.replace(/[^a-zA-Z0-9]/g, "_")) : Promise.resolve()
+  ]);
+
+  // Remove sessions belonging to the account.
+  for (const [sessionToken, session] of Object.entries(dbData.sessions || {})) {
+    if ((session as any)?.uid === uid || String((session as any)?.email || "").toLowerCase() === email) {
+      delete dbData.sessions[sessionToken];
+      void deleteDocument("sessions", sessionToken);
+    }
+  }
+
+  // Remove user-owned metadata from the local cache and Firestore.
+  for (const collectionName of ["reels", "stories", "chats", "reports", "kycRequests", "transactions", "notifications"]) {
+    const list = Array.isArray(dbData[collectionName]) ? dbData[collectionName] : [];
+    const owned = list.filter((record: any) => accountRecordBelongsToUser(record, user));
+    for (const record of owned) {
+      if (record?.id) void deleteDocument(collectionName, record.id);
+    }
+    dbData[collectionName] = list.filter((record: any) => !accountRecordBelongsToUser(record, user));
+  }
+
+  // Remove user-owned R2 reel/avatar objects when R2 is configured.
+  try {
+    if (process.env.R2_ACCESS_KEY_ID && process.env.R2_SECRET_ACCESS_KEY && process.env.R2_ENDPOINT) {
+      const client = getS3Client();
+      const bucketName = process.env.R2_BUCKET_NAME || "pardaisparty-reels";
+      const prefixes = uid ? [`reels/${uid}/`, `avatars/${uid}/`] : [];
+      for (const Prefix of prefixes) {
+        const listed = await client.send(new ListObjectsV2Command({ Bucket: bucketName, Prefix }));
+        for (const item of (listed.Contents || [])) {
+          if (item.Key) {
+            try { await client.send(new DeleteObjectCommand({ Bucket: bucketName, Key: item.Key })); } catch {}
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.warn("[PARDAIS PARTY ACCOUNT DELETE] R2 cleanup warning:", err);
+  }
+
+  dbData.users = (dbData.users || []).filter((u: any) => u !== user && String(u.uid || "") !== uid && normalizeAccountEmail(u.email) !== email);
+  saveDatabase();
+  console.log(`[PARDAIS PARTY ACCOUNT DELETE] Permanently deleted account ${email}`);
+}
+
+async function findPendingDeletionAccount(email: string): Promise<any | null> {
+  const cleanEmail = normalizeAccountEmail(email);
+  let user = getUserByEmailLocal(cleanEmail);
+  if (!user) {
+    try {
+      user = await getPersistedUserForEmail(cleanEmail);
+    } catch {}
+  }
+  if (!user || !user.deletionScheduledAt) return null;
+  if (Date.now() >= Date.parse(user.deletionScheduledAt)) {
+    await permanentlyDeleteAccount(user);
+    return null;
+  }
+  return user;
+}
+
+app.post("/api/v1/auth/request-account-deletion", authenticateUser, async (req: any, res) => {
+  const user = req.user;
+  if (!user?.email || !isCompletedEmailAccount(user)) {
+    return res.status(400).json({ success: false, error: "Only a registered email account can request deletion." });
+  }
+  if (user.deletionScheduledAt) {
+    const daysLeft = Math.max(0, Math.ceil((Date.parse(user.deletionScheduledAt) - Date.now()) / 86400000));
+    return res.json({ success: true, alreadyPending: true, scheduledAt: user.deletionScheduledAt, daysLeft });
+  }
+
+  const result = await markAccountForDeletion(user);
+  if (!result.persisted) return res.status(503).json({ success: false, error: "Deletion request could not be saved. Please try again." });
+
+  return res.json({
+    success: true,
+    message: `Account deletion scheduled. You can restore the account within ${ACCOUNT_DELETION_DAYS} days.`,
+    scheduledAt: result.scheduledAt,
+    daysLeft: ACCOUNT_DELETION_DAYS
+  });
+});
+
+app.post("/api/v1/auth/send-account-deletion-code", async (req, res) => {
+  const email = normalizeAccountEmail(req.body?.email);
+  if (!email || !email.includes("@")) return res.status(400).json({ success: false, error: "A valid registered email is required." });
+
+  const user = await findRecoverableEmailUserDurably(email, 6000);
+  if (!user) return res.status(404).json({ success: false, code: "ACCOUNT_NOT_FOUND", error: "No registered Pardais account was found for this email." });
+  if (user.deletionScheduledAt) {
+    return res.json({ success: true, alreadyPending: true, scheduledAt: user.deletionScheduledAt });
+  }
+
+  const last = accountDeletionOtpLocks.get(email) || 0;
+  const remaining = 60000 - (Date.now() - last);
+  if (remaining > 0) return res.status(429).json({ success: false, code: "OTP_COOLDOWN", error: `Please wait ${Math.ceil(remaining / 1000)} seconds.`, retryAfterSeconds: Math.ceil(remaining / 1000) });
+
+  const otp = Math.floor(100000 + Math.random() * 900000).toString();
+  const challengeKey = `delete_${email.replace(/[^a-zA-Z0-9]/g, "_")}`;
+  const challenge = { otp, email, type: "account-deletion", expiresAt: Date.now() + 10 * 60 * 1000, createdAt: new Date().toISOString() };
+  accountDeletionOtpLocks.set(email, Date.now());
+  if (!dbData.accountDeletionOtps) dbData.accountDeletionOtps = {};
+  dbData.accountDeletionOtps[email] = challenge;
+  saveDatabase();
+  void persistAuthChallenge(challengeKey, challenge).catch(() => undefined);
+
+  try {
+    await sendPardaisPartyOtpEmail(email, otp, "account-deletion");
+    return res.json({ success: true, message: "Account deletion confirmation code sent to your email." });
+  } catch (err) {
+    delete dbData.accountDeletionOtps[email];
+    accountDeletionOtpLocks.delete(email);
+    void deletePersistedAuthChallenge(challengeKey).catch(() => undefined);
+    saveDatabase();
+    return res.status(502).json({ success: false, code: "EMAIL_DELIVERY_FAILED", error: "Deletion confirmation email could not be delivered." });
+  }
+});
+
+app.post("/api/v1/auth/confirm-account-deletion", async (req, res) => {
+  const email = normalizeAccountEmail(req.body?.email);
+  const otp = String(req.body?.otp || "").trim();
+  if (!email || !otp) return res.status(400).json({ success: false, error: "Email and deletion confirmation code are required." });
+
+  const user = await findRecoverableEmailUserDurably(email, 6000);
+  if (!user) return res.status(404).json({ success: false, code: "ACCOUNT_NOT_FOUND", error: "Account not found." });
+  if (user.deletionScheduledAt) return res.json({ success: true, scheduledAt: user.deletionScheduledAt, daysLeft: Math.max(0, Math.ceil((Date.parse(user.deletionScheduledAt) - Date.now()) / 86400000)) });
+
+  const challengeKey = `delete_${email.replace(/[^a-zA-Z0-9]/g, "_")}`;
+  let stored = dbData.accountDeletionOtps?.[email] || null;
+  if (!stored) stored = await getPersistedAuthChallenge(challengeKey);
+  if (!stored || Date.now() > Number(stored.expiresAt) || String(stored.otp) !== otp) return res.status(401).json({ success: false, error: "Invalid or expired deletion confirmation code." });
+
+  delete dbData.accountDeletionOtps[email];
+  void deletePersistedAuthChallenge(challengeKey).catch(() => undefined);
+  const result = await markAccountForDeletion(user);
+  if (!result.persisted) return res.status(503).json({ success: false, error: "Deletion request could not be saved." });
+  return res.json({ success: true, scheduledAt: result.scheduledAt, daysLeft: ACCOUNT_DELETION_DAYS });
+});
+
+app.post("/api/v1/auth/send-account-restore-code", async (req, res) => {
+  const email = normalizeAccountEmail(req.body?.email);
+  if (!email || !email.includes("@")) return res.status(400).json({ success: false, error: "A valid registered email is required." });
+
+  const user = await findPendingDeletionAccount(email);
+  if (!user) return res.status(404).json({ success: false, code: "NO_PENDING_DELETION", error: "No account pending deletion was found for this email." });
+
+  const last = accountRestoreOtpLocks.get(email) || 0;
+  const remaining = 60000 - (Date.now() - last);
+  if (remaining > 0) return res.status(429).json({ success: false, code: "OTP_COOLDOWN", error: `Please wait ${Math.ceil(remaining / 1000)} seconds.`, retryAfterSeconds: Math.ceil(remaining / 1000) });
+
+  const otp = Math.floor(100000 + Math.random() * 900000).toString();
+  const challengeKey = `restore_${email.replace(/[^a-zA-Z0-9]/g, "_")}`;
+  const challenge = { otp, email, type: "account-restore", expiresAt: Date.now() + 10 * 60 * 1000, createdAt: new Date().toISOString() };
+  accountRestoreOtpLocks.set(email, Date.now());
+  if (!dbData.accountRestoreOtps) dbData.accountRestoreOtps = {};
+  dbData.accountRestoreOtps[email] = challenge;
+  saveDatabase();
+  void persistAuthChallenge(challengeKey, challenge).catch(() => undefined);
+
+  try {
+    await sendPardaisPartyOtpEmail(email, otp, "account-restore");
+    return res.json({ success: true, message: "Account restore code sent to your registered email." });
+  } catch (err) {
+    delete dbData.accountRestoreOtps[email];
+    accountRestoreOtpLocks.delete(email);
+    void deletePersistedAuthChallenge(challengeKey).catch(() => undefined);
+    saveDatabase();
+    return res.status(502).json({ success: false, code: "EMAIL_DELIVERY_FAILED", error: "Restore email could not be delivered." });
+  }
+});
+
+app.post("/api/v1/auth/restore-account", async (req, res) => {
+  const email = normalizeAccountEmail(req.body?.email);
+  const otp = String(req.body?.otp || "").trim();
+  if (!email || !otp) return res.status(400).json({ success: false, error: "Email and restore code are required." });
+
+  const user = await findPendingDeletionAccount(email);
+  if (!user) return res.status(404).json({ success: false, code: "NO_PENDING_DELETION", error: "No account pending deletion was found for this email." });
+
+  const challengeKey = `restore_${email.replace(/[^a-zA-Z0-9]/g, "_")}`;
+  let stored = dbData.accountRestoreOtps?.[email] || null;
+  if (!stored) stored = await getPersistedAuthChallenge(challengeKey);
+  if (!stored || Date.now() > Number(stored.expiresAt) || String(stored.otp) !== otp) return res.status(401).json({ success: false, error: "Invalid or expired restore code." });
+
+  delete dbData.accountRestoreOtps[email];
+  void deletePersistedAuthChallenge(challengeKey).catch(() => undefined);
+  const persisted = await restorePendingAccount(user);
+  if (!persisted) return res.status(503).json({ success: false, error: "Account could not be restored from permanent storage. Please try again." });
+
+  const token = await createSession(user);
+  saveDatabase();
+  return res.json({ success: true, message: "Account restored successfully.", token, user });
+});
+
 
 // 7. Acquire or Refresh Session Token
 app.post("/api/v1/auth/guest-login", (req, res) => {
@@ -6468,7 +6964,97 @@ app.post("/api/v1/fcm/send", async (req, res) => {
 // ------------------------------------------------------------------
 // VITE OR STATIC MIDDLEWARE SETUP
 // ------------------------------------------------------------------
+const ACCOUNT_DELETION_PAGE = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Pardais Party — Delete Account</title>
+<style>
+*{box-sizing:border-box}body{margin:0;min-height:100vh;background:radial-gradient(circle at top,#24103d,#08080f 55%);font-family:Inter,system-ui,-apple-system,Segoe UI,sans-serif;color:#fff;display:flex;align-items:center;justify-content:center;padding:20px}
+.card{width:min(520px,100%);background:#12121c;border:1px solid rgba(255,0,127,.45);border-radius:28px;padding:28px;box-shadow:0 25px 80px rgba(0,0,0,.55)}
+.logo{font-size:42px;text-align:center}.title{text-align:center;font-size:28px;font-weight:900;margin:8px 0}.sub{text-align:center;color:#aaa6b8;line-height:1.55;font-size:14px}
+.tabs{display:grid;grid-template-columns:1fr 1fr;gap:6px;background:#0b0b12;padding:5px;border-radius:14px;margin:22px 0 18px}.tab{border:0;border-radius:10px;padding:12px;background:transparent;color:#aaa6b8;font-weight:800;cursor:pointer}.tab.active{background:linear-gradient(90deg,#ff007f,#9b30ff);color:#fff}
+label{display:block;font-size:12px;color:#c9c3d2;font-weight:800;margin:14px 0 6px}input{width:100%;padding:14px;border-radius:12px;border:1px solid #3b3747;background:#09090f;color:#fff;font-size:16px;outline:none}input:focus{border-color:#ff007f}
+button.action{width:100%;padding:14px;border:0;border-radius:12px;background:linear-gradient(90deg,#ff007f,#9b30ff);color:#fff;font-weight:900;cursor:pointer;margin-top:12px}button.secondary{width:100%;padding:12px;border-radius:12px;background:#1c1c28;color:#ddd;border:1px solid #393646;font-weight:800;cursor:pointer;margin-top:8px}
+.msg{min-height:22px;margin-top:14px;text-align:center;color:#ff91bf;font-size:13px;line-height:1.45}.info{background:#1b1628;border:1px solid rgba(155,48,255,.3);padding:13px;border-radius:14px;color:#c8c2d0;font-size:12px;line-height:1.5;margin-top:15px}.danger{color:#ff8db9}.hidden{display:none}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="logo">🎉</div>
+  <div class="title">Pardais Party</div>
+  <div class="sub">Account management</div>
+  <div class="tabs">
+    <button id="deleteTab" class="tab active" onclick="showMode('delete')">Delete Account</button>
+    <button id="restoreTab" class="tab" onclick="showMode('restore')">Restore Account</button>
+  </div>
+
+  <section id="deleteMode">
+    <div class="info"><b>30-day recovery window:</b> your account is not permanently removed immediately. After a deletion request, you have <b>30 days</b> to restore it with a code sent to your registered email.</div>
+    <label>Registered Email</label>
+    <input id="deleteEmail" type="email" placeholder="name@example.com" autocomplete="email">
+    <button class="action" onclick="sendDeleteCode()">Send Deletion Code</button>
+    <div id="deleteCodeBox" class="hidden">
+      <label>Confirmation Code</label>
+      <input id="deleteCode" maxlength="6" inputmode="numeric" placeholder="6-digit code">
+      <button class="action" onclick="confirmDelete()">Confirm Account Deletion</button>
+    </div>
+    <div id="deleteMsg" class="msg"></div>
+  </section>
+
+  <section id="restoreMode" class="hidden">
+    <div class="info">If your account is still inside the 30-day recovery window, enter the registered email. We will send a restore code. Your existing account, Pardais ID and password remain unchanged.</div>
+    <label>Registered Email</label>
+    <input id="restoreEmail" type="email" placeholder="name@example.com" autocomplete="email">
+    <button class="action" onclick="sendRestoreCode()">Send Restore Code</button>
+    <div id="restoreCodeBox" class="hidden">
+      <label>Restore Code</label>
+      <input id="restoreCode" maxlength="6" inputmode="numeric" placeholder="6-digit code">
+      <button class="action" onclick="restoreAccount()">Restore Account</button>
+    </div>
+    <div id="restoreMsg" class="msg"></div>
+  </section>
+</div>
+<script>
+const API = location.origin;
+function $(id){return document.getElementById(id)}
+function showMode(mode){
+  $("deleteMode").classList.toggle("hidden",mode!=="delete");
+  $("restoreMode").classList.toggle("hidden",mode!=="restore");
+  $("deleteTab").classList.toggle("active",mode==="delete");
+  $("restoreTab").classList.toggle("active",mode==="restore");
+}
+async function post(path,body){
+  const r=await fetch(API+path,{method:"POST",headers:{"Content-Type":"application/json","Accept":"application/json"},body:JSON.stringify(body)});
+  const d=await r.json().catch(()=>({}));
+  if(!r.ok) throw new Error(d.error||d.message||"Request failed");
+  return d;
+}
+async function sendDeleteCode(){
+  const email=$("deleteEmail").value.trim().toLowerCase(); if(!email)return $("deleteMsg").textContent="Enter your registered email.";
+  try{const d=await post("/api/v1/auth/send-account-deletion-code",{email}); $("deleteMsg").textContent=d.alreadyPending?"Account is already scheduled for deletion. You can restore it from the Restore Account tab.":"Confirmation code sent to your email."; if(!d.alreadyPending)$("deleteCodeBox").classList.remove("hidden");}catch(e){$("deleteMsg").textContent=e.message}
+}
+async function confirmDelete(){
+  const email=$("deleteEmail").value.trim().toLowerCase(), otp=$("deleteCode").value.trim(); if(!otp)return $("deleteMsg").textContent="Enter the confirmation code.";
+  try{const d=await post("/api/v1/auth/confirm-account-deletion",{email,otp}); $("deleteMsg").textContent="Deletion scheduled. You have "+d.daysLeft+" days to restore your account."; $("deleteCodeBox").classList.add("hidden");}catch(e){$("deleteMsg").textContent=e.message}
+}
+async function sendRestoreCode(){
+  const email=$("restoreEmail").value.trim().toLowerCase(); if(!email)return $("restoreMsg").textContent="Enter your registered email.";
+  try{await post("/api/v1/auth/send-account-restore-code",{email}); $("restoreMsg").textContent="Restore code sent to your registered email."; $("restoreCodeBox").classList.remove("hidden");}catch(e){$("restoreMsg").textContent=e.message}
+}
+async function restoreAccount(){
+  const email=$("restoreEmail").value.trim().toLowerCase(), otp=$("restoreCode").value.trim(); if(!otp)return $("restoreMsg").textContent="Enter the restore code.";
+  try{const d=await post("/api/v1/auth/restore-account",{email,otp}); $("restoreMsg").textContent="Account restored successfully. You can now open Pardais Party with your existing password."; if(d.token)localStorage.setItem("pardais_auth_token",d.token);}catch(e){$("restoreMsg").textContent=e.message}
+}
+if(new URLSearchParams(location.search).get("restore")==="1")showMode("restore");
+</script>
+</body>
+</html>`;
+
 async function startServer() {
+  app.get("/delete-account", (req, res) => res.type("html").send(ACCOUNT_DELETION_PAGE));
+  app.get("/delete-account/", (req, res) => res.type("html").send(ACCOUNT_DELETION_PAGE));
   // Separate routes for Web Admin
   app.get("/admin", (req, res) => {
     if (process.env.NODE_ENV !== "production") {
@@ -6502,6 +7088,24 @@ async function startServer() {
     console.log(`Pardais Party Server running on http://0.0.0.0:${PORT}`);
   });
 }
+
+// Permanently remove accounts whose 30-day restore window has expired.
+async function runScheduledAccountDeletionSweep() {
+  const users = Array.isArray(dbData.users) ? [...dbData.users] : [];
+  for (const user of users) {
+    if (!user?.deletionScheduledAt) continue;
+    const dueAt = Date.parse(String(user.deletionScheduledAt));
+    if (Number.isFinite(dueAt) && Date.now() >= dueAt) {
+      try {
+        await permanentlyDeleteAccount(user);
+      } catch (err) {
+        console.error("[PARDAIS PARTY ACCOUNT DELETE] Scheduled deletion failed:", err);
+      }
+    }
+  }
+}
+setInterval(() => { void runScheduledAccountDeletionSweep(); }, 60 * 1000);
+void runScheduledAccountDeletionSweep();
 
 // Periodic background cleaner for ghost users in party room seats and offline hosts
 setInterval(() => {

@@ -282,19 +282,43 @@ export async function createEmailPassword(token: string, password: string) {
 }
 
 export async function requestPasswordReset(email: string) {
-  const res = await fetch(resolveApiUrl("/api/v1/auth/forgot-password"), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email })
-  });
-  return res.json();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8000);
+  try {
+    const res = await fetch(resolveApiUrl("/api/v1/auth/forgot-password"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: email.trim().toLowerCase() }),
+      signal: controller.signal
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { success: false, error: data?.error || `Recovery request failed (HTTP ${res.status}).`, code: data?.code };
+    return data;
+  } catch (err: any) {
+    if (err?.name === "AbortError") return { success: false, error: "Recovery service timed out. Please try again.", code: "RECOVERY_TIMEOUT" };
+    return { success: false, error: "Could not reach the recovery service. Please try again.", code: "NETWORK_ERROR" };
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 export async function resetEmailPassword(email: string, otp: string, password: string) {
-  const res = await fetch(resolveApiUrl("/api/v1/auth/reset-password"), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, otp, password })
-  });
-  return res.json();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8000);
+  try {
+    const res = await fetch(resolveApiUrl("/api/v1/auth/reset-password"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: email.trim().toLowerCase(), otp: otp.trim(), password }),
+      signal: controller.signal
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { success: false, error: data?.error || `Password reset failed (HTTP ${res.status}).`, code: data?.code };
+    return data;
+  } catch (err: any) {
+    if (err?.name === "AbortError") return { success: false, error: "Password reset is taking too long. Please try again.", code: "RESET_TIMEOUT" };
+    return { success: false, error: "Could not reach the recovery service. Please try again.", code: "NETWORK_ERROR" };
+  } finally {
+    clearTimeout(timeout);
+  }
 }
