@@ -976,12 +976,13 @@ app.post("/api/v1/auth/google-login", async (req, res) => {
 
 function isCompletedEmailAccount(user: any): boolean {
   if (!user || typeof user.email !== "string" || !user.email.trim()) return false;
-  // A real email/password account is permanently registered as soon as a
-  // password exists. Do NOT require profileCompleted: users must be able to
-  // log in immediately after creating their password, even if profile setup
-  // was interrupted. Legacy accounts explicitly marked registered also count.
-  const hasPassword = typeof user.passwordHash === "string" && user.passwordHash.trim().length > 0;
-  return hasPassword || user.accountStatus === "registered";
+  // IMPORTANT: a password hash by itself does NOT prove that registration
+  // completed. An interrupted signup can leave a password behind before the
+  // profile/account-completion step finishes. Only an explicit registered
+  // status or registrationCompletedAt makes the email a permanently
+  // registered account.
+  return String(user.accountStatus || "").toLowerCase() === "registered"
+    || Boolean(user.registrationCompletedAt);
 }
 
 function getLocalCompletedEmailUser(email: string) {
@@ -1415,20 +1416,19 @@ app.post("/api/v1/auth/set-password", authenticateUser, async (req: any, res) =>
   const password = typeof req.body?.password === "string" ? req.body.password : "";
   if (password.length < 6) return res.status(400).json({ error: "Password must be at least 6 characters." });
   if (!req.user?.email) return res.status(400).json({ error: "This account does not have an email address." });
-  // OTP verification creates the account/session before the profile is completed.
-  // A previous interrupted signup may already have a passwordHash on that same
-  // incomplete account. In that case, do NOT block the verified signup flow:
-  // keep the existing password and continue to profile setup. Fully registered
-  // accounts are still protected from password overwrite.
-  const profileComplete = Boolean(req.user.profileCompleted || (req.user.fullName && req.user.username));
-  const accountRegistered = String(req.user.accountStatus || "").toLowerCase() === "registered";
-  if (req.user.passwordHash && (profileComplete || accountRegistered)) {
+  // OTP verification creates a pending signup session before the profile is
+  // completed. A previous interrupted signup may already have a passwordHash.
+  // That hash is stale pending-signup state, not proof of a completed account.
+  // Only an explicitly completed account is protected from password overwrite.
+  const accountRegistered = String(req.user.accountStatus || "").toLowerCase() === "registered"
+    || Boolean(req.user.registrationCompletedAt);
+  if (req.user.passwordHash && accountRegistered) {
     return res.status(409).json({ error: "Password is already set for this account. Use Login or Forgot Password to recover access." });
   }
 
-  if (!req.user.passwordHash) {
-    req.user.passwordHash = hashPassword(password);
-  }
+  // For a pending signup, always replace the stale/incomplete password hash
+  // with the password the user entered on the current verified signup flow.
+  req.user.passwordHash = hashPassword(password);
   req.user.authProvider = "email";
   req.user.isVerified = true;
   req.user.accountStatus = "registered";
@@ -1494,6 +1494,7 @@ async function findRecoverableEmailUserDurably(email: string, timeoutMs = 4000) 
   const localMatches = (dbData.users || []).filter((u: any) =>
     u && typeof u.email === "string" &&
     u.email.toLowerCase().trim() === cleanEmail &&
+    isCompletedEmailAccount(u) &&
     !isGuestEmail &&
     !String(u.uid || "").startsWith("guest_")
   );
