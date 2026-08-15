@@ -70,7 +70,7 @@ export default function PersistentEmailAuth({ onAuthenticated, onGoogleSignIn }:
   const verifyFirstEmail = async () => {
     setError(""); setOtpNotice(""); setBusy(true);
     try {
-      const r = await verifyEmailOtp(email, otp);
+      const r = await verifyEmailOtp(email.trim().toLowerCase(), otp.trim());
       if (!r?.success || !r?.token || !r?.user) throw new Error(r?.error || "Invalid verification code.");
       setToken(r.token);
       setName(r.user.fullName || "");

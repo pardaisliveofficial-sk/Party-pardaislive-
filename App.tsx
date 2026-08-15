@@ -139,10 +139,10 @@ import {
 // Standardize authDomain & storageBucket for Firebase Google Auth & Storage Handlers
 const effectiveFirebaseConfig = {
   ...firebaseConfig,
-  storageBucket: (firebaseConfig as any).storageBucket || `${firebaseConfig.projectId || "sehr-live-production"}.firebasestorage.app`,
+  storageBucket: (firebaseConfig as any).storageBucket || `${firebaseConfig.projectId || "pardais-party-production"}.firebasestorage.app`,
   authDomain: (firebaseConfig.authDomain && !firebaseConfig.authDomain.includes("soulverseapps.com"))
     ? firebaseConfig.authDomain
-    : `${firebaseConfig.projectId || "sehr-live-production"}.firebaseapp.com`
+    : `${firebaseConfig.projectId || "pardais-party-production"}.firebaseapp.com`
 };
 
 // Initialize Firebase client-side for authenticating via Google Sign-In
