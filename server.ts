@@ -1415,11 +1415,20 @@ app.post("/api/v1/auth/set-password", authenticateUser, async (req: any, res) =>
   const password = typeof req.body?.password === "string" ? req.body.password : "";
   if (password.length < 6) return res.status(400).json({ error: "Password must be at least 6 characters." });
   if (!req.user?.email) return res.status(400).json({ error: "This account does not have an email address." });
-  if (req.user.passwordHash) {
+  // OTP verification creates the account/session before the profile is completed.
+  // A previous interrupted signup may already have a passwordHash on that same
+  // incomplete account. In that case, do NOT block the verified signup flow:
+  // keep the existing password and continue to profile setup. Fully registered
+  // accounts are still protected from password overwrite.
+  const profileComplete = Boolean(req.user.profileCompleted || (req.user.fullName && req.user.username));
+  const accountRegistered = String(req.user.accountStatus || "").toLowerCase() === "registered";
+  if (req.user.passwordHash && (profileComplete || accountRegistered)) {
     return res.status(409).json({ error: "Password is already set for this account. Use Login or Forgot Password to recover access." });
   }
 
-  req.user.passwordHash = hashPassword(password);
+  if (!req.user.passwordHash) {
+    req.user.passwordHash = hashPassword(password);
+  }
   req.user.authProvider = "email";
   req.user.isVerified = true;
   req.user.accountStatus = "registered";
