@@ -18,14 +18,14 @@ import appletConfig from "../../firebase-applet-config.json";
 
 // Initialize Firebase using Client SDK
 let firebaseConfig = {
-  projectId: appletConfig.projectId || "pardais-party-production",
+  projectId: appletConfig.projectId || "sehr-live-production",
   appId: appletConfig.appId || "1:496371999211:web:3caed46eb0e946c1c9b9ae",
   apiKey: appletConfig.apiKey || "AIzaSyDUcaaRaU2ZJNUp90CMdl9gER_0oe1Db_E",
-  authDomain: appletConfig.authDomain || "pardais-party-production.firebaseapp.com",
-  storageBucket: (appletConfig as any).storageBucket || `${appletConfig.projectId || "pardais-party-production"}.firebasestorage.app`
+  authDomain: appletConfig.authDomain || "sehr-live-production.firebaseapp.com",
+  storageBucket: (appletConfig as any).storageBucket || `${appletConfig.projectId || "sehr-live-production"}.firebasestorage.app`
 };
 
-let FIRESTORE_DB_ID = appletConfig.firestoreDatabaseId || "ai-studio-pardaisparty-472fb6a7-1901-43d4-8fd3-710376199072";
+let FIRESTORE_DB_ID = appletConfig.firestoreDatabaseId || "ai-studio-sehrlive-472fb6a7-1901-43d4-8fd3-710376199072";
 
 const apps = getApps();
 const app = apps.length === 0 

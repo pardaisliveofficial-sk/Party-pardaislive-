@@ -220,7 +220,7 @@ export async function emailStatus(email: string) {
 
 export async function sendEmailOtp(email: string) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 25000);
+  const timeout = setTimeout(() => controller.abort(), 8000);
   try {
     const res = await fetch(resolveApiUrl("/api/v1/auth/send-email-otp"), {
       method: "POST",
@@ -241,7 +241,7 @@ export async function sendEmailOtp(email: string) {
 
 export async function verifyEmailOtp(email: string, otp: string) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 25000);
+  const timeout = setTimeout(() => controller.abort(), 8000);
   try {
     const res = await fetch(resolveApiUrl("/api/v1/auth/verify-email-otp"), {
       method: "POST",
