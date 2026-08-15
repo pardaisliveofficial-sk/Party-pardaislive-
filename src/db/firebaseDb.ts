@@ -262,7 +262,20 @@ export async function persistEmailRegistry(email: string, user: any): Promise<bo
       if (existing.exists()) {
         const current = existing.data() || {};
         if (String(current.uid || "") !== String(user.uid)) {
-          throw new Error("EMAIL_REGISTRY_LOCKED_TO_ANOTHER_ACCOUNT");
+          // Repair legacy/incomplete signup collisions: an old pending record
+          // must not permanently own an email. A completed registered account
+          // remains locked to its original UID.
+          let previous = null;
+          try {
+            if (current.uid) {
+              const previousSnap = await tx.get(doc(db, "users", `uid_${current.uid}`));
+              if (previousSnap.exists()) previous = previousSnap.data();
+            }
+          } catch {}
+          const previousCompleted = Boolean(previous && (String(previous.accountStatus || "").toLowerCase() === "registered" || previous.registrationCompletedAt));
+          if (previousCompleted) {
+            throw new Error("EMAIL_REGISTRY_LOCKED_TO_ANOTHER_ACCOUNT");
+          }
         }
         tx.set(registryRef, sanitizeForFirestore({
           email: cleanEmail,
@@ -458,26 +471,43 @@ export function startFirestoreSynchronization() {
         // uid_*, and email_* mirrors). Collapse them into one deterministic
         // in-memory user per stable email/UID so refresh order can never switch
         // the active account between two IDs.
-        const byIdentity = new Map<string, any>();
-        const score = (u: any) =>
-          Number(Boolean(u?.passwordHash)) * 100 +
-          Number(Boolean(u?.avatar)) * 10 +
-          Number(Boolean(u?.fullName)) * 5 +
-          Number(Boolean(u?.phoneNumber)) * 2 +
-          Number(Boolean(u?.uniqueId));
+        const byIdentity = new Map<string, any[]>();
+        const score = (u: any) => {
+          const completed = (String(u?.accountStatus || "").toLowerCase() === "registered" || u?.registrationCompletedAt) ? 1000000000000 : 0;
+          const locked = u?.usernameLockedAt ? 100000000000 : 0;
+          const password = u?.passwordHash ? 10000000000 : 0;
+          const profile = u?.profileCompleted ? 1000000000 : 0;
+          const times = [u?.profileUpdatedAt, u?.registrationCompletedAt, u?.usernameLockedAt, u?.registeredAt]
+            .map((v: any) => v ? Date.parse(String(v)) : 0)
+            .filter((v: number) => Number.isFinite(v));
+          const latest = times.length ? Math.max(...times) : 0;
+          return completed + locked + password + profile + latest;
+        };
 
         for (const item of items) {
           if (!item) continue;
           const email = typeof item.email === "string" ? item.email.toLowerCase().trim() : "";
           const uid = String(item.uid || "");
           const identity = email ? `email:${email}` : (uid ? `uid:${uid}` : `username:${String(item.username || "")}`);
-          const current = byIdentity.get(identity);
-          if (!current || score(item) > score(current)) {
-            byIdentity.set(identity, item);
-          }
+          const group = byIdentity.get(identity) || [];
+          group.push(item);
+          byIdentity.set(identity, group);
         }
 
-        dbDataCache.users = Array.from(byIdentity.values());
+        const canonicalUsers: any[] = [];
+        for (const group of byIdentity.values()) {
+          group.sort((a: any, b: any) => score(b) - score(a));
+          const primary = { ...(group[0] || {}) };
+          for (let i = 1; i < group.length; i++) {
+            for (const [key, value] of Object.entries(group[i] || {})) {
+              if ((primary as any)[key] === undefined || (primary as any)[key] === null || (primary as any)[key] === "") {
+                if (value !== undefined && value !== null && value !== "") (primary as any)[key] = value;
+              }
+            }
+          }
+          canonicalUsers.push(primary);
+        }
+        dbDataCache.users = canonicalUsers;
       } else if (colName === "hosts") {
         dbDataCache.hosts = items.filter((h: any) => h && (h.isLive === true || h.status === "live") && h.status !== "ended" && h.status !== "offline");
       } else if (colName === "gifts") {

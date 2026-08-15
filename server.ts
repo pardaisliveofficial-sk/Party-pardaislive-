@@ -92,6 +92,12 @@ async function loadDatabase() {
       console.log("[PARDAIS-PARTY FIREBASE] Pre-populated in-memory cache with local database backup.");
     }
 
+    // Collapse legacy duplicate user mirrors immediately. This keeps refresh/restart
+    // from rotating the visible username/Pardais ID between old documents.
+    if (Array.isArray(dbDataCache.users)) {
+      dbDataCache.users = canonicalizeUsers(dbDataCache.users);
+    }
+
     if (!Array.isArray(dbDataCache.hosts)) {
       dbDataCache.hosts = [];
     }
@@ -816,6 +822,68 @@ async function createSession(user: any) {
   return token;
 }
 
+function canonicalUserIdentity(user: any): string {
+  const email = typeof user?.email === "string" ? user.email.toLowerCase().trim() : "";
+  if (email) return `email:${email}`;
+  const uid = String(user?.uid || "").trim();
+  if (uid) return `uid:${uid}`;
+  return `username:${String(user?.username || "").toLowerCase().trim()}`;
+}
+
+function userFreshnessScore(user: any): number {
+  const completed = isCompletedEmailAccount(user) ? 1000000000000 : 0;
+  const locked = user?.usernameLockedAt ? 100000000000 : 0;
+  const password = user?.passwordHash ? 10000000000 : 0;
+  const profile = user?.profileCompleted ? 1000000000 : 0;
+  const timestamps = [
+    user?.profileUpdatedAt,
+    user?.registrationCompletedAt,
+    user?.usernameLockedAt,
+    user?.registeredAt
+  ];
+  let latest = 0;
+  for (const value of timestamps) {
+    const t = value ? Date.parse(String(value)) : 0;
+    if (Number.isFinite(t)) latest = Math.max(latest, t);
+  }
+  return completed + locked + password + profile + latest;
+}
+
+function canonicalizeUsers(items: any[]): any[] {
+  const groups = new Map<string, any[]>();
+  for (const item of Array.isArray(items) ? items : []) {
+    if (!item) continue;
+    const key = canonicalUserIdentity(item);
+    const group = groups.get(key) || [];
+    group.push(item);
+    groups.set(key, group);
+  }
+
+  const result: any[] = [];
+  for (const group of groups.values()) {
+    group.sort((a, b) => userFreshnessScore(b) - userFreshnessScore(a));
+    const primary = { ...(group[0] || {}) };
+    // Fill missing profile fields from older mirrors, but never overwrite
+    // authoritative username/Pardais ID/account-state fields from the newest record.
+    for (let i = 1; i < group.length; i++) {
+      const older = group[i] || {};
+      for (const [key, value] of Object.entries(older)) {
+        if ((primary[key] === undefined || primary[key] === null || primary[key] === "") && value !== undefined && value !== null && value !== "") {
+          primary[key] = value;
+        }
+      }
+    }
+    result.push(primary);
+  }
+  return result;
+}
+
+function usernameFromEmail(email: string): string {
+  const local = String(email || "").toLowerCase().trim().split("@")[0] || "user";
+  const clean = local.replace(/[^a-zA-Z0-9_]/g, "_");
+  return clean.length >= 3 ? clean.slice(0, 30) : `user_${crypto.createHash("sha256").update(String(email)).digest("hex").slice(0, 8)}`;
+}
+
 function findEmailUser(email: string) {
   const cleanEmail = email.toLowerCase().trim();
   const canonicalUid = `email_${cleanEmail.replace(/[^a-zA-Z0-9]/g, "_")}`;
@@ -826,20 +894,15 @@ function findEmailUser(email: string) {
   if (matches.length === 0) return undefined;
 
   // Older builds could create multiple records for the same email. Always
-  // resolve that email to one deterministic canonical account instead of
-  // letting array/snapshot order choose a different ID after refresh.
+  // resolve that email to one deterministic canonical account. A completed/locked
+  // record wins, then the newest profile/account state, then the canonical UID.
   matches.sort((a: any, b: any) => {
+    const aScore = userFreshnessScore(a);
+    const bScore = userFreshnessScore(b);
+    if (aScore !== bScore) return bScore - aScore;
     const aCanonical = a.uid === canonicalUid ? 1 : 0;
     const bCanonical = b.uid === canonicalUid ? 1 : 0;
-    if (aCanonical !== bCanonical) return bCanonical - aCanonical;
-
-    const aPassword = a.passwordHash ? 1 : 0;
-    const bPassword = b.passwordHash ? 1 : 0;
-    if (aPassword !== bPassword) return bPassword - aPassword;
-
-    const aComplete = Number(Boolean(a.fullName)) + Number(Boolean(a.avatar)) + Number(Boolean(a.phoneNumber)) + Number(Boolean(a.uniqueId));
-    const bComplete = Number(Boolean(b.fullName)) + Number(Boolean(b.avatar)) + Number(Boolean(b.phoneNumber)) + Number(Boolean(b.uniqueId));
-    return bComplete - aComplete;
+    return bCanonical - aCanonical;
   });
 
   return matches[0];
@@ -893,33 +956,27 @@ app.post("/api/v1/auth/google-login", async (req, res) => {
   }
 
   let { email, displayName, photoURL, uid } = req.body;
-  if (!email || typeof email !== "string") {
-    email = "pardaisliveofficial@gmail.com";
-  }
+  if (!email || typeof email !== "string") return res.status(400).json({ error: "A valid Google email is required." });
 
   const cleanEmail = email.toLowerCase().trim();
-  if (!uid) {
-    uid = "google_" + cleanEmail.replace(/[^a-zA-Z0-9]/g, "_");
-  }
+  if (!uid) uid = "google_" + cleanEmail.replace(/[^a-zA-Z0-9]/g, "_");
 
-  let user = dbData.users.find((u: any) => u.uid === uid || (u.email && u.email.toLowerCase() === cleanEmail));
-
+  let user = dbData.users.find((u: any) => u.uid === uid || (u.email && String(u.email).toLowerCase().trim() === cleanEmail));
   let isNewUser = false;
+
   if (!user) {
     isNewUser = true;
-    const username = cleanEmail.split("@")[0].replace(/[^a-zA-Z0-9_]/g, "_") || `user_${uid.substring(0, 6)}`;
     const uniqueId = stablePardaisId(cleanEmail);
-
     user = {
       uid,
       email: cleanEmail,
-      username,
+      username: "",
       uniqueId,
-      fullName: displayName || username,
-      avatar: photoURL || `https://api.dicebear.com/7.x/adventurer/svg?seed=${encodeURIComponent(displayName || cleanEmail)}`,
-      coverPhoto: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=800&q=80",
-      bio: "Verified Google Member 🇵🇰",
-      gender: "Male",
+      fullName: displayName?.trim() || "",
+      avatar: photoURL?.trim() || `https://api.dicebear.com/7.x/adventurer/svg?seed=${encodeURIComponent(cleanEmail)}`,
+      coverPhoto: "",
+      bio: "",
+      gender: "",
       country: "Pakistan",
       language: "Urdu / Hinglish",
       coins: 0,
@@ -936,47 +993,54 @@ app.post("/api/v1/auth/google-login", async (req, res) => {
       twoFactorEnabled: false,
       dob: "",
       phoneNumber: "",
-      kycStatus: "approved",
+      kycStatus: "pending",
       followersCount: 0,
       followingCount: 0,
       totalLikesCount: 0,
       selectedFrameId: "",
       vipSuspended: false,
+      authProvider: "google",
+      accountStatus: "pending_profile",
+      profileCompleted: false,
+      passwordHash: "",
+      usernameLockedAt: "",
       registeredAt: new Date().toISOString()
     };
-
     dbData.users.push(user);
-    syncDocument("users", user.username, user);
   } else {
-    // Update user record with latest uid and Google info if needed
     user.uid = uid;
     user.email = cleanEmail;
-    // CRITICAL FIX: Preserve custom user fullName if already set by user!
-    if (displayName && displayName.trim().length > 0 && (!user.fullName || user.fullName === "Pardais Member" || user.fullName === "Verified Google Member")) {
-      user.fullName = displayName.trim();
-    }
-    if (photoURL && photoURL.trim().length > 0 && (!user.avatar || user.avatar.includes("dicebear"))) {
-      user.avatar = photoURL.trim();
-    }
-    syncDocument("users", user.username, user);
+    user.authProvider = user.authProvider || "google";
+    if (displayName?.trim() && !user.fullName) user.fullName = displayName.trim();
+    if (photoURL?.trim() && (!user.avatar || String(user.avatar).includes("dicebear"))) user.avatar = photoURL.trim();
   }
 
-  const token = `pardais_session_${user.uid}_${Math.random().toString(36).substring(2, 10)}`;
-  const sessionData = {
-    uid: user.uid,
-    username: user.username,
-    email: user.email,
-    loginTime: new Date().toISOString()
-  };
-  dbData.sessions[token] = sessionData;
+  const needsProfileCompletion = !isCompletedEmailAccount(user) || !user.passwordHash || !user.username || !user.profileCompleted;
+  if (needsProfileCompletion) {
+    user.accountStatus = "pending_profile";
+    user.profileCompleted = false;
+    user.isVerified = true;
+    user.uniqueId = user.uniqueId || stablePardaisId(cleanEmail);
+    saveDatabase();
+    // Keep the pending Google identity durable without locking a username yet.
+    void Promise.all([
+      syncDocument("users", `uid_${user.uid}`, user),
+      syncDocument("users", `email_${cleanEmail.replace(/[^a-zA-Z0-9]/g, "_")}`, user)
+    ]).catch((err) => console.warn("[GOOGLE AUTH] Pending profile mirror delayed:", err));
+  } else {
+    user.accountStatus = "registered";
+    user.profileCompleted = true;
+    user.isVerified = true;
+    persistUser(user);
+    saveDatabase();
+  }
 
-  saveDatabase();
-  await syncDocument("sessions", token, sessionData);
-
+  const token = await createSession(user);
   res.json({
     success: true,
-    message: "Authenticated via Google successfully.",
+    message: needsProfileCompletion ? "Google verified. Complete your Pardais profile to finish registration." : "Authenticated via Google successfully.",
     isNewUser,
+    needsProfileCompletion,
     token,
     user
   });
@@ -1455,7 +1519,7 @@ app.post("/api/v1/auth/set-password", authenticateUser, async (req: any, res) =>
   // with the password the user entered on the current verified signup flow.
   // A new email signup gets its own canonical Pardais ID derived from its email.
   // Never carry an ID left behind by another/unfinished local signup session.
-  req.user.uniqueId = stablePardaisId(currentEmail);
+  req.user.uniqueId = stablePardaisId(String(req.user.email).toLowerCase().trim());
   req.user.passwordHash = hashPassword(password);
   req.user.authProvider = "email";
   req.user.isVerified = true;
@@ -1478,14 +1542,16 @@ app.post("/api/v1/auth/create-account", authenticateUser, async (req: any, res) 
   const gender = typeof req.body?.gender === "string" ? req.body.gender.trim() : "";
 
   if (!req.user?.email) return res.status(400).json({ success: false, error: "Verified email account is required." });
-  if (!fullName || usernameRaw.length < 3 || password.length < 6) {
-    return res.status(400).json({ success: false, error: "Enter name, username and a password of at least 6 characters." });
+  if (!fullName || password.length < 6) {
+    return res.status(400).json({ success: false, error: "Enter your name and a password of at least 6 characters." });
   }
 
-  const username = usernameRaw.replace(/[^a-zA-Z0-9_]/g, "_");
-  if (username.length < 3) return res.status(400).json({ success: false, error: "Username must contain at least 3 valid characters." });
-
   const currentEmail = String(req.user.email).toLowerCase().trim();
+  // User choice wins. If they leave Username empty, use the email local-part
+  // as the username. Once this account is completed, the username is locked.
+  const requestedUsername = usernameRaw ? usernameRaw : usernameFromEmail(currentEmail);
+  const username = requestedUsername.replace(/[^a-zA-Z0-9_]/g, "_").slice(0, 30);
+  if (username.length < 3) return res.status(400).json({ success: false, error: "Username must contain at least 3 valid characters." });
   const alreadyRegistered = isCompletedEmailAccount(req.user);
   if (alreadyRegistered) {
     return res.status(409).json({
@@ -1512,7 +1578,9 @@ app.post("/api/v1/auth/create-account", authenticateUser, async (req: any, res) 
   req.user.profileCompleted = true;
   req.user.registrationCompletedAt = new Date().toISOString();
   req.user.profileUpdatedAt = new Date().toISOString();
+  req.user.usernameLockedAt = new Date().toISOString();
   ensureStableEmailIdentity(req.user, currentEmail);
+  req.user.uniqueId = stablePardaisId(currentEmail);
 
   saveDatabase();
   // Do not hold the signup request open on a slow Firestore mirror. The local
@@ -1722,6 +1790,57 @@ app.post("/api/v1/auth/reset-password", async (req, res) => {
   res.json({ success: true, message: "Password reset successfully.", token, user });
 });
 
+// Complete a Google-created pending account. The Pardais ID is assigned by the server
+// at Google signup and is immutable; username can be chosen exactly once.
+app.post("/api/v1/auth/complete-google-profile", authenticateUser, async (req: any, res) => {
+  const fullName = typeof req.body?.fullName === "string" ? req.body.fullName.trim() : "";
+  const usernameRaw = typeof req.body?.username === "string" ? req.body.username.trim().replace(/^@/, "") : "";
+  const password = typeof req.body?.password === "string" ? req.body.password : "";
+
+  if (!req.user?.email) return res.status(400).json({ success: false, error: "Google account email is required." });
+  if (String(req.user.authProvider || "").toLowerCase() !== "google") {
+    return res.status(400).json({ success: false, error: "This profile completion flow is only for Google accounts." });
+  }
+  if (isCompletedEmailAccount(req.user) || req.user.usernameLockedAt) {
+    return res.status(409).json({ success: false, code: "PROFILE_ALREADY_COMPLETED", error: "This Google account profile is already completed." });
+  }
+  if (!fullName) return res.status(400).json({ success: false, error: "Enter your full name." });
+  if (usernameRaw.length < 3) return res.status(400).json({ success: false, error: "Username must contain at least 3 characters." });
+  if (password.length < 6) return res.status(400).json({ success: false, error: "Password must be at least 6 characters." });
+
+  const username = usernameRaw.replace(/[^a-zA-Z0-9_]/g, "_");
+  if (username.length < 3) return res.status(400).json({ success: false, error: "Username must contain at least 3 valid characters." });
+
+  const taken = (dbData.users || []).some((u: any) =>
+    u && u !== req.user && String(u.username || "").toLowerCase() === username.toLowerCase() && isCompletedEmailAccount(u)
+  );
+  if (taken) return res.status(409).json({ success: false, code: "USERNAME_TAKEN", error: "This username is already taken. Please choose another username." });
+
+  req.user.fullName = fullName;
+  req.user.username = username;
+  req.user.passwordHash = hashPassword(password);
+  req.user.authProvider = "google";
+  req.user.isVerified = true;
+  req.user.accountStatus = "registered";
+  req.user.profileCompleted = true;
+  req.user.usernameLockedAt = new Date().toISOString();
+  req.user.registrationCompletedAt = new Date().toISOString();
+  req.user.profileUpdatedAt = new Date().toISOString();
+  req.user.uniqueId = req.user.uniqueId || stablePardaisId(String(req.user.email));
+  ensureStableEmailIdentity(req.user, String(req.user.email).toLowerCase());
+
+  saveDatabase();
+  void persistUserDurably(req.user).catch((err) => console.warn("[GOOGLE PROFILE] Background persistence delayed:", err));
+  const token = await createSession(req.user);
+
+  return res.status(200).json({
+    success: true,
+    message: "Google account completed successfully.",
+    token,
+    user: req.user
+  });
+});
+
 // 4. Update Profile Details After Initial Verification / Setup
 app.post("/api/v1/auth/setup-profile", authenticateUser, (req: any, res) => {
   const { fullName, username, avatar, gender } = req.body;
@@ -1732,11 +1851,9 @@ app.post("/api/v1/auth/setup-profile", authenticateUser, (req: any, res) => {
   if (fullName && typeof fullName === "string" && fullName.trim().length > 0) {
     req.user.fullName = fullName.trim();
   }
-  if (username && typeof username === "string") {
+  if (username && typeof username === "string" && !req.user.usernameLockedAt) {
     const cleanUser = username.trim().replace(/[^a-zA-Z0-9_]/g, "_");
-    if (cleanUser.length > 2) {
-      req.user.username = cleanUser;
-    }
+    if (cleanUser.length > 2) req.user.username = cleanUser;
   }
   if (avatar && typeof avatar === "string" && avatar.startsWith("http")) {
     req.user.avatar = avatar;

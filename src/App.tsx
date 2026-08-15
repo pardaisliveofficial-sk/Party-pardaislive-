@@ -672,6 +672,10 @@ export default function App() {
   const [setupFullName, setSetupFullName] = useState<string>("");
   const [setupUsername, setSetupUsername] = useState<string>("");
   const [setupGender, setSetupGender] = useState<string>("Male");
+  const [setupPassword, setSetupPassword] = useState<string>("");
+  const [setupConfirmPassword, setSetupConfirmPassword] = useState<string>("");
+  const [setupShowPassword, setSetupShowPassword] = useState<boolean>(false);
+  const [setupShowConfirmPassword, setSetupShowConfirmPassword] = useState<boolean>(false);
   const [is2FAEnabled, setIs2FAEnabled] = useState<boolean>(false);
   const [showTwoFactorModal, setShowTwoFactorModal] = useState<boolean>(false);
   const [twoFactorCode, setTwoFactorCode] = useState<string>("");
@@ -913,9 +917,9 @@ export default function App() {
               ...data.user,
               // Backend is authoritative for account identity. Never reuse a previous
               // account's Pardais ID, username or name after a different account logs in.
-              fullName: data.user.fullName || localProfile?.fullName || "",
-              username: data.user.username || localProfile?.username || "",
-              uniqueId: data.user.uniqueId || localProfile?.uniqueId || "",
+              fullName: data.user.fullName || "",
+              username: data.user.username || "",
+              uniqueId: data.user.uniqueId || "",
               avatar: preservedAvatar,
               avatarUrl: data.user.avatarUrl || preservedAvatar,
               bio: localProfile?.bio || data.user.bio,
@@ -7423,37 +7427,38 @@ export default function App() {
     }
 
     if (!data || !data.token || !data.user) {
+      // Keep Google signup resilient, but never mark a Google account as
+      // permanently registered until the user chooses a username and password.
       const fallbackToken = `pardais_session_${userUid}_${Math.random().toString(36).substring(2, 10)}`;
       const fallbackUser: UserProfile = {
         uid: userUid,
         email: userEmail,
-        username: userEmail.split("@")[0].replace(/[^a-zA-Z0-9_]/g, "_") || "google_user",
-        uniqueId: `pardes_${Math.floor(1000 + Math.random() * 9000)}`,
-        fullName: userDisplayName || "Pardais Member",
+        username: "",
+        uniqueId: `pardes_${userEmail.toLowerCase().replace(/[^a-zA-Z0-9]/g, "").slice(0, 10).toUpperCase()}`,
+        fullName: userDisplayName || "",
         avatar: userPhotoURL,
-        coverPhoto: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=800&q=80",
-        bio: "Verified Google Member 🇵🇰",
-        gender: "Male",
+        coverPhoto: "",
+        bio: "",
+        gender: "",
         country: "Pakistan",
         language: "Urdu / Hinglish",
         familyId: "",
         agencyId: "",
-        isVerified: false,
+        isVerified: true,
         isBanned: false,
         twoFactorEnabled: false,
-        coins: 1000000,
+        coins: 0,
         diamonds: 0,
         vipLevel: 0,
         userLevel: 1,
         hostLevel: 1,
         wealthLevel: 1,
-        xp: 0
-      };
-      data = {
-        token: fallbackToken,
-        user: fallbackUser,
-        isNewUser: false
-      };
+        xp: 0,
+        authProvider: "google",
+        accountStatus: "pending_profile",
+        profileCompleted: false
+      } as any;
+      data = { token: fallbackToken, user: fallbackUser, isNewUser: true, needsProfileCompletion: true };
     }
 
     // Save account to saved Google accounts list for rapid chooser
@@ -7478,7 +7483,15 @@ export default function App() {
     setLoginError("");
     setChooserError("");
 
-    if (data.isNewUser || !data.user.fullName || data.user.fullName === "Pardais Member") {
+    const needsGoogleProfile = Boolean(data.needsProfileCompletion);
+    if (needsGoogleProfile) {
+      setSetupFullName(data.user.fullName || userDisplayName || "");
+      setSetupUsername(data.user.username || "");
+      setSetupGender(data.user.gender || "Male");
+      setSetupPassword("");
+      setSetupConfirmPassword("");
+      setSetupShowPassword(false);
+      setSetupShowConfirmPassword(false);
       setShowProfileSetupModal(true);
     }
   };
@@ -7569,6 +7582,62 @@ export default function App() {
     }
 
     const token = localStorage.getItem("pardais_auth_token");
+    const isGooglePending = String(user?.authProvider || "").toLowerCase() === "google" && !user?.usernameLockedAt;
+
+    if (isGooglePending) {
+      if (setupUsername.trim().replace(/^@/, "").length < 3) {
+        setLoginError("Please choose a username of at least 3 characters.");
+        return;
+      }
+      if (setupPassword.length < 6) {
+        setLoginError("Password must be at least 6 characters.");
+        return;
+      }
+      if (setupPassword !== setupConfirmPassword) {
+        setLoginError("Passwords do not match.");
+        return;
+      }
+      if (!token) {
+        setLoginError("Google session expired. Please continue with Google again.");
+        return;
+      }
+
+      try {
+        const url = resolveApiUrl("/api/v1/auth/complete-google-profile");
+        const res = await fetch(url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${token}`
+          },
+          body: JSON.stringify({
+            fullName: setupFullName.trim(),
+            username: setupUsername.trim().replace(/^@/, ""),
+            password: setupPassword,
+            gender: setupGender
+          })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data?.success || !data?.user) {
+          throw new Error(data?.error || "Could not complete Google profile.");
+        }
+        const nextToken = data.token || token;
+        localStorage.setItem("pardais_auth_token", nextToken);
+        localStorage.setItem("pardais_is_logged_in", "true");
+        localStorage.setItem("pardais_user_profile", JSON.stringify(data.user));
+        setUser(data.user);
+        setIsLoggedIn(true);
+        setSetupPassword("");
+        setSetupConfirmPassword("");
+        setShowProfileSetupModal(false);
+        setLoginError("");
+        return;
+      } catch (err: any) {
+        setLoginError(err?.message || "Could not complete Google profile.");
+        return;
+      }
+    }
+
     try {
       const url = resolveApiUrl("/api/v1/auth/setup-profile");
       const res = await fetch(url, {
@@ -7597,7 +7666,6 @@ export default function App() {
       console.warn("[PROFILE SETUP] Backend sync warning, applying local update:", err);
     }
 
-    // Local profile update fallback
     const updatedUser: UserProfile = {
       ...user,
       fullName: setupFullName.trim(),
@@ -30605,6 +30673,56 @@ export default function App() {
       )}
 
       {/* ========================================= */}
+      {/* GOOGLE / INITIAL PROFILE COMPLETION */}
+      {showProfileSetupModal && String(user?.authProvider || "").toLowerCase() === "google" && !user?.usernameLockedAt && (
+        <div className="fixed inset-0 bg-black/85 z-[10000] flex items-center justify-center p-4 backdrop-blur-md">
+          <div className="bg-gradient-to-b from-[#1c082b] via-[#100a1c] to-[#0a0a12] border border-[#ff007f]/50 rounded-3xl w-full max-w-[400px] p-5 shadow-[0_0_40px_rgba(255,0,127,0.3)] text-white space-y-4 max-h-[92vh] overflow-y-auto">
+            <div className="text-center space-y-1">
+              <div className="w-12 h-12 rounded-2xl bg-white mx-auto flex items-center justify-center shadow-lg">
+                <span className="text-2xl font-black">G</span>
+              </div>
+              <h3 className="text-xl font-black">Complete Your Profile</h3>
+              <p className="text-xs text-gray-400">Your Google account is verified. Complete these details to create your permanent Pardais account.</p>
+            </div>
+
+            <div className="bg-[#151520] border border-[#303040] rounded-xl p-3 space-y-1">
+              <p className="text-[10px] uppercase tracking-wider text-gray-500">Pardais ID</p>
+              <p className="text-sm font-black text-cyan-300 tracking-wider">{user?.uniqueId || "Generating…"}</p>
+              <p className="text-[9px] text-gray-500">Assigned by Pardais and locked permanently.</p>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="text-[10px] uppercase tracking-wider text-gray-400 block mb-1">Full Name</label>
+                <input value={setupFullName} onChange={e=>setSetupFullName(e.target.value)} className="w-full bg-[#1e1e2d] border border-[#303040] rounded-xl px-3 py-3 text-white text-sm" autoComplete="name" />
+              </div>
+              <div>
+                <label className="text-[10px] uppercase tracking-wider text-gray-400 block mb-1">Choose Username</label>
+                <input value={setupUsername} onChange={e=>setSetupUsername(e.target.value.replace(/[^a-zA-Z0-9_]/g, ""))} placeholder="your_username" className="w-full bg-[#1e1e2d] border border-[#303040] rounded-xl px-3 py-3 text-white text-sm" autoComplete="username" />
+                <p className="text-[9px] text-gray-500 mt-1">You can edit this now. After completing your profile, it will be locked.</p>
+              </div>
+              <div>
+                <label className="text-[10px] uppercase tracking-wider text-gray-400 block mb-1">Email</label>
+                <input value={user?.email || ""} readOnly className="w-full bg-[#151520] border border-[#303040] rounded-xl px-3 py-3 text-gray-400 text-sm" />
+              </div>
+              <div className="relative">
+                <label className="text-[10px] uppercase tracking-wider text-gray-400 block mb-1">Create Password</label>
+                <input value={setupPassword} onChange={e=>setSetupPassword(e.target.value)} type={setupShowPassword ? "text" : "password"} placeholder="6+ characters" className="w-full bg-[#1e1e2d] border border-[#303040] rounded-xl px-3 py-3 pr-12 text-white text-sm" autoComplete="new-password" />
+                <button type="button" onClick={()=>setSetupShowPassword(v=>!v)} className="absolute right-2 bottom-1 w-9 h-9 flex items-center justify-center text-lg" aria-label={setupShowPassword ? "Hide password" : "Show password"}>{setupShowPassword ? "🙈" : "👁️"}</button>
+              </div>
+              <div className="relative">
+                <label className="text-[10px] uppercase tracking-wider text-gray-400 block mb-1">Confirm Password</label>
+                <input value={setupConfirmPassword} onChange={e=>setSetupConfirmPassword(e.target.value)} type={setupShowConfirmPassword ? "text" : "password"} placeholder="Repeat password" className="w-full bg-[#1e1e2d] border border-[#303040] rounded-xl px-3 py-3 pr-12 text-white text-sm" autoComplete="new-password" />
+                <button type="button" onClick={()=>setSetupShowConfirmPassword(v=>!v)} className="absolute right-2 bottom-1 w-9 h-9 flex items-center justify-center text-lg" aria-label={setupShowConfirmPassword ? "Hide confirm password" : "Show confirm password"}>{setupShowConfirmPassword ? "🙈" : "👁️"}</button>
+              </div>
+            </div>
+
+            {loginError && <p className="text-red-300 text-xs bg-red-950/30 border border-red-500/50 rounded-xl p-3">{loginError}</p>}
+            <button type="button" onClick={(e)=>handleCompleteProfileSetup(e as any)} className="w-full bg-gradient-to-r from-[#ff007f] to-[#7b2cbf] text-white py-3 rounded-xl font-bold">Complete Profile & Enter Pardais</button>
+          </div>
+        </div>
+      )}
+
       {/* AUTHENTICATION REQUIRED MODAL (GUEST PROMPT) */}
       {/* ========================================= */}
       {showAuthModal && (

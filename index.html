@@ -55,7 +55,7 @@
 #pardais-otp{letter-spacing:.3em;text-align:center;font-size:20px;font-weight:800}
 #pardais-resend{background:transparent;border:1px solid #3b3747;color:#d7d1df;margin-top:8px}
 #pardais-auth-msg{margin-top:14px;color:#ff8fbc;font-size:13px;min-height:20px;line-height:1.4}
-#pardais-auth-setup button{width:100%;margin-top:12px}
+#pardais-auth-setup button{width:100%;margin-top:12px}\n#pardais-auth-card .pardais-password-wrap{position:relative;width:100%;margin-top:8px}\n#pardais-auth-card .pardais-password-wrap input{margin-top:0;padding-right:48px}\n#pardais-auth-card button.password-visibility-button,#pardais-auth-setup button.password-visibility-button{width:36px!important;min-width:36px!important;height:36px!important;box-sizing:border-box!important;padding:0!important;margin:0!important;border:0!important;border-radius:9999px!important;background:transparent!important;color:#b9b4c7!important;box-shadow:none!important;display:flex!important;align-items:center!important;justify-content:center!important;position:absolute!important;right:8px!important;top:50%!important;transform:translateY(-50%)!important;cursor:pointer!important;font-size:16px!important;line-height:1!important}\n#pardais-auth-card button.password-visibility-button:hover,#pardais-auth-setup button.password-visibility-button:hover{background:rgba(255,255,255,.06)!important;color:#fff!important}\n#pardais-google-button{background:#fff!important;color:#202124!important;border:1px solid #dadce0!important;font-weight:700!important}\n#pardais-google-button:hover{background:#f8f9fa!important}\n#pardais-google-button .google-g{font-weight:900;font-size:19px;line-height:1;color:#4285f4}
 #pardais-auth-setup{text-align:left}
 #pardais-auth-login>div{display:block}
 </style>
@@ -83,6 +83,8 @@
         <label>Email Address</label>
         <input id="pardais-signup-email-input" type="email" placeholder="name@example.com" autocomplete="email">
         <button id="pardais-signup-send" type="button">Send Verification Code</button>
+        <div id="pardais-google-divider" style="display:flex;align-items:center;gap:10px;margin:16px 0 10px"><span style="height:1px;background:#3b3747;flex:1"></span><span style="color:#777185;font-size:11px;font-weight:700">OR</span><span style="height:1px;background:#3b3747;flex:1"></span></div>
+        <button id="pardais-google-button" type="button"><span class="google-g">G</span><span>Continue with Google</span></button>
       </div>
       <div id="pardais-signup-otp" style="display:none">
         <label>Verification Code</label>
@@ -119,9 +121,16 @@
     <div id="pardais-auth-msg"></div>
   </div>
 </div>
-<script>
+<script type="module">
+import { initializeApp, getApps, getApp } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-app.js";
+import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-auth.js";
+
 (function(){
   const API="https://api.pardaisparty.soulverseapps.com";
+  const firebaseConfig={projectId:"pardais-party-production",appId:"1:496371999211:web:3caed46eb0e946c1c9b9ae",apiKey:"AIzaSyDUcaaRaU2ZJNUp90CMdl9gER_0oe1Db_E",authDomain:"pardais-party-production.firebaseapp.com",storageBucket:"pardais-party-production.firebasestorage.app",messagingSenderId:"496371999211"};
+  let firebaseApp;
+  let firebaseAuth;
+  try { firebaseApp=getApps().length?getApp():initializeApp(firebaseConfig); firebaseAuth=getAuth(firebaseApp); } catch(e) { console.warn("[Pardais Google Auth] Firebase initialization failed",e); }
   const gate=document.getElementById("pardais-auth-gate");
   const msg=document.getElementById("pardais-auth-msg");
   const loginPanel=document.getElementById("pardais-login-panel");
@@ -160,6 +169,61 @@
     setMsg("");
   }
   tLogin.onclick=()=>tab("login"); tSignup.onclick=()=>tab("signup");
+
+  async function completeGoogleSignIn(firebaseUser){
+    const email=String(firebaseUser?.email||"").trim().toLowerCase();
+    if(!email) throw new Error("Google account email was not returned.");
+    const idToken=await firebaseUser.getIdToken(true);
+    const d=await post("/api/v1/auth/google-login",{
+      email,
+      displayName:firebaseUser.displayName||email.split("@")[0],
+      photoURL:firebaseUser.photoURL||"",
+      uid:firebaseUser.uid,
+      firebaseIdToken:idToken
+    });
+    if(!d?.success||!d?.token) throw new Error(d?.error||"Could not sign in with Google.");
+    saveToken(d.token);
+    if(d.needsProfileCompletion||d.isNewUser||d.user?.accountStatus==="pending_profile") {
+      document.getElementById("pardais-signup-email").style.display="none";
+      document.getElementById("pardais-signup-otp").style.display="none";
+      document.getElementById("pardais-google-divider").style.display="none";
+      document.getElementById("pardais-google-button").style.display="none";
+      document.getElementById("pardais-auth-setup").style.display="block";
+      document.getElementById("pardais-name").value=d.user?.fullName||firebaseUser.displayName||"";
+      document.getElementById("pardais-username").value=d.user?.username||"";
+      setMsg("Google verified. Complete your profile to enter Pardais Party.");
+      return;
+    }
+    finish(d);
+  }
+
+  const googleButton=document.getElementById("pardais-google-button");
+  if(googleButton){
+    googleButton.onclick=async()=>{
+      if(!firebaseAuth){setMsg("Google Sign-In is not available right now. Please try again.");return;}
+      googleButton.disabled=true;
+      try {
+        setMsg("Opening Google Sign-In…");
+        const provider=new GoogleAuthProvider();
+        provider.setCustomParameters({prompt:"select_account"});
+        try {
+          const result=await signInWithPopup(firebaseAuth,provider);
+          await completeGoogleSignIn(result.user);
+        } catch(popupError) {
+          const code=String(popupError?.code||"");
+          if(code.includes("popup-blocked")||code.includes("popup-closed-by-user")||code.includes("cancelled-popup-request")||code.includes("unauthorized-domain")){
+            await signInWithRedirect(firebaseAuth,provider);
+          } else throw popupError;
+        }
+      } catch(e){ setMsg(e?.message||"Google Sign-In failed. Please try again."); googleButton.disabled=false; }
+    };
+  }
+
+  if(firebaseAuth){
+    getRedirectResult(firebaseAuth).then(async result=>{
+      if(result?.user) await completeGoogleSignIn(result.user);
+    }).catch(e=>console.warn("[Pardais Google Auth] Redirect result",e));
+  }
 
   document.getElementById("pardais-login-btn").onclick=async()=>{
     const identifier=document.getElementById("pardais-login-identifier").value.trim();
@@ -225,7 +289,7 @@
   document.getElementById("pardais-save-profile").onclick=async()=>{
     const name=document.getElementById("pardais-name").value.trim(), username=document.getElementById("pardais-username").value.trim().replace(/^@/,"");
     const password=document.getElementById("pardais-create-password").value, confirm=document.getElementById("pardais-confirm-password").value;
-    if(!name||username.length<3||password.length<6||password!==confirm){setMsg("Enter name, username, matching password (6+ characters).");return}
+    if(!name||password.length<6||password!==confirm){setMsg("Enter name, matching password (6+ characters).");return}
     try{
       const t=token();
       if(!t){setMsg("Your verification session expired. Please verify your email again.");return}

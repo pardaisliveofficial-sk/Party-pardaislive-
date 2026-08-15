@@ -98,7 +98,7 @@ export default function PersistentEmailAuth({ onAuthenticated, onGoogleSignIn }:
     if (!verifiedToken) { setError("Verification session expired. Please verify your email again."); return; }
     if (!password || password.length < 6) { setError("Password must be at least 6 characters."); return; }
     if (password !== confirmPassword) { setError("Passwords do not match."); return; }
-    if (!name.trim() || username.trim().replace(/^@/, "").length < 3) { setError("Enter your name and a username of at least 3 characters."); return; }
+    if (!name.trim()) { setError("Enter your name."); return; }
     setError(""); setBusy(true);
     try {
       // OTP verification is already complete. Do NOT call the legacy
@@ -158,18 +158,18 @@ export default function PersistentEmailAuth({ onAuthenticated, onGoogleSignIn }:
 
   return <div className="space-y-3">
     {step === "email" && <>
-      {onGoogleSignIn && <button type="button" disabled={busy} onClick={onGoogleSignIn} className="w-full h-12 bg-white text-gray-900 rounded-xl font-bold flex items-center justify-center gap-2 shadow-lg">
-        <span className="text-lg font-black">G</span><span>Continue with Google</span>
-      </button>}
-      {onGoogleSignIn && <div className="flex items-center gap-2 py-1"><div className="h-px bg-white/10 flex-1" /><span className="text-[10px] text-gray-500 uppercase tracking-widest">or</span><div className="h-px bg-white/10 flex-1" /></div>}
       <input value={email} onChange={e=>setEmail(e.target.value)} type="email" placeholder="Email address" className="w-full bg-[#1e1e2d] border border-[#303040] rounded-xl px-3 py-3 text-white text-sm" autoComplete="email" />
-      <button type="button" disabled={busy} onClick={continueEmail} className="w-full bg-gradient-to-r from-[#ff007f] to-[#7b2cbf] text-white py-3 rounded-xl font-bold">{busy ? "Please wait…" : "Continue"}</button>
+      <button type="button" disabled={busy} onClick={continueEmail} className="w-full bg-gradient-to-r from-[#ff007f] to-[#7b2cbf] text-white py-3 rounded-xl font-bold">{busy ? "Please wait…" : "Continue with Email"}</button>
+      {onGoogleSignIn && <div className="flex items-center gap-2 py-1"><div className="h-px bg-white/10 flex-1" /><span className="text-[10px] text-gray-500 uppercase tracking-widest">or</span><div className="h-px bg-white/10 flex-1" /></div>}
+      {onGoogleSignIn && <button type="button" disabled={busy} onClick={onGoogleSignIn} className="w-full h-12 bg-white text-gray-900 rounded-xl font-bold flex items-center justify-center gap-2 shadow-lg">
+        <span className="inline-flex items-center justify-center w-7 h-7 rounded-full border border-gray-200 font-black text-base">G</span><span>Continue with Google</span>
+      </button>}
     </>}
     {step === "password" && <>
       <input value={email} readOnly type="email" className="w-full bg-[#1e1e2d] border border-[#303040] rounded-xl px-3 py-3 text-white text-sm" />
       <div className="relative w-full">
         <input value={password} onChange={e=>setPassword(e.target.value)} type={showPassword ? "text" : "password"} placeholder="Password" className="w-full bg-[#1e1e2d] border border-[#303040] rounded-xl px-3 py-3 pr-12 text-white text-sm" autoComplete="current-password" />
-        <button type="button" onClick={()=>setShowPassword(v=>!v)} className="absolute right-2 top-1/2 -translate-y-1/2 w-9 h-9 flex items-center justify-center text-lg" aria-label={showPassword ? "Hide password" : "Show password"}>{showPassword ? "🙈" : "👁️"}</button>
+        <button type="button" onClick={()=>setShowPassword(v=>!v)} className="password-visibility-button absolute right-2 top-1/2 -translate-y-1/2" aria-label={showPassword ? "Hide password" : "Show password"}>{showPassword ? <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 3l18 18"/><path d="M10.6 10.6a2 2 0 0 0 2.8 2.8"/><path d="M9.9 4.2A10.8 10.8 0 0 1 12 4c5.2 0 9.5 4.2 10.5 8-.4 1.6-1.4 3.2-2.8 4.5"/><path d="M6.6 6.6C4.8 7.8 3.5 9.5 1.5 12c1 3.8 5.3 8 10.5 8 1.5 0 2.8-.3 4-.8"/></svg> : <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg>}</button>
       </div>
       {existingNeedsPassword && <p className="text-amber-300 text-xs bg-amber-950/30 border border-amber-500/30 rounded-xl p-3">This email is already registered. If you do not know the password, use Forgot Password to recover the account.</p>}
       <button type="button" disabled={busy} onClick={login} className="w-full bg-gradient-to-r from-[#ff007f] to-[#7b2cbf] text-white py-3 rounded-xl font-bold">Login</button>
@@ -186,15 +186,15 @@ export default function PersistentEmailAuth({ onAuthenticated, onGoogleSignIn }:
     </>}
     {step === "profile" && <>
       <input value={name} onChange={e=>setName(e.target.value)} placeholder="Full name" className="w-full bg-[#1e1e2d] border border-[#303040] rounded-xl px-3 py-3 text-white text-sm" autoComplete="name" />
-      <input value={username} onChange={e=>setUsername(e.target.value)} placeholder="Username" className="w-full bg-[#1e1e2d] border border-[#303040] rounded-xl px-3 py-3 text-white text-sm" autoComplete="username" />
+      <input value={username} onChange={e=>setUsername(e.target.value)} placeholder="Username (optional — email will be used)" className="w-full bg-[#1e1e2d] border border-[#303040] rounded-xl px-3 py-3 text-white text-sm" autoComplete="username" />
       <input value={email} readOnly className="w-full bg-[#151520] border border-[#303040] rounded-xl px-3 py-3 text-gray-400 text-sm" />
       <div className="relative w-full">
         <input value={password} onChange={e=>setPassword(e.target.value)} type={showPassword ? "text" : "password"} placeholder="Create password (6+ characters)" className="w-full bg-[#1e1e2d] border border-[#303040] rounded-xl px-3 py-3 pr-12 text-white text-sm" autoComplete="new-password" />
-        <button type="button" onClick={()=>setShowPassword(v=>!v)} className="absolute right-2 top-1/2 -translate-y-1/2 w-9 h-9 flex items-center justify-center text-lg" aria-label={showPassword ? "Hide password" : "Show password"}>{showPassword ? "🙈" : "👁️"}</button>
+        <button type="button" onClick={()=>setShowPassword(v=>!v)} className="password-visibility-button absolute right-2 top-1/2 -translate-y-1/2" aria-label={showPassword ? "Hide password" : "Show password"}>{showPassword ? <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 3l18 18"/><path d="M10.6 10.6a2 2 0 0 0 2.8 2.8"/><path d="M9.9 4.2A10.8 10.8 0 0 1 12 4c5.2 0 9.5 4.2 10.5 8-.4 1.6-1.4 3.2-2.8 4.5"/><path d="M6.6 6.6C4.8 7.8 3.5 9.5 1.5 12c1 3.8 5.3 8 10.5 8 1.5 0 2.8-.3 4-.8"/></svg> : <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg>}</button>
       </div>
       <div className="relative w-full">
         <input value={confirmPassword} onChange={e=>setConfirmPassword(e.target.value)} type={showConfirmPassword ? "text" : "password"} placeholder="Confirm password" className="w-full bg-[#1e1e2d] border border-[#303040] rounded-xl px-3 py-3 pr-12 text-white text-sm" autoComplete="new-password" />
-        <button type="button" onClick={()=>setShowConfirmPassword(v=>!v)} className="absolute right-2 top-1/2 -translate-y-1/2 w-9 h-9 flex items-center justify-center text-lg" aria-label={showConfirmPassword ? "Hide confirm password" : "Show confirm password"}>{showConfirmPassword ? "🙈" : "👁️"}</button>
+        <button type="button" onClick={()=>setShowConfirmPassword(v=>!v)} className="password-visibility-button absolute right-2 top-1/2 -translate-y-1/2" aria-label={showConfirmPassword ? "Hide confirm password" : "Show confirm password"}>{showConfirmPassword ? <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 3l18 18"/><path d="M10.6 10.6a2 2 0 0 0 2.8 2.8"/><path d="M9.9 4.2A10.8 10.8 0 0 1 12 4c5.2 0 9.5 4.2 10.5 8-.4 1.6-1.4 3.2-2.8 4.5"/><path d="M6.6 6.6C4.8 7.8 3.5 9.5 1.5 12c1 3.8 5.3 8 10.5 8 1.5 0 2.8-.3 4-.8"/></svg> : <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg>}</button>
       </div>
       <button type="button" disabled={busy} onClick={saveProfile} className="w-full bg-gradient-to-r from-[#ff007f] to-[#7b2cbf] text-white py-3 rounded-xl font-bold">Create Account</button>
     </>}
@@ -203,7 +203,7 @@ export default function PersistentEmailAuth({ onAuthenticated, onGoogleSignIn }:
       <input value={otp} onChange={e=>setOtp(e.target.value)} maxLength={6} inputMode="numeric" placeholder="Recovery code" className="w-full bg-[#12121a] border border-[#00f5ff] rounded-xl px-3 py-3 text-white text-center tracking-widest font-bold" />
       <div className="relative w-full">
         <input value={password} onChange={e=>setPassword(e.target.value)} type={showPassword ? "text" : "password"} placeholder="New password (6+ characters)" className="w-full bg-[#1e1e2d] border border-[#303040] rounded-xl px-3 py-3 pr-12 text-white text-sm" autoComplete="new-password" />
-        <button type="button" onClick={()=>setShowPassword(v=>!v)} className="absolute right-2 top-1/2 -translate-y-1/2 w-9 h-9 flex items-center justify-center text-lg" aria-label={showPassword ? "Hide password" : "Show password"}>{showPassword ? "🙈" : "👁️"}</button>
+        <button type="button" onClick={()=>setShowPassword(v=>!v)} className="password-visibility-button absolute right-2 top-1/2 -translate-y-1/2" aria-label={showPassword ? "Hide password" : "Show password"}>{showPassword ? <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 3l18 18"/><path d="M10.6 10.6a2 2 0 0 0 2.8 2.8"/><path d="M9.9 4.2A10.8 10.8 0 0 1 12 4c5.2 0 9.5 4.2 10.5 8-.4 1.6-1.4 3.2-2.8 4.5"/><path d="M6.6 6.6C4.8 7.8 3.5 9.5 1.5 12c1 3.8 5.3 8 10.5 8 1.5 0 2.8-.3 4-.8"/></svg> : <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg>}</button>
       </div>
       <button type="button" disabled={busy} onClick={reset} className="w-full bg-gradient-to-r from-[#ff007f] to-[#7b2cbf] text-white py-3 rounded-xl font-bold">Reset Password & Login</button>
       <button type="button" disabled={busy} onClick={async()=>{setError("");setBusy(true);try{const r=await requestPasswordReset(email.trim().toLowerCase());if(!r?.success)throw new Error(r?.error||"Could not resend recovery code.");setError("");}catch(e){fail(e,"Could not resend recovery code.");}finally{setBusy(false);}}} className="w-full py-2 text-gray-300 text-xs">Resend recovery code</button>

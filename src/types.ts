@@ -63,6 +63,11 @@ export interface UserProfile {
   fullName?: string;
   name?: string;
   displayName?: string;
+  usernameLockedAt?: string;
+  registrationCompletedAt?: string;
+  accountStatus?: string;
+  profileCompleted?: boolean;
+  authProvider?: string;
   dob?: string;
   phoneNumber?: string;
   followersCount?: number;
