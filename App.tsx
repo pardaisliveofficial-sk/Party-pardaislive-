@@ -8393,7 +8393,7 @@ export default function App() {
                     {/* VIEW 1: HOME - PARTY HUB (Audio Lounge, 12-Seat Rooms, Banners) */}
                     {/* ===================================================================== */}
                     {clientView === "feed" && (
-                      <div className="flex-1 scroll-view-y p-3 pb-4 space-y-3">
+                      <div className="flex-1 scroll-view-y p-3 pb-4 space-y-3 relative">
                         
                         {/* 👁️ GUEST VISITOR MODE BANNER */}
                         {(!isLoggedIn || user?.isGuest) && (
@@ -8422,80 +8422,41 @@ export default function App() {
                           </div>
                         )}
                         
-                        {/* 📲 TOP GOOGLE PLAY APP INSTALLATION BAR */}
-                        <div className="bg-gradient-to-r from-[#0d1f14] via-[#122e1d] to-[#0a1810] border border-[#00e676]/60 rounded-2xl p-2.5 shadow-[0_0_20px_rgba(0,230,118,0.25)] flex items-center justify-between z-20 shrink-0 relative overflow-hidden">
-                          <div className="absolute -right-4 -bottom-4 w-20 h-20 bg-[#00e676]/10 rounded-full blur-xl pointer-events-none"></div>
-                          
-                          <div className="flex items-center space-x-2.5 min-w-0 flex-1 relative z-10">
-                            {/* App Logo with Play Store Badge */}
-                            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-[#00e676] via-emerald-500 to-teal-400 p-0.5 shadow-md flex items-center justify-center shrink-0">
-                              <div className="w-full h-full bg-[#09090e] rounded-[10px] flex items-center justify-center relative overflow-hidden">
-                                <Smartphone className="w-5 h-5 text-[#00e676]" />
-                                <span className="absolute bottom-0 right-0 text-[7px] leading-none p-0.5 bg-black/80 rounded">▶</span>
-                              </div>
-                            </div>
-                            
-                            <div className="min-w-0 flex-1">
-                              <div className="flex items-center space-x-1.5">
-                                <h4 className="text-[11px] font-black text-white uppercase tracking-wider font-mono truncate">
-                                  Install Pardais Live
-                                </h4>
-                                <span className="bg-[#00e676]/20 border border-[#00e676]/50 text-[#00e676] text-[7.5px] font-black px-1.5 py-0.2 rounded-full uppercase shrink-0 font-mono">
-                                  Google Play
-                                </span>
-                              </div>
-                              <p className="text-[8.5px] text-emerald-200/90 truncate font-medium">
-                                Official App • Download now from Play Store
-                              </p>
-                            </div>
-                          </div>
-
-                          {/* Play Store Install Button */}
+                        {/* 🟢 COMPACT HOME-ONLY QUICK LINKS OVERLAY */}
+                        <div className="absolute top-2 left-2 right-2 z-30 flex items-center justify-center gap-2 pointer-events-none">
                           <a
                             href="https://play.google.com/store/apps/details?id=com.PardaisLive"
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="bg-gradient-to-r from-[#00e676] via-emerald-400 to-teal-400 hover:from-emerald-300 hover:to-teal-300 text-black font-black text-[10px] uppercase tracking-wider px-3 py-2 rounded-xl flex items-center space-x-1.5 shadow-[0_0_12px_rgba(0,230,118,0.6)] transition-all active:scale-95 shrink-0 ml-2 border border-emerald-200 cursor-pointer"
+                            className="pointer-events-auto flex items-center gap-1.5 px-2.5 py-1.5 rounded-full bg-black/65 backdrop-blur-md border border-white/15 text-white shadow-lg hover:bg-black/80 hover:scale-[1.02] transition-all active:scale-95"
+                            title="Install Pardais Live from Google Play"
                           >
-                            <Download className="w-3.5 h-3.5 text-black" />
-                            <span>Install</span>
+                            <span className="w-5 h-5 rounded-full bg-white/95 flex items-center justify-center shrink-0 shadow-sm">
+                              <svg viewBox="0 0 24 24" className="w-3.5 h-3.5" aria-hidden="true">
+                                <path d="M3.5 2.9 13.1 12 3.5 21.1c-.35-.42-.55-.96-.55-1.55V4.45c0-.59.2-1.13.55-1.55Z" fill="#34A853"/>
+                                <path d="m13.1 12 2.65-2.52 3.55 2.02c.47.27.47.94 0 1.21l-3.55 2.02L13.1 12Z" fill="#FBBC04"/>
+                                <path d="m3.5 2.9 9.6 9.1 2.65-2.52L5.15 2.2c-.6-.35-1.25-.1-1.65.7Z" fill="#4285F4"/>
+                                <path d="m3.5 21.1 9.6-9.1 2.65 2.52-10.6 6.38c-.6.35-1.25.1-1.65-.7Z" fill="#EA4335"/>
+                              </svg>
+                            </span>
+                            <span className="text-[9px] font-black uppercase tracking-wide whitespace-nowrap">Install Pardais Live</span>
+                          </a>
+
+                          <a
+                            href={whatsappChannelUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="pointer-events-auto flex items-center gap-1.5 px-2.5 py-1.5 rounded-full bg-black/65 backdrop-blur-md border border-[#25D366]/45 text-white shadow-lg hover:bg-black/80 hover:border-[#25D366]/70 hover:scale-[1.02] transition-all active:scale-95"
+                            title="Pardais Official WhatsApp Channel"
+                          >
+                            <span className="w-5 h-5 rounded-full bg-[#25D366] flex items-center justify-center shrink-0 shadow-sm">
+                              <svg viewBox="0 0 24 24" className="w-3.5 h-3.5 text-white" aria-hidden="true">
+                                <path fill="currentColor" d="M20.52 3.48A11.84 11.84 0 0 0 12.06 0C5.51 0 .18 5.32.18 11.88c0 2.09.55 4.13 1.59 5.92L.08 24l6.34-1.66a11.9 11.9 0 0 0 5.64 1.43h.01c6.55 0 11.88-5.33 11.88-11.88 0-3.17-1.23-6.14-3.43-8.41Zm-8.46 18.27h-.01a9.83 9.83 0 0 1-5.01-1.37l-.36-.21-3.76.98 1-3.66-.23-.38a9.82 9.82 0 1 1 8.37 4.64Zm5.4-7.36c-.29-.15-1.7-.84-1.96-.93-.26-.1-.45-.15-.64.15-.19.29-.73.93-.9 1.12-.17.19-.33.22-.62.07-.29-.15-1.23-.45-2.34-1.44-.87-.77-1.45-1.72-1.62-2.01-.17-.29-.02-.45.13-.6.13-.13.29-.33.44-.49.15-.17.19-.29.29-.48.1-.19.05-.36-.02-.51-.07-.15-.64-1.54-.88-2.11-.23-.55-.47-.48-.64-.49h-.54c-.19 0-.51.07-.78.36-.26.29-1.02 1-1.02 2.43 0 1.43 1.04 2.81 1.18 3 .15.19 2.05 3.13 4.96 4.39.69.3 1.23.48 1.65.61.69.22 1.32.19 1.81.12.55-.08 1.7-.69 1.94-1.35.24-.66.24-1.22.17-1.34-.07-.12-.26-.19-.55-.33Z"/>
+                              </svg>
+                            </span>
+                            <span className="text-[9px] font-black uppercase tracking-wide whitespace-nowrap">WhatsApp Channel</span>
                           </a>
                         </div>
-
-                        {/* 💬 OFFICIAL WHATSAPP CHANNEL JOIN BANNER */}
-                        <a
-                          href={whatsappChannelUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="bg-gradient-to-r from-[#0a1e12] via-[#0f2e1a] to-[#08180e] border border-[#25D366]/50 hover:border-[#25D366] rounded-2xl p-2.5 shadow-[0_0_18px_rgba(37,211,102,0.2)] flex items-center justify-between z-20 shrink-0 relative overflow-hidden transition-all group cursor-pointer"
-                        >
-                          <div className="absolute -right-4 -top-4 w-16 h-16 bg-[#25D366]/10 rounded-full blur-lg pointer-events-none"></div>
-
-                          <div className="flex items-center space-x-2.5 min-w-0 flex-1 relative z-10">
-                            <div className="w-9 h-9 rounded-xl bg-[#25D366]/20 border border-[#25D366]/40 flex items-center justify-center shrink-0 text-[#25D366] group-hover:scale-105 transition-transform">
-                              <MessageCircle className="w-5 h-5 text-[#25D366] animate-pulse" />
-                            </div>
-
-                            <div className="min-w-0 flex-1 text-left">
-                              <div className="flex items-center space-x-1.5">
-                                <h4 className="text-[10.5px] font-black text-white uppercase tracking-wider font-mono truncate">
-                                  Pardais Official WhatsApp Channel
-                                </h4>
-                                <span className="bg-[#25D366]/20 border border-[#25D366]/50 text-[#25D366] text-[7px] font-black px-1.5 py-0.2 rounded-full uppercase shrink-0 font-mono">
-                                  VERIFIED
-                                </span>
-                              </div>
-                              <p className="text-[8px] text-emerald-200/80 truncate font-medium">
-                                Join for free coin giveaways, event announcements & 24/7 help
-                              </p>
-                            </div>
-                          </div>
-
-                          <div className="bg-[#25D366] hover:bg-[#128C7E] text-black font-black text-[9.5px] uppercase tracking-wider px-3 py-1.5 rounded-xl flex items-center space-x-1 shadow-md shrink-0 ml-2 border border-emerald-300 transition-all">
-                            <span>Join Channel</span>
-                            <span className="text-xs">📢</span>
-                          </div>
-                        </a>
 
                         {/* 🎪 AUTO-PLAYING ADVERTISING PROMO BANNER CAROUSEL */}
                         {(() => {
@@ -13125,17 +13086,6 @@ export default function App() {
 
                           {/* TOP RIGHT PROFILE HEADER CONTROLS (Install App, Camera Cover Photo, Bell, Settings) */}
                           <div className="absolute top-3 right-3 z-40 flex items-center space-x-1.5 max-w-[calc(100%-55px)] flex-wrap justify-end gap-y-1">
-                            {/* 📲 Install Android App Green Button */}
-                            <button
-                              type="button"
-                              onClick={triggerAndroidInstall}
-                              className="px-2.5 py-1 rounded-full bg-gradient-to-r from-[#00e676] to-emerald-600 border border-emerald-300 text-black font-extrabold text-[9.5px] uppercase tracking-wider backdrop-blur-md transition-all shadow-[0_0_12px_rgba(0,230,118,0.5)] hover:scale-105 active:scale-95 cursor-pointer flex items-center space-x-1 shrink-0"
-                              title="Install Android App"
-                            >
-                              <Smartphone className="w-3.5 h-3.5 text-black" />
-                              <span>Install App</span>
-                            </button>
-
                             {/* 📷 Change Cover Photo Camera Button */}
                             <button
                               type="button"
