@@ -4734,6 +4734,7 @@ app.post("/api/v1/parties", (req, res) => {
     language: language || "English",
     description: description || "Welcome to our 12-seat audio lounge!",
     status: "active",
+    createdAt: existingIdx !== -1 ? (dbData.parties[existingIdx].createdAt || Date.now()) : Date.now(),
     connectedViewers: [{ userId: validHost, username: validHost, avatar: hostAvatar || "", level: 1, vipLevel: 0 }],
     seats: (existingIdx !== -1 && dbData.parties[existingIdx].seats) ? dbData.parties[existingIdx].seats : [
       { id: 1, name: validHost, avatar: hostAvatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80", isMuted: false, isLocked: false },
@@ -4825,16 +4826,7 @@ app.post("/api/v1/parties/:id/leave", (req, res) => {
       delete party.lastSeen[username];
     }
 
-    // If host leaves or no users remain, close the party room
-    if (username === party.hostUsername || party.participantCount === 0) {
-      party.status = "ended";
-      dbData.parties = dbData.parties.filter((p: any) => p.id !== id);
-      saveDatabase();
-      deleteDocument("parties", id);
-      console.log(`[PARDAIS-PARTY PARTY] Host/all left. Closed party room: ${id}`);
-      return res.json({ message: "Party closed as host left", party });
-    }
-
+    // Leaving a room never ends it. Only the explicit /close endpoint ends the party.
     console.log(`[PARDAIS-PARTY PARTY] User ${username} left party ${id}. Seats cleared immediately.`);
     saveDatabase();
     syncDocument("parties", id, party);

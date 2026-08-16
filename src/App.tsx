@@ -2131,6 +2131,14 @@ export default function App() {
   // Party System states
   const [partiesList, setPartiesList] = useState<any[]>([]);
   const [activePartyId, setActivePartyId] = useState<string | null>(null);
+  const [partyTimerNow, setPartyTimerNow] = useState<number>(Date.now());
+
+  // Live room timer: refresh once per second only while inside a party room.
+  useEffect(() => {
+    if (clientView !== "party-room" || !activePartyId) return;
+    const timer = window.setInterval(() => setPartyTimerNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [clientView, activePartyId]);
   const [partyUserProfile, setPartyUserProfile] = useState<{
     username: string;
     avatar?: string;
@@ -7842,6 +7850,7 @@ export default function App() {
       language: partyFormLanguage || "Urdu",
       description: partyFormDescription || "Welcome to our 12-seat audio party lounge!",
       status: "active",
+      createdAt: Date.now(),
       connectedViewers: [{ userId: validHost, username: validHost, avatar: user.avatar || "", level: user.userLevel || user.level || 1, vipLevel: user.vipLevel || 0 }],
       seats: [
         { id: 1, name: validHost, avatar: user.avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80", isMuted: false, isLocked: false },
@@ -9879,22 +9888,6 @@ export default function App() {
                                   <Share2 className="w-3.5 h-3.5" />
                                 </button>
 
-                                {/* Mic Join Requests Button (Host) */}
-                                {isHostOfRoom && (
-                                  <button
-                                    onClick={() => setShowRequestsSheet(true)}
-                                    className="relative bg-black/40 backdrop-blur-md border border-amber-500/40 hover:border-amber-300 p-1.5 rounded-xl text-amber-400 hover:text-amber-200 transition-all cursor-pointer flex items-center justify-center w-7.5 h-7.5 shadow-md active:scale-95"
-                                    title="Seat Join Requests"
-                                  >
-                                    <span className="text-xs">🎙️</span>
-                                    {activeRequests.length > 0 && (
-                                      <span className="absolute -top-1 -right-1 bg-gradient-to-r from-amber-400 to-yellow-500 text-black text-[7px] font-black rounded-full w-3.5 h-3.5 flex items-center justify-center border border-black shadow">
-                                        {activeRequests.length}
-                                      </span>
-                                    )}
-                                  </button>
-                                )}
-                                
                                 {/* Close / Exit Button */}
                                 <button
                                   onClick={() => setShowPartyExitConfirm(true)}
@@ -9903,29 +9896,6 @@ export default function App() {
                                 >
                                   <X className="w-3.5 h-3.5" />
                                 </button>
-                              </div>
-                            </div>
-
-                            {/* 🌟 LUXURY REAL-VOICE STATUS BAR */}
-                            <div className="px-3 py-1 flex items-center justify-between bg-gradient-to-r from-amber-950/40 via-black/70 to-purple-950/40 border-b border-amber-500/20 text-[8px] font-mono text-amber-200/90 backdrop-blur-md shadow-md">
-                              <div className="flex items-center space-x-1.5">
-                                <span className="relative flex h-2 w-2">
-                                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-                                </span>
-                                <span className="font-extrabold text-amber-300 uppercase tracking-wide">Real Voice Live</span>
-                                <span className="text-gray-500">•</span>
-                                <span className="text-emerald-400 font-bold">Connected</span>
-                              </div>
-                              <div className="flex items-center space-x-2">
-                                <span className="text-amber-300 font-bold">👑 Host: @{party.hostUsername}</span>
-                                <span className="text-gray-500">•</span>
-                                <span className="text-emerald-400 font-bold flex items-center space-x-0.5">
-                                  <span>📶</span>
-                                  <span>24 ms</span>
-                                </span>
-                                <span className="text-gray-500">•</span>
-                                <span className="text-amber-400 font-bold">🎙️ Mic Live</span>
                               </div>
                             </div>
 
@@ -10070,6 +10040,56 @@ export default function App() {
                                 avatar={user.avatar}
                               />
                             </div>
+
+                            {/* COMPACT PARTY STATUS / STATS ROW — moved below the seats to save top space */}
+                            {(() => {
+                              const totalViewers = Array.isArray(party.connectedViewers)
+                                ? party.connectedViewers.length
+                                : Number(party.participantCount || 0);
+                              const createdAt = Number(party.createdAt || party.created_at || 0);
+                              const elapsed = createdAt > 0 ? Math.max(0, partyTimerNow - createdAt) : 0;
+                              const totalSeconds = Math.floor(elapsed / 1000);
+                              const hours = Math.floor(totalSeconds / 3600);
+                              const minutes = Math.floor((totalSeconds % 3600) / 60);
+                              const seconds = totalSeconds % 60;
+                              const timerLabel = `${hours > 0 ? `${String(hours).padStart(2, "0")}:` : ""}${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+                              const hostRank = getRankingData("host", "monthly").find((item: any) => item.name === party.hostUsername);
+                              const gifterRank = getRankingData("gifter", "monthly").find((item: any) => item.name === user.username || item.name === user.fullName);
+
+                              return (
+                                <div className="mx-3 mb-1 mt-0.5 rounded-xl border border-amber-500/20 bg-black/55 backdrop-blur-md px-2 py-1.5 shadow-lg">
+                                  <div className="flex items-center justify-between gap-1.5 text-[7px] font-mono uppercase tracking-wide">
+                                    <div className="flex items-center gap-1.5 shrink-0">
+                                      <span className="relative flex h-1.5 w-1.5">
+                                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                                        <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500" />
+                                      </span>
+                                      <span className="font-black text-emerald-300">REAL VOICE</span>
+                                    </div>
+                                    <div className="flex items-center gap-2 text-gray-200">
+                                      <span title="All users in the room">👁️ {totalViewers}</span>
+                                      <span title="Party running time">⏱️ {timerLabel}</span>
+                                      <span title="Overall host ranking">👑 H#{hostRank?.rank || "—"}</span>
+                                      <span title="Overall gifter ranking">🎁 G#{gifterRank?.rank || "—"}</span>
+                                      {isHostOfRoom && (
+                                        <button
+                                          onClick={() => setShowRequestsSheet(true)}
+                                          className="relative text-amber-300 hover:text-white p-0.5 rounded-md cursor-pointer"
+                                          title="Seat Join Requests"
+                                        >
+                                          🎙️
+                                          {activeRequests.length > 0 && (
+                                            <span className="absolute -top-1 -right-1 bg-amber-400 text-black text-[5px] font-black rounded-full min-w-2.5 h-2.5 px-0.5 flex items-center justify-center">
+                                              {activeRequests.length}
+                                            </span>
+                                          )}
+                                        </button>
+                                      )}
+                                    </div>
+                                  </div>
+                                </div>
+                              );
+                            })()}
                           </div>
 
                           {/* LOWER AREA: INFORMATION CARD + COMMENTS + BOTTOM ACTIONS BAR */}
