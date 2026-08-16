@@ -8125,8 +8125,8 @@ export default function App() {
 
   const handlePartyToggleLock = async (partyId: string, seatId: number) => {
     const currentParty = partiesList.find((p: any) => p.id === partyId);
-    if (!currentParty || currentParty.hostUsername !== user.username) {
-      alert("Only the Host can lock or unlock seats.");
+    if (!currentParty || (currentParty.hostUsername !== user.username && !isPartyModerator(partyId, user.username))) {
+      alert("Only the Host or Moderator can lock or unlock seats.");
       return;
     }
     // 1. Optimistic state update: toggle isLocked instantly in local state
@@ -8156,8 +8156,8 @@ export default function App() {
   };
 
   const handlePartyLockAllEmptySeats = async (party: any, locked: boolean) => {
-    if (party.hostUsername !== user.username) {
-      alert("Only the Host can change seat locks.");
+    if (party.hostUsername !== user.username && !isPartyModerator(party.id, user.username)) {
+      alert("Only the Host or Moderator can change seat locks.");
       return;
     }
     setPartiesList(prev => prev.map(p => p.id !== party.id ? p : ({
@@ -10199,7 +10199,7 @@ export default function App() {
                                           {isAllGuestsMuted ? "🔇 ALL MUTED" : "🎙️ MUTE ALL"}
                                         </button>
                                       )}
-                                      {isHostOfRoom && (
+                                      {canModeratePartyGuests(party) && (
                                         <button
                                           onClick={() => {
                                             const hasUnlockedEmpty = (party.seats || []).some((s: any) => !s.name && s.id !== 1 && !s.isLocked);
@@ -10316,7 +10316,7 @@ export default function App() {
                                     </button>
                                   )}
 
-                                  {isHostOfRoom && activeSeatMenu.seatId !== 1 && (
+                                  {canModeratePartyGuests(party) && activeSeatMenu.seatId !== 1 && (
                                     <button
                                       onClick={() => {
                                         const locked = Boolean(seat?.isLocked);
@@ -10355,6 +10355,19 @@ export default function App() {
                                     </>
                                   ) : occupantName ? (
                                     <>
+                                      {/* Shared viewer/host actions for another guest */}
+                                      {occupantName !== party.hostUsername && (
+                                        <button
+                                          onClick={() => {
+                                            const following = followedUsers.includes(occupantName);
+                                            setFollowedUsers(prev => following ? prev.filter(u => u !== occupantName) : [...prev, occupantName]);
+                                            setActiveSeatMenu(null);
+                                          }}
+                                          className="bg-pink-500/15 hover:bg-pink-500/30 text-pink-300 border border-pink-500/40 rounded-xl py-2 text-[9.5px] font-black uppercase tracking-wider text-center cursor-pointer transition-all"
+                                        >
+                                          {followedUsers.includes(occupantName) ? "Following ✓" : "Follow ❤️"}
+                                        </button>
+                                      )}
                                       {/* Actions for other seated guests */}
                                       {canModeratePartyGuests(party) && occupantName !== party.hostUsername ? (
                                         <>
@@ -10387,6 +10400,7 @@ export default function App() {
                                           </button>
                                           <button
                                             onClick={() => {
+                                              if (!isHostOfRoom) { alert("Only the Host can appoint or remove Moderators."); return; }
                                               const currentlyMod = isPartyModerator(party.id, occupantName);
                                               setPartyModeratorUsers(prev => {
                                                 const current = prev[party.id] || [];
@@ -10772,11 +10786,21 @@ export default function App() {
                               }}
                               className="flex-1 flex items-center space-x-1 bg-black/50 border border-amber-500/30 rounded-full px-3.5 py-1.5 focus-within:border-amber-400 shadow-inner"
                             >
+                              {isHostOfRoom && (
+                                <button
+                                  type="button"
+                                  onClick={() => setShowPartyMusicLibrary(true)}
+                                  className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 cursor-pointer border transition-all active:scale-90 ${partyMusicPlaying ? "bg-amber-400 text-black border-amber-200 shadow-[0_0_12px_rgba(245,158,11,0.55)]" : "bg-black/60 text-amber-300 border-amber-500/40"}`}
+                                  title="Host Music Library"
+                                >
+                                  <Music className="w-3.5 h-3.5" />
+                                </button>
+                              )}
                               <input
                                 name="chatMessage"
                                 type="text"
                                 placeholder="Write message..."
-                                className="flex-1 bg-transparent text-xs text-amber-100 placeholder-amber-400/50 focus:outline-none font-sans"
+                                className="flex-1 min-w-0 bg-transparent text-xs text-amber-100 placeholder-amber-400/50 focus:outline-none font-sans"
                               />
                               <button
                                 type="submit"
@@ -10819,17 +10843,6 @@ export default function App() {
                                 title="Request to Join Mic Seats"
                               >
                                 <span className="text-sm font-black">+🎙️</span>
-                              </button>
-                            )}
-
-                            {/* 🎵 Party Music Library launcher */}
-                            {(mySeatedSeat || isHostOfRoom) && (
-                              <button
-                                onClick={() => setShowPartyMusicLibrary(true)}
-                                className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 cursor-pointer border transition-all active:scale-90 ${partyMusicPlaying ? "bg-amber-400 text-black border-amber-200 shadow-[0_0_14px_rgba(245,158,11,0.55)]" : "bg-black/60 text-amber-300 border-amber-500/40"}`}
-                                title="Open Party Music Library"
-                              >
-                                <Music className="w-4 h-4" />
                               </button>
                             )}
 

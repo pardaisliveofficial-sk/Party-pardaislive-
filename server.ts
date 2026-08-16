@@ -4938,7 +4938,9 @@ app.post("/api/v1/parties/:id/seats/mute-all", (req, res) => {
   const index = dbData.parties?.findIndex((p: any) => p.id === id);
   if (index === -1 || index === undefined) return res.status(404).json({ error: "Party Room not found" });
   const party = dbData.parties[index];
-  if (actorUsername !== party.hostUsername) return res.status(403).json({ error: "Only host can mute all guests" });
+  const actorIsHost = actorUsername === party.hostUsername;
+  const actorIsMod = Array.isArray(party.moderators) && party.moderators.includes(actorUsername);
+  if (!actorIsHost && !actorIsMod) return res.status(403).json({ error: "Only host or moderator can mute all guests" });
   party.allGuestsMuted = Boolean(muted);
   party.seats = (party.seats || []).map((seat: any) => seat.name && seat.name !== party.hostUsername ? { ...seat, isMuted: Boolean(muted) } : seat);
   saveDatabase(); syncDocument("parties", id, party); res.json(party);
@@ -4950,7 +4952,9 @@ app.post("/api/v1/parties/:id/seats/toggle-lock", (req, res) => {
   const index = dbData.parties?.findIndex((p: any) => p.id === id);
   if (index !== -1 && index !== undefined) {
     const party = dbData.parties[index];
-    if (actorUsername !== party.hostUsername) return res.status(403).json({ error: "Only host can lock or unlock seats" });
+    const actorIsHost = actorUsername === party.hostUsername;
+    const actorIsMod = Array.isArray(party.moderators) && party.moderators.includes(actorUsername);
+    if (!actorIsHost && !actorIsMod) return res.status(403).json({ error: "Only host or moderator can lock or unlock seats" });
     if (Number(seatId) === 1) return res.status(400).json({ error: "Host seat cannot be locked" });
     party.seats = party.seats.map((seat: any) => {
       if (seat.id === Number(seatId)) {
@@ -4972,7 +4976,9 @@ app.post("/api/v1/parties/:id/seats/toggle-lock-all", (req, res) => {
   const index = dbData.parties?.findIndex((p: any) => p.id === id);
   if (index === -1 || index === undefined) return res.status(404).json({ error: "Party Room not found" });
   const party = dbData.parties[index];
-  if (actorUsername !== party.hostUsername) return res.status(403).json({ error: "Only host can change seat locks" });
+  const actorIsHost = actorUsername === party.hostUsername;
+  const actorIsMod = Array.isArray(party.moderators) && party.moderators.includes(actorUsername);
+  if (!actorIsHost && !actorIsMod) return res.status(403).json({ error: "Only host or moderator can change seat locks" });
   party.seats = (party.seats || []).map((seat: any) => (!seat.name && seat.id !== 1) ? { ...seat, isLocked: Boolean(locked) } : seat);
   saveDatabase();
   syncDocument("parties", id, party);
