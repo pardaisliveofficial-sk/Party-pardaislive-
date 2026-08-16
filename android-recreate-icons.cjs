@@ -85,7 +85,7 @@ async function execute() {
   const rawIconSvg = fs.existsSync(WEB_ICON_PATH) ? fs.readFileSync(WEB_ICON_PATH, 'utf8') : ''; 
 
   // 1. Generate Launcher Icons (mipmap)
-  console.log('\nGenerating Android Launcher Icons (mipmap) from public/icon.svg:');
+  console.log('\nGenerating Android Launcher Icons (mipmap) from public/pardais-party-exact.png:');
   for (const config of ICON_CONFIGS) {
     const dirPath = path.join(RES_DIR, config.dir);
     if (!fs.existsSync(dirPath)) {
@@ -140,6 +140,7 @@ async function execute() {
       fs.mkdirSync(dirPath, { recursive: true });
     }
 
+    const splashPath = path.join(dirPath, 'splash.png');
     const logo = await sharp(iconBuffer).resize({ width: Math.round(config.width * 0.82), height: Math.round(config.height * 0.82), fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } }).png().toBuffer();
     await sharp({ create: { width: config.width, height: config.height, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 1 } } })
       .composite([{ input: logo, gravity: 'center' }])
@@ -149,7 +150,7 @@ async function execute() {
   }
 
   console.log('\n------------------------------------------------------------');
-  console.log('🎉 All Android Resources Generated Successfully from public/icon.svg! 🎉');
+  console.log('🎉 All Android Resources Generated Successfully from the exact Pardais Party PNG! 🎉');
   console.log('------------------------------------------------------------');
 }
 
