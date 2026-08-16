@@ -441,3 +441,23 @@
   width: 100%;
 }
 
+
+
+/* Android phone viewport hardening: keep party controls inside narrow screens
+   and leave room for gesture/navigation bars when Capacitor uses edge-to-edge. */
+html, body, #root {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: hidden;
+}
+
+button, input, form {
+  min-width: 0;
+}
+
+@media (max-width: 380px) {
+  .party-mobile-compact {
+    gap: 4px !important;
+  }
+}

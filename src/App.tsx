@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
+import { App as CapacitorApp } from "@capacitor/app";
 import { authenticatedFetch, resolveApiUrl, refreshSession, getAuthToken, isCapacitorOrAndroid } from "./lib/apiClient";
 import { COUNTRIES_CURRENCIES, CountryCurrency, getCoinsCostInCurrency } from "./currencyUtils";
 import { ReelsView } from "./components/ReelsView";
@@ -952,6 +953,7 @@ export default function App() {
   const [isEditingProfile, setIsEditingProfile] = useState<boolean>(false);
   const [editFullName, setEditFullName] = useState<string>(DEFAULT_USER.fullName || "");
   const [editAvatar, setEditAvatar] = useState<string>(DEFAULT_USER.avatar);
+  const [editAvatarFile, setEditAvatarFile] = useState<File | null>(null);
   const [editDob, setEditDob] = useState<string>(DEFAULT_USER.dob || "");
   const [editGender, setEditGender] = useState<string>(DEFAULT_USER.gender);
   const [editPhoneNumber, setEditPhoneNumber] = useState<string>(DEFAULT_USER.phoneNumber || "");
@@ -1088,6 +1090,7 @@ export default function App() {
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
         const dataUrl = canvas.toDataURL("image/jpeg", 0.9);
         setEditAvatar(dataUrl);
+        setEditAvatarFile(null);
       }
     }
     stopAvatarCamera();
@@ -3862,12 +3865,27 @@ export default function App() {
       triggerBack();
     };
 
+    // Capacitor Android/iOS hardware back integration. This makes the physical
+    // system Back button follow the same in-app navigation rules as the web
+    // history fallback instead of closing the WebView immediately.
+    let nativeBackListener: { remove: () => Promise<void> } | null = null;
+    CapacitorApp.addListener("backButton", () => {
+      triggerBack();
+    }).then(listener => {
+      nativeBackListener = listener;
+    }).catch(() => {
+      // Browser/PWA builds do not expose the native Capacitor listener.
+    });
+
     window.addEventListener("popstate", handlePopState);
     document.addEventListener("backbutton", handleHardwareBack);
     
     return () => {
       window.removeEventListener("popstate", handlePopState);
       document.removeEventListener("backbutton", handleHardwareBack);
+      if (nativeBackListener) {
+        nativeBackListener.remove().catch(() => {});
+      }
     };
   }, [
     clientView, 
@@ -6045,28 +6063,44 @@ export default function App() {
     let persistentAvatar = user.avatar;
     const selectedAvatar = editAvatar.trim();
 
-    // Upload newly selected gallery/camera image to production storage first.
-    // Never persist a base64 data URL in localStorage or the user profile.
-    if (selectedAvatar && selectedAvatar !== user.avatar && selectedAvatar.startsWith("data:image/")) {
+    // Upload the actual selected file to production storage. Keep the File object
+    // instead of relying on a large base64 data URL, which is unreliable on Android WebView.
+    if (editAvatarFile || (selectedAvatar && selectedAvatar !== user.avatar && selectedAvatar.startsWith("data:image/"))) {
       try {
-        const blob = await (await fetch(selectedAvatar)).blob();
-        const formData = new FormData();
-        formData.append("avatar", blob, `avatar-${Date.now()}.jpg`);
-
-        const uploadRes = await authenticatedFetch("/api/v1/user/avatar", {
-          method: "POST",
-          body: formData
-        });
-        const uploadData = await uploadRes.json().catch(() => ({}));
-
-        if (!uploadRes.ok || !uploadData?.url) {
-          throw new Error(uploadData?.error || "Profile photo upload failed");
+        let fileToUpload: File;
+        if (editAvatarFile) {
+          fileToUpload = editAvatarFile;
+        } else {
+          const blob = await (await fetch(selectedAvatar)).blob();
+          fileToUpload = new File([blob], `avatar-${Date.now()}.jpg`, { type: blob.type || "image/jpeg" });
         }
+
+        const formData = new FormData();
+        formData.append("avatar", fileToUpload, fileToUpload.name || `avatar-${Date.now()}.jpg`);
+        const token = localStorage.getItem("pardais_auth_token") || "";
+        const uploadUrl = resolveApiUrl("/api/v1/user/avatar");
+
+        const uploadData: any = await new Promise((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open("POST", uploadUrl, true);
+          xhr.timeout = 60000;
+          if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+          xhr.onload = () => {
+            let body: any = {};
+            try { body = JSON.parse(xhr.responseText || "{}"); } catch {}
+            if (xhr.status >= 200 && xhr.status < 300 && body?.url) resolve(body);
+            else reject(new Error(body?.error || `Profile photo upload failed (HTTP ${xhr.status})`));
+          };
+          xhr.onerror = () => reject(new Error("Network error while uploading profile photo."));
+          xhr.ontimeout = () => reject(new Error("Profile photo upload timed out. Please try again."));
+          xhr.onabort = () => reject(new Error("Profile photo upload was cancelled."));
+          xhr.send(formData);
+        });
 
         persistentAvatar = uploadData.url;
       } catch (err) {
         console.error("[PARDAIS PROFILE] Avatar upload failed:", err);
-        alert("Profile photo upload failed. Please try again.");
+        alert(err instanceof Error ? err.message : "Profile photo upload failed. Please try again.");
         return;
       }
     }
@@ -6093,6 +6127,7 @@ export default function App() {
 
     saveAndSyncUserProfile(updatedUser);
     setEditAvatar(persistentAvatar);
+    setEditAvatarFile(null);
     setIsEditingProfile(false);
   };
 
@@ -9936,7 +9971,7 @@ export default function App() {
                             <div className="flex items-center justify-between p-2 px-3 border-b border-amber-500/30 bg-black/40 backdrop-blur-xl shadow-lg relative z-20">
                               <div 
                                 onClick={() => handleOpenPartyUserProfile(party.hostUsername, party.hostAvatar, 1)}
-                                className="flex items-center space-x-2.5 bg-transparent text-left max-w-[65%] cursor-pointer group"
+                                className="flex items-center space-x-2.5 bg-transparent text-left min-w-0 max-w-[58%] cursor-pointer group"
                                 title="Click to view Host Profile"
                               >
                                 <div className="relative shrink-0">
@@ -9961,15 +9996,15 @@ export default function App() {
                               </div>
 
                               {/* Top Bar Actions */}
-                              <div className="flex items-center space-x-1.5 bg-transparent shrink-0">
+                              <div className="flex items-center space-x-1 bg-transparent shrink-0 min-w-0 max-w-[42%]">
                                 {/* 🎡 Lucky Wheel Party Game Button */}
                                 <button
                                   onClick={() => setShowPartyGamesModal(true)}
-                                  className="bg-gradient-to-r from-amber-400 via-yellow-500 to-amber-600 hover:brightness-110 h-7.5 px-2.5 rounded-xl text-black font-black text-[9.5px] font-mono transition-all cursor-pointer flex items-center justify-center shadow-[0_0_15px_rgba(245,158,11,0.5)] border border-amber-300 active:scale-95 animate-pulse"
+                                  className="bg-gradient-to-r from-amber-400 via-yellow-500 to-amber-600 hover:brightness-110 h-7.5 w-8 sm:w-auto sm:px-2.5 rounded-xl text-black font-black text-[9.5px] font-mono transition-all cursor-pointer flex items-center justify-center shadow-[0_0_15px_rgba(245,158,11,0.5)] border border-amber-300 active:scale-95 animate-pulse shrink-0"
                                   title="Play Lucky Wheel & Games"
                                 >
-                                  <span className="mr-1 text-xs">🎡</span>
-                                  <span>GAMES</span>
+                                  <span className="text-xs">🎡</span>
+                                  <span className="hidden sm:inline ml-1">GAMES</span>
                                 </button>
 
                                 {/* Share Party Room Button */}
@@ -9994,7 +10029,7 @@ export default function App() {
 
                             {/* 🎙️ 12-SEAT LOUNGE AUDIOGRID AREA (3 COLUMNS x 4 ROWS = 12 HEXAGON SEATS) */}
                             <div className="px-3 py-2 space-y-2 bg-transparent">
-                              <div className="grid grid-cols-3 gap-x-3 gap-y-3.5 bg-black/50 backdrop-blur-md border border-amber-500/30 rounded-2xl p-3 shadow-[0_0_30px_rgba(0,0,0,0.9)] relative overflow-hidden">
+                              <div className="grid grid-cols-3 gap-x-2.5 gap-y-3 bg-black/50 backdrop-blur-md border border-amber-500/30 rounded-2xl p-2.5 sm:p-3 shadow-[0_0_30px_rgba(0,0,0,0.9)] relative overflow-hidden">
                                 {/* Ambient decorative highlights inside grid */}
                                 <div className="absolute -top-16 -left-16 w-36 h-36 rounded-full bg-amber-500/15 blur-3xl pointer-events-none" />
                                 <div className="absolute -bottom-16 -right-16 w-36 h-36 rounded-full bg-yellow-500/15 blur-3xl pointer-events-none" />
@@ -10775,7 +10810,7 @@ export default function App() {
                           )}
 
                           {/* ⌨️ INTERACTIVE BOTTOM CONTROL ACTIONS ROW */}
-                          <div className="px-3 pt-1 flex items-center space-x-2 shrink-0 bg-transparent">
+                          <div className="w-full min-w-0 max-w-full px-3 pt-1 pb-[calc(0.25rem+env(safe-area-inset-bottom,0px))] flex items-center gap-1.5 sm:gap-2 shrink-0 bg-transparent overflow-hidden">
                             {/* Message Input Form */}
                             <form 
                               onSubmit={(e) => {
@@ -10787,7 +10822,7 @@ export default function App() {
                                   input.value = "";
                                 }
                               }}
-                              className="flex-1 flex items-center space-x-1 bg-black/50 border border-amber-500/30 rounded-full px-3.5 py-1.5 focus-within:border-amber-400 shadow-inner"
+                              className="flex-1 min-w-0 max-w-full flex items-center gap-1 bg-black/50 border border-amber-500/30 rounded-full px-2.5 sm:px-3.5 py-1.5 focus-within:border-amber-400 shadow-inner overflow-hidden"
                             >
                               {isHostOfRoom && (
                                 <button
@@ -10842,7 +10877,7 @@ export default function App() {
                                     alert("Room capacity full! Wait for seat availability.");
                                   }
                                 }}
-                                className="w-9 h-9 rounded-full bg-[#141224] hover:bg-amber-500 text-amber-400 hover:text-black border border-amber-500/40 flex items-center justify-center shrink-0 cursor-pointer shadow-md transition-all active:scale-90"
+                                className="w-9 h-9 min-w-9 max-w-9 rounded-full bg-[#141224] hover:bg-amber-500 text-amber-400 hover:text-black border border-amber-500/40 flex items-center justify-center shrink-0 cursor-pointer shadow-md transition-all active:scale-90"
                                 title="Request to Join Mic Seats"
                               >
                                 <span className="text-sm font-black">+🎙️</span>
@@ -10855,7 +10890,7 @@ export default function App() {
                                 setPartyGiftRecipient(party.hostUsername || "Host");
                                 setPartyGiftDrawerOpen(true);
                               }}
-                              className="w-9 h-9 rounded-full bg-gradient-to-r from-amber-400 via-yellow-500 to-amber-600 hover:brightness-110 text-black flex items-center justify-center shrink-0 cursor-pointer shadow-[0_0_15px_rgba(245,158,11,0.5)] border border-amber-200 transition-all active:scale-90"
+                              className="w-9 h-9 min-w-9 max-w-9 rounded-full bg-gradient-to-r from-amber-400 via-yellow-500 to-amber-600 hover:brightness-110 text-black flex items-center justify-center shrink-0 cursor-pointer shadow-[0_0_15px_rgba(245,158,11,0.5)] border border-amber-200 transition-all active:scale-90"
                               title="Send gift in Party Lounge"
                             >
                               <span className="text-sm">🎁</span>
@@ -13696,6 +13731,7 @@ export default function App() {
                                               reader.onload = (ev) => {
                                                 if (ev.target?.result) {
                                                   setEditAvatar(ev.target.result as string);
+                                                  setEditAvatarFile(file);
                                                 }
                                               };
                                               reader.readAsDataURL(file);
@@ -13716,6 +13752,7 @@ export default function App() {
                                               reader.onload = (ev) => {
                                                 if (ev.target?.result) {
                                                   setEditAvatar(ev.target.result as string);
+                                                  setEditAvatarFile(file);
                                                 }
                                               };
                                               reader.readAsDataURL(file);

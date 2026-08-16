@@ -6953,7 +6953,13 @@ const s3MulterUpload = multer({
 const avatarMulterUpload = multer({
   storage: multer.memoryStorage(),
   limits: {
-    fileSize: 10 * 1024 * 1024,
+    fileSize: 15 * 1024 * 1024,
+  },
+  fileFilter: (_req, file, cb) => {
+    const mime = String(file.mimetype || '').toLowerCase();
+    const name = String(file.originalname || '').toLowerCase();
+    const allowed = mime.startsWith('image/') || /\.(jpg|jpeg|png|webp|gif|avif|heic|heif)$/i.test(name);
+    cb(null, allowed);
   }
 });
 
@@ -7099,7 +7105,10 @@ app.post("/api/v1/user/avatar", authenticateUser, avatarMulterUpload.single("ava
       return res.status(400).json({ success: false, error: "No valid profile photo was uploaded." });
     }
 
-    if (!String(file.mimetype || "").startsWith("image/")) {
+    const incomingMime = String(file.mimetype || "").toLowerCase();
+    const incomingName = String(file.originalname || "").toLowerCase();
+    const looksLikeImage = incomingMime.startsWith("image/") || /\.(jpg|jpeg|png|webp|gif|avif|heic|heif)$/i.test(incomingName);
+    if (!looksLikeImage) {
       return res.status(400).json({ success: false, error: "Only image files are allowed for profile photos." });
     }
 
