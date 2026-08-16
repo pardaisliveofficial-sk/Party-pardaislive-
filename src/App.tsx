@@ -6063,8 +6063,10 @@ export default function App() {
     let persistentAvatar = user.avatar;
     const selectedAvatar = editAvatar.trim();
 
-    // Upload the actual selected file to production storage. Keep the File object
-    // instead of relying on a large base64 data URL, which is unreliable on Android WebView.
+    // Production avatar upload: use the shared authenticated API client so Android/Web
+    // always sends the current Bearer session and gets the normal 401 retry behavior.
+    // Do not round-trip through a data URL because Android WebView camera/gallery files
+    // can be large or use HEIC containers. The server handles optimization/fallback.
     if (editAvatarFile || (selectedAvatar && selectedAvatar !== user.avatar && selectedAvatar.startsWith("data:image/"))) {
       try {
         let fileToUpload: File;
@@ -6075,32 +6077,28 @@ export default function App() {
           fileToUpload = new File([blob], `avatar-${Date.now()}.jpg`, { type: blob.type || "image/jpeg" });
         }
 
+        if (!fileToUpload || fileToUpload.size <= 0) {
+          throw new Error("The selected photo is empty. Please choose the photo again.");
+        }
+
         const formData = new FormData();
         formData.append("avatar", fileToUpload, fileToUpload.name || `avatar-${Date.now()}.jpg`);
-        const token = localStorage.getItem("pardais_auth_token") || "";
-        const uploadUrl = resolveApiUrl("/api/v1/user/avatar");
 
-        const uploadData: any = await new Promise((resolve, reject) => {
-          const xhr = new XMLHttpRequest();
-          xhr.open("POST", uploadUrl, true);
-          xhr.timeout = 60000;
-          if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
-          xhr.onload = () => {
-            let body: any = {};
-            try { body = JSON.parse(xhr.responseText || "{}"); } catch {}
-            if (xhr.status >= 200 && xhr.status < 300 && body?.url) resolve(body);
-            else reject(new Error(body?.error || `Profile photo upload failed (HTTP ${xhr.status})`));
-          };
-          xhr.onerror = () => reject(new Error("Network error while uploading profile photo."));
-          xhr.ontimeout = () => reject(new Error("Profile photo upload timed out. Please try again."));
-          xhr.onabort = () => reject(new Error("Profile photo upload was cancelled."));
-          xhr.send(formData);
+        const uploadRes = await authenticatedFetch("/api/v1/user/avatar", {
+          method: "POST",
+          body: formData
         });
+        const uploadData: any = await uploadRes.json().catch(() => ({}));
+
+        if (!uploadRes.ok || !uploadData?.url) {
+          const detail = uploadData?.error || `Profile photo upload failed (HTTP ${uploadRes.status}).`;
+          throw new Error(detail);
+        }
 
         persistentAvatar = uploadData.url;
       } catch (err) {
         console.error("[PARDAIS PROFILE] Avatar upload failed:", err);
-        alert(err instanceof Error ? err.message : "Profile photo upload failed. Please try again.");
+        alert(`Profile photo upload failed. ${err instanceof Error ? err.message : "Please try again."}`);
         return;
       }
     }

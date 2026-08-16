@@ -5995,9 +5995,12 @@ export default function App() {
     // Android WebView/camera images can otherwise fail during fetch(dataUrl).blob().
     if (editAvatarFile) {
       try {
+        if (!editAvatarFile || editAvatarFile.size <= 0) {
+          throw new Error('The selected photo is empty. Please choose the photo again.');
+        }
+
         const formData = new FormData();
-        const extension = editAvatarFile.name?.split('.').pop() || 'jpg';
-        formData.append('avatar', editAvatarFile, `avatar-${Date.now()}.${extension}`);
+        formData.append('avatar', editAvatarFile, editAvatarFile.name || `avatar-${Date.now()}.jpg`);
 
         const uploadRes = await authenticatedFetch('/api/v1/user/avatar', {
           method: 'POST',

@@ -6953,7 +6953,9 @@ const s3MulterUpload = multer({
 const avatarMulterUpload = multer({
   storage: multer.memoryStorage(),
   limits: {
-    fileSize: 15 * 1024 * 1024,
+    // Modern Android cameras can produce 15–20 MB originals. We optimize
+    // them server-side, so allow a larger input while keeping a hard limit.
+    fileSize: 25 * 1024 * 1024,
   },
   fileFilter: (_req, file, cb) => {
     const mime = String(file.mimetype || '').toLowerCase();
@@ -7094,7 +7096,18 @@ app.get("/api/v1/user/avatar-media", async (req: any, res: any) => {
 
 // Production profile avatar upload endpoint to Cloudflare R2.
 // The client sends the image file; the server stores an optimized WebP and returns a durable CDN URL.
-app.post("/api/v1/user/avatar", authenticateUser, avatarMulterUpload.single("avatar"), async (req: any, res) => {
+app.post("/api/v1/user/avatar", authenticateUser, (req: any, res: any, next: any) => {
+  avatarMulterUpload.single("avatar")(req, res, (uploadErr: any) => {
+    if (uploadErr) {
+      console.error("[PARDAIS-PARTY AVATAR] Multipart upload error:", uploadErr?.code || uploadErr?.message || uploadErr);
+      if (uploadErr?.code === "LIMIT_FILE_SIZE") {
+        return res.status(413).json({ success: false, error: "Profile photo is too large. Maximum size is 25 MB." });
+      }
+      return res.status(400).json({ success: false, error: uploadErr?.message || "Profile photo upload could not be read." });
+    }
+    next();
+  });
+}, async (req: any, res: any) => {
   try {
     if (!req.user) {
       return res.status(401).json({ success: false, error: "Unauthorized. Please log in." });
