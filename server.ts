@@ -2356,7 +2356,7 @@ app.get("/api/v1/user", authenticateUser, (req: any, res) => {
   res.json(req.user);
 });
 
-app.post("/api/v1/user", authenticateUser, (req: any, res) => {
+app.post("/api/v1/user", authenticateUser, async (req: any, res: any) => {
   if (!req.user) {
     return res.status(401).json({ error: "Unauthorized. Please log in." });
   }
