@@ -4747,6 +4747,8 @@ app.post("/api/v1/parties", (req, res) => {
     language: language || "English",
     description: description || "Welcome to our 12-seat audio lounge!",
     status: "active",
+    allGuestsMuted: existingIdx !== -1 ? Boolean(dbData.parties[existingIdx].allGuestsMuted) : false,
+    moderators: existingIdx !== -1 && Array.isArray(dbData.parties[existingIdx].moderators) ? dbData.parties[existingIdx].moderators : [],
     createdAt: existingIdx !== -1 ? (dbData.parties[existingIdx].createdAt || Date.now()) : Date.now(),
     connectedViewers: [{ userId: validHost, username: validHost, avatar: hostAvatar || "", level: 1, vipLevel: 0 }],
     seats: (existingIdx !== -1 && dbData.parties[existingIdx].seats) ? dbData.parties[existingIdx].seats : [
@@ -4873,7 +4875,7 @@ app.post("/api/v1/parties/:id/seats/join", (req, res) => {
     const party = dbData.parties[index];
     party.seats = party.seats.map((seat: any) => {
       if (seat.id === Number(seatId)) {
-        return { ...seat, name: username, avatar: avatar || "" };
+        return { ...seat, name: username, avatar: avatar || "", isMuted: party.allGuestsMuted ? true : Boolean(seat.isMuted) };
       }
       return seat;
     });
@@ -4893,7 +4895,7 @@ app.post("/api/v1/parties/:id/seats/join", (req, res) => {
 
 app.post("/api/v1/parties/:id/seats/leave", (req, res) => {
   const { id } = req.params;
-  const { seatId } = req.body;
+  const { seatId, actorUsername } = req.body;
   const index = dbData.parties?.findIndex((p: any) => p.id === id);
   if (index !== -1 && index !== undefined) {
     const party = dbData.parties[index];
@@ -4913,22 +4915,29 @@ app.post("/api/v1/parties/:id/seats/leave", (req, res) => {
 
 app.post("/api/v1/parties/:id/seats/toggle-mute", (req, res) => {
   const { id } = req.params;
-  const { seatId } = req.body;
+  const { seatId, actorUsername } = req.body;
   const index = dbData.parties?.findIndex((p: any) => p.id === id);
   if (index !== -1 && index !== undefined) {
     const party = dbData.parties[index];
-    party.seats = party.seats.map((seat: any) => {
-      if (seat.id === Number(seatId)) {
-        return { ...seat, isMuted: !seat.isMuted };
-      }
-      return seat;
-    });
-    saveDatabase();
-    syncDocument("parties", id, party);
-    res.json(party);
-  } else {
-    res.status(404).json({ error: "Party Room not found" });
-  }
+    const actorIsHost = actorUsername === party.hostUsername;
+    const actorIsMod = Array.isArray(party.moderators) && party.moderators.includes(actorUsername);
+    if (party.allGuestsMuted && !actorIsHost) return res.status(403).json({ error: "All guests are muted by host" });
+    if (party.seats?.[Number(seatId) - 1]?.name === party.hostUsername && !actorIsHost) return res.status(403).json({ error: "Host microphone cannot be muted" });
+    if (!actorIsHost && !actorIsMod && party.seats?.[Number(seatId) - 1]?.name !== actorUsername) return res.status(403).json({ error: "Not allowed" });
+    party.seats = party.seats.map((seat: any) => seat.id === Number(seatId) ? { ...seat, isMuted: !seat.isMuted } : seat);
+    saveDatabase(); syncDocument("parties", id, party); res.json(party);
+  } else res.status(404).json({ error: "Party Room not found" });
+});
+
+app.post("/api/v1/parties/:id/seats/mute-all", (req, res) => {
+  const { id } = req.params; const { muted, actorUsername } = req.body;
+  const index = dbData.parties?.findIndex((p: any) => p.id === id);
+  if (index === -1 || index === undefined) return res.status(404).json({ error: "Party Room not found" });
+  const party = dbData.parties[index];
+  if (actorUsername !== party.hostUsername) return res.status(403).json({ error: "Only host can mute all guests" });
+  party.allGuestsMuted = Boolean(muted);
+  party.seats = (party.seats || []).map((seat: any) => seat.name && seat.name !== party.hostUsername ? { ...seat, isMuted: Boolean(muted) } : seat);
+  saveDatabase(); syncDocument("parties", id, party); res.json(party);
 });
 
 app.post("/api/v1/parties/:id/seats/toggle-lock", (req, res) => {
@@ -5150,10 +5159,14 @@ app.post("/api/v1/parties/:id/invites/:username/reject", (req, res) => {
 
 app.post("/api/v1/parties/:id/seats/kick-user", (req, res) => {
   const { id } = req.params;
-  const { seatId } = req.body;
+  const { seatId, actorUsername } = req.body;
   const index = dbData.parties?.findIndex((p: any) => p.id === id);
   if (index !== -1 && index !== undefined) {
     const party = dbData.parties[index];
+    const actorAllowed = actorUsername === party.hostUsername || (Array.isArray(party.moderators) && party.moderators.includes(actorUsername));
+    const target = party.seats?.find((s: any) => s.id === Number(seatId));
+    if (!actorAllowed) return res.status(403).json({ error: "Not allowed" });
+    if (target?.name === party.hostUsername) return res.status(403).json({ error: "Host cannot be kicked" });
     let kickedUser = "";
     party.seats = party.seats.map((seat: any) => {
       if (seat.id === Number(seatId)) {
@@ -5182,10 +5195,13 @@ app.post("/api/v1/parties/:id/seats/kick-user", (req, res) => {
 
 app.post("/api/v1/parties/:id/seats/mute-user", (req, res) => {
   const { id } = req.params;
-  const { seatId, isMuted } = req.body;
+  const { seatId, isMuted, actorUsername } = req.body;
   const index = dbData.parties?.findIndex((p: any) => p.id === id);
   if (index !== -1 && index !== undefined) {
     const party = dbData.parties[index];
+    const actorAllowed = actorUsername === party.hostUsername || (Array.isArray(party.moderators) && party.moderators.includes(actorUsername));
+    const targetSeat = party.seats?.find((s: any) => s.id === Number(seatId));
+    if (!actorAllowed || targetSeat?.name === party.hostUsername) return res.status(403).json({ error: "Not allowed" });
     let targetUser = "";
     party.seats = party.seats.map((seat: any) => {
       if (seat.id === Number(seatId)) {
@@ -5212,12 +5228,39 @@ app.post("/api/v1/parties/:id/seats/mute-user", (req, res) => {
   }
 });
 
+app.post("/api/v1/parties/:id/seats/change", (req, res) => {
+  const { id } = req.params; const { fromSeatId, toSeatId, actorUsername } = req.body;
+  const index = dbData.parties?.findIndex((p: any) => p.id === id);
+  if (index === -1 || index === undefined) return res.status(404).json({ error: "Party Room not found" });
+  const party = dbData.parties[index];
+  const allowed = actorUsername === party.hostUsername || (Array.isArray(party.moderators) && party.moderators.includes(actorUsername));
+  if (!allowed) return res.status(403).json({ error: "Not allowed" });
+  const from = party.seats.find((s: any) => s.id === Number(fromSeatId)); const to = party.seats.find((s: any) => s.id === Number(toSeatId));
+  if (!from?.name || !to || to.name || to.isLocked || from.name === party.hostUsername) return res.status(400).json({ error: "Invalid seat change" });
+  const moved = { ...from };
+  party.seats = party.seats.map((s: any) => s.id === from.id ? { ...s, name: null, avatar: null, isMuted: false } : s.id === to.id ? { ...s, name: moved.name, avatar: moved.avatar, isMuted: moved.isMuted } : s);
+  saveDatabase(); syncDocument("parties", id, party); res.json(party);
+});
+
+app.post("/api/v1/parties/:id/moderators/toggle", (req, res) => {
+  const { id } = req.params; const { username, actorUsername } = req.body;
+  const index = dbData.parties?.findIndex((p: any) => p.id === id);
+  if (index === -1 || index === undefined) return res.status(404).json({ error: "Party Room not found" });
+  const party = dbData.parties[index];
+  if (actorUsername !== party.hostUsername || username === party.hostUsername) return res.status(403).json({ error: "Only host can manage moderators" });
+  if (!Array.isArray(party.moderators)) party.moderators = [];
+  party.moderators = party.moderators.includes(username) ? party.moderators.filter((u: string) => u !== username) : [...party.moderators, username];
+  saveDatabase(); syncDocument("parties", id, party); res.json(party);
+});
+
 app.post("/api/v1/parties/:id/block-user", (req, res) => {
   const { id } = req.params;
-  const { username } = req.body;
+  const { username, actorUsername } = req.body;
   const index = dbData.parties?.findIndex((p: any) => p.id === id);
   if (index !== -1 && index !== undefined) {
     const party = dbData.parties[index];
+    const actorAllowed = actorUsername === party.hostUsername || (Array.isArray(party.moderators) && party.moderators.includes(actorUsername));
+    if (!actorAllowed || username === party.hostUsername) return res.status(403).json({ error: "Not allowed" });
     if (!party.blockedUsers) party.blockedUsers = [];
     if (!party.blockedUsers.includes(username)) {
       party.blockedUsers.push(username);

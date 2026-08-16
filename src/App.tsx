@@ -2478,6 +2478,9 @@ export default function App() {
     vipLevel: number;
   } | null>(null);
   const [isUserModerator, setIsUserModerator] = useState<boolean>(false);
+  // Party-specific moderation state. Host is always supreme; moderators inherit guest-management controls.
+  const [partyModeratorUsers, setPartyModeratorUsers] = useState<Record<string, string[]>>({});
+  const [partyAllGuestsMuted, setPartyAllGuestsMuted] = useState<Record<string, boolean>>({});
   const [showActiveViewersModal, setShowActiveViewersModal] = useState<boolean>(false);
 
   const triggerJoinNotif = (username: string, userLevel: number, vipLevel: number) => {
@@ -8052,7 +8055,7 @@ export default function App() {
       const response = await fetch(`/api/v1/parties/${partyId}/seats/leave`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ seatId })
+        body: JSON.stringify({ seatId, actorUsername: user.username })
       });
       const data = await response.json();
       if (data && !data.error) {
@@ -8064,31 +8067,45 @@ export default function App() {
   };
 
   const handlePartyToggleMute = async (partyId: string, seatId: number) => {
-    // 1. Optimistic state update: toggle isMuted instantly in local state
-    setPartiesList(prev => prev.map(p => {
-      if (p.id !== partyId) return p;
-      return {
-        ...p,
-        seats: (p.seats || []).map((s: any) => s.id === seatId ? { ...s, isMuted: !s.isMuted } : s)
-      };
-    }));
-
+    // A host-level "mute all" cannot be overridden by a guest.
+    if (partyAllGuestsMuted[partyId] && !((partiesList.find((p: any) => p.id === partyId)?.hostUsername) === user.username)) {
+      return;
+    }
+    setPartiesList(prev => prev.map(p => p.id !== partyId ? p : ({
+      ...p, seats: (p.seats || []).map((s: any) => s.id === seatId ? { ...s, isMuted: !s.isMuted } : s)
+    })));
     try {
       const response = await authenticatedFetch(`/api/v1/parties/${partyId}/seats/toggle-mute`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ seatId })
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ seatId })
       });
       if (response.ok) {
         const data = await response.json();
-        if (data && !data.error) {
-          setPartiesList(prev => prev.map(p => p.id === partyId ? data : p));
-        }
+        if (data && !data.error) setPartiesList(prev => prev.map(p => p.id === partyId ? data : p));
       }
-    } catch (e) {
-      console.warn("Error toggling mute:", e);
-    }
+    } catch (e) { console.warn("Error toggling mute:", e); }
   };
+
+  const handlePartyMuteAllGuests = async (party: any) => {
+    const next = !Boolean(partyAllGuestsMuted[party.id]);
+    setPartyAllGuestsMuted(prev => ({ ...prev, [party.id]: next }));
+    setPartiesList(prev => prev.map(p => p.id !== party.id ? p : ({
+      ...p, seats: (p.seats || []).map((s: any) => s.name && s.name !== p.hostUsername ? { ...s, isMuted: next } : s)
+    })));
+    // Best-effort backend sync; older backends can still use the local room authority.
+    try {
+      await authenticatedFetch(`/api/v1/parties/${party.id}/seats/mute-all`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ muted: next, actorUsername: user.username })
+      });
+    } catch (_) {}
+  };
+
+  const isPartyModerator = (partyId: string, username: string) => {
+    const party = partiesList.find((p: any) => p.id === partyId);
+    return (party?.moderators || partyModeratorUsers[partyId] || []).includes(username);
+  };
+
+  const canModeratePartyGuests = (party: any) =>
+    party.hostUsername === user.username || isPartyModerator(party.id, user.username);
 
   const handlePartyToggleLock = async (partyId: string, seatId: number) => {
     // 1. Optimistic state update: toggle isLocked instantly in local state
@@ -9342,6 +9359,7 @@ export default function App() {
                       }
 
                       const isHostOfRoom = party.hostUsername === user.username;
+                      const isAllGuestsMuted = Boolean(partyAllGuestsMuted[party.id] ?? party.allGuestsMuted);
                       const mySeatedSeat = party.seats ? party.seats.find((s: any) => s.name === user.username) : null;
                       const activeInvite = party.invites?.find((i: any) => i.username === user.username);
                       const activeRequests = party.requests || [];
@@ -9465,7 +9483,7 @@ export default function App() {
                           const res = await authenticatedFetch(`/api/v1/parties/${party.id}/seats/mute-user`, {
                             method: "POST",
                             headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ seatId, isMuted })
+                            body: JSON.stringify({ seatId, isMuted, actorUsername: user.username })
                           });
                           if (res.ok) {
                             const data = await res.json();
@@ -9492,7 +9510,7 @@ export default function App() {
                           const res = await authenticatedFetch(`/api/v1/parties/${party.id}/seats/kick-user`, {
                             method: "POST",
                             headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ seatId })
+                            body: JSON.stringify({ seatId, actorUsername: user.username })
                           });
                           if (res.ok) {
                             const data = await res.json();
@@ -9505,12 +9523,34 @@ export default function App() {
                         }
                       };
 
+                      const handleHostChangeSeat = async (seatId: number) => {
+                        const target = party.seats?.find((s: any) => s.id === seatId);
+                        if (!target?.name) return;
+                        const empty = (party.seats || []).find((s: any) => !s.name && !s.isLocked);
+                        if (!empty) { alert("No empty unlocked seat is available."); return; }
+                        setPartiesList(prev => prev.map(p => {
+                          if (p.id !== party.id) return p;
+                          const seats = (p.seats || []).map((s: any) => {
+                            if (s.id === seatId) return { ...s, name: null, avatar: null, isMuted: false };
+                            if (s.id === empty.id) return { ...s, name: target.name, avatar: target.avatar, isMuted: target.isMuted };
+                            return s;
+                          });
+                          return { ...p, seats };
+                        }));
+                        try {
+                          await authenticatedFetch(`/api/v1/parties/${party.id}/seats/change`, {
+                            method: "POST", headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ fromSeatId: seatId, toSeatId: empty.id, actorUsername: user.username })
+                          });
+                        } catch (_) {}
+                      };
+
                       const handleHostBlockUser = async (targetUser: string) => {
                         try {
                           const res = await fetch(`/api/v1/parties/${party.id}/block-user`, {
                             method: "POST",
                             headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ username: targetUser })
+                            body: JSON.stringify({ username: targetUser, actorUsername: user.username })
                           });
                           const data = await res.json();
                           if (data && !data.error) {
@@ -10035,7 +10075,7 @@ export default function App() {
                                 partyId={party.id}
                                 channelName={`party-${party.id}`}
                                 userRole={isHostOfRoom ? "host" : (mySeatedSeat ? "speaker" : "listener")}
-                                isMuted={mySeatedSeat ? mySeatedSeat.isMuted === true : (isHostOfRoom ? false : true)}
+                                isMuted={isHostOfRoom ? false : (isAllGuestsMuted ? true : (mySeatedSeat ? mySeatedSeat.isMuted === true : true))}
                                 username={user.username}
                                 avatar={user.avatar}
                               />
@@ -10083,6 +10123,15 @@ export default function App() {
                                               {activeRequests.length}
                                             </span>
                                           )}
+                                        </button>
+                                      )}
+                                      {isHostOfRoom && (
+                                        <button
+                                          onClick={() => handlePartyMuteAllGuests(party)}
+                                          className={`px-1.5 py-0.5 rounded-md border font-black cursor-pointer ${isAllGuestsMuted ? "bg-red-500/20 border-red-400/50 text-red-300" : "bg-amber-500/10 border-amber-400/30 text-amber-300"}`}
+                                          title="Mute or unmute all guest microphones"
+                                        >
+                                          {isAllGuestsMuted ? "🔇 ALL MUTED" : "🎙️ MUTE ALL"}
                                         </button>
                                       )}
                                     </div>
@@ -10202,7 +10251,9 @@ export default function App() {
                                         Leave Seat
                                       </button>
                                       <button
+                                        disabled={partyAllGuestsMuted[party.id] && !isHostOfRoom}
                                         onClick={() => {
+                                          if (partyAllGuestsMuted[party.id] && !isHostOfRoom) return;
                                           handlePartyToggleMute(party.id, activeSeatMenu.seatId);
                                           setActiveSeatMenu(null);
                                         }}
@@ -10214,7 +10265,7 @@ export default function App() {
                                   ) : occupantName ? (
                                     <>
                                       {/* Actions for other seated guests */}
-                                      {isHostOfRoom ? (
+                                      {canModeratePartyGuests(party) && occupantName !== party.hostUsername ? (
                                         <>
                                           <button
                                             onClick={() => {
@@ -10233,6 +10284,33 @@ export default function App() {
                                             className="bg-red-500/20 hover:bg-red-500 text-red-400 hover:text-white border border-red-500/30 rounded-xl py-2.5 text-[9px] font-black uppercase tracking-wider text-center cursor-pointer transition-all"
                                           >
                                             Kick Seat
+                                          </button>
+                                          <button
+                                            onClick={() => {
+                                              handleHostChangeSeat(activeSeatMenu.seatId);
+                                              setActiveSeatMenu(null);
+                                            }}
+                                            className="bg-purple-500/15 hover:bg-purple-500/30 text-purple-300 border border-purple-500/40 rounded-xl py-2.5 text-[9px] font-black uppercase tracking-wider text-center cursor-pointer transition-all"
+                                          >
+                                            Change Seat 🔄
+                                          </button>
+                                          <button
+                                            onClick={() => {
+                                              const currentlyMod = isPartyModerator(party.id, occupantName);
+                                              setPartyModeratorUsers(prev => {
+                                                const current = prev[party.id] || [];
+                                                const next = currentlyMod ? current.filter(n => n !== occupantName) : [...current, occupantName];
+                                                return { ...prev, [party.id]: next };
+                                              });
+                                              authenticatedFetch(`/api/v1/parties/${party.id}/moderators/toggle`, {
+                                                method: "POST", headers: { "Content-Type": "application/json" },
+                                                body: JSON.stringify({ username: occupantName, actorUsername: user.username })
+                                              }).then(async r => { const data = await r.json().catch(() => null); if (data && !data.error) setPartiesList(prev => prev.map(p => p.id === party.id ? data : p)); }).catch(() => {});
+                                              setActiveSeatMenu(null);
+                                            }}
+                                            className="bg-teal-500/15 hover:bg-teal-500/30 text-teal-300 border border-teal-500/40 rounded-xl py-2.5 text-[9px] font-black uppercase tracking-wider text-center cursor-pointer transition-all"
+                                          >
+                                            {isPartyModerator(party.id, occupantName) ? "Remove Moderator" : "Make Moderator"}
                                           </button>
                                           <button
                                             onClick={() => {
