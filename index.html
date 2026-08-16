@@ -3,24 +3,25 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no" />
-    <meta name="theme-color" content="#09090e" />
+    <meta name="theme-color" content="#000000" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="Pardais Party" />
-    <link rel="manifest" href="/manifest.json?v=7" />
-    <link rel="icon" type="image/svg+xml" href="/icon.svg?v=7" />
-    <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png?v=7" />
-    <link rel="icon" type="image/png" sizes="32x32" href="/icon-192.png?v=7" />
-    <link rel="icon" type="image/png" sizes="16x16" href="/icon-192.png?v=7" />
-    <link rel="shortcut icon" href="/icon-192.png?v=7" />
-    <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=7" />
+    <link rel="manifest" href="/manifest.json?v=8" />
+    <link rel="icon" type="image/png" href="/pardais-party-exact.png?v=8" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/pardais-party-exact.png?v=8" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/pardais-party-exact.png?v=8" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/pardais-party-exact.png?v=8" />
+    <link rel="shortcut icon" href="/pardais-party-exact.png?v=8" />
+    <link rel="apple-touch-icon" href="/pardais-party-exact.png?v=8" />
     <title>Pardais Party — Where Every Party Comes Alive</title>
   <style>
 
 </style>
 </head>
-  <body class="bg-[#09090e] text-white overflow-x-hidden antialiased select-none">
+  <body style="margin:0;background:#000;color:#fff" class="bg-[#09090e] text-white overflow-x-hidden antialiased select-none">
+    <div id="pardais-boot-splash" aria-hidden="true"><img src="/pardais-party-exact.png?v=8" alt="Pardais Party"></div>
     <div id="root"></div>
     <script>
       if ('serviceWorker' in navigator) {
@@ -34,6 +35,11 @@
     </script>
     <script type="module" src="/src/main.tsx"></script>
   
+<style id="pardais-boot-splash-style">
+#pardais-boot-splash{position:fixed;inset:0;z-index:2147483646;background:#000;display:flex;align-items:center;justify-content:center;overflow:hidden}
+#pardais-boot-splash img{width:100%;height:100%;object-fit:contain;display:block}
+#pardais-boot-splash.pardais-boot-hide{opacity:0;visibility:hidden;pointer-events:none;transition:opacity .25s ease,visibility .25s ease}
+</style>
 <style id="pardais-auth-gate-style">
 #pardais-auth-gate{position:fixed;inset:0;z-index:2147483647;background:linear-gradient(135deg,#080811,#17102b,#071b2f);display:flex;align-items:center;justify-content:center;padding:20px;box-sizing:border-box;font-family:system-ui,-apple-system,sans-serif;color:#fff;overflow:auto}
 #pardais-auth-card{width:min(430px,100%);background:rgba(20,18,31,.98);border:1px solid rgba(255,0,153,.55);border-radius:24px;padding:28px;box-sizing:border-box;text-align:center;box-shadow:0 20px 70px rgba(0,0,0,.6)}
@@ -57,7 +63,7 @@
 </style>
 <div id="pardais-auth-gate">
   <div id="pardais-auth-card">
-    <div style="font-size:40px;text-align:center">🎉</div>
+    <img src="/pardais-party-exact.png?v=8" alt="Pardais Party" style="display:block;width:min(260px,78vw);height:auto;max-height:240px;object-fit:contain;margin:0 auto 14px">
     <h1 id="pardais-auth-title">Welcome to Pardais Party</h1>
     <p id="pardais-auth-subtitle">Login to your existing account or create a new one.</p>
     <div id="pardais-auth-tabs" style="display:grid;grid-template-columns:1fr 1fr;gap:4px;background:#100e18;border-radius:12px;padding:4px;margin:0 0 18px">
@@ -117,6 +123,14 @@
     <div id="pardais-auth-msg"></div>
   </div>
 </div>
+<script>
+(function(){
+  var b=document.getElementById("pardais-boot-splash");
+  function hide(){ if(b) b.classList.add("pardais-boot-hide"); }
+  window.addEventListener("pardais:app-ready",function(){ setTimeout(hide,150); },{once:true});
+  setTimeout(hide,5000);
+})();
+</script>
 <script type="module">
 import { initializeApp, getApps, getApp } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-auth.js";

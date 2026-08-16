@@ -310,3 +310,7 @@ createRoot(document.getElementById('root')!).render(
     <MainRouter />
   </StrictMode>,
 );
+
+if (typeof window !== "undefined") {
+  queueMicrotask(() => window.dispatchEvent(new Event("pardais:app-ready")));
+}

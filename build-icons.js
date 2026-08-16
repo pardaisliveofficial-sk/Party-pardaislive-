@@ -4,15 +4,17 @@ import path from 'path';
 
 async function generatePngIcons() {
   const svgPath = path.resolve('public/icon.svg');
+  const exactPngPath = path.resolve('public/pardais-party-exact.png');
   if (!fs.existsSync(svgPath)) {
     console.error("public/icon.svg not found!");
     return;
   }
 
   const svgBuffer = fs.readFileSync(svgPath);
+  const exactPng = fs.readFileSync(exactPngPath);
 
   // Generate 192x192 PNG
-  const png192 = await sharp(svgBuffer)
+  const png192 = await sharp(exactPng)
     .resize(192, 192)
     .png({ compressionLevel: 9, quality: 100 })
     .toBuffer();
@@ -21,7 +23,7 @@ async function generatePngIcons() {
   console.log("Created public/icon-192.png (" + png192.length + " bytes)");
 
   // Generate 512x512 PNG
-  const png512 = await sharp(svgBuffer)
+  const png512 = await sharp(exactPng)
     .resize(512, 512)
     .png({ compressionLevel: 9, quality: 100 })
     .toBuffer();
@@ -30,7 +32,7 @@ async function generatePngIcons() {
   console.log("Created public/icon-512.png (" + png512.length + " bytes)");
 
   // Generate 180x180 Apple Touch Icon
-  const pngApple = await sharp(svgBuffer)
+  const pngApple = await sharp(exactPng)
     .resize(180, 180)
     .png({ compressionLevel: 9, quality: 100 })
     .toBuffer();

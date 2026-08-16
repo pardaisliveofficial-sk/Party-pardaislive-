@@ -7,6 +7,7 @@ const sharp = require('sharp');
 
 const RES_DIR = path.join(__dirname, 'android', 'app', 'src', 'main', 'res');
 const WEB_ICON_PATH = path.join(__dirname, 'public', 'icon.svg');
+const EXACT_PNG_PATH = path.join(__dirname, 'public', 'pardais-party-exact.png');
 
 // Configurations for Launcher Icons
 const ICON_CONFIGS = [
@@ -76,12 +77,12 @@ async function execute() {
   console.log('🎨 Starting Android Resource Generation Process... 🎨');
   console.log('------------------------------------------------------------');
 
-  if (!fs.existsSync(WEB_ICON_PATH)) {
-    throw new Error(`Web icon file missing at: ${WEB_ICON_PATH}`);
+  if (!fs.existsSync(EXACT_PNG_PATH)) {
+    throw new Error(`Exact Pardais Party logo missing at: ${EXACT_PNG_PATH}`);
   }
 
-  const rawIconSvg = fs.readFileSync(WEB_ICON_PATH, 'utf8');
-  const iconBuffer = Buffer.from(rawIconSvg);
+  const iconBuffer = fs.readFileSync(EXACT_PNG_PATH);
+  const rawIconSvg = fs.existsSync(WEB_ICON_PATH) ? fs.readFileSync(WEB_ICON_PATH, 'utf8') : ''; 
 
   // 1. Generate Launcher Icons (mipmap)
   console.log('\nGenerating Android Launcher Icons (mipmap) from public/icon.svg:');
@@ -139,12 +140,9 @@ async function execute() {
       fs.mkdirSync(dirPath, { recursive: true });
     }
 
-    const svgString = getSplashSVG(config.width, config.height, rawIconSvg);
-    const svgBuffer = Buffer.from(svgString);
-
-    const splashPath = path.join(dirPath, 'splash.png');
-    await sharp(svgBuffer)
-      .resize(config.width, config.height)
+    const logo = await sharp(iconBuffer).resize({ width: Math.round(config.width * 0.82), height: Math.round(config.height * 0.82), fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } }).png().toBuffer();
+    await sharp({ create: { width: config.width, height: config.height, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 1 } } })
+      .composite([{ input: logo, gravity: 'center' }])
       .png({ palette: false, quality: 100 })
       .toFile(splashPath);
     console.log(` ✅ Saved 32-bit: ${splashPath} (${config.width}x${config.height})`);

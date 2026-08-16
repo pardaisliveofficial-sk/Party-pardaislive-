@@ -5,31 +5,31 @@
   "description": "Pakistan's #1 Live Stream, Multi-Guest Audio Rooms, PK Battles & Party Games App for Android.",
   "icons": [
     {
-      "src": "/icon.svg?v=7",
-      "type": "image/svg+xml",
+      "src": "/pardais-party-exact.png?v=8",
+      "type": "image/png",
       "sizes": "512x512 192x192",
       "purpose": "any"
     },
     {
-      "src": "/icon-192.png?v=7",
+      "src": "/pardais-party-exact.png?v=8",
       "type": "image/png",
       "sizes": "192x192",
       "purpose": "any"
     },
     {
-      "src": "/icon-192.png?v=7",
+      "src": "/pardais-party-exact.png?v=8",
       "type": "image/png",
       "sizes": "192x192",
       "purpose": "maskable"
     },
     {
-      "src": "/icon-512.png?v=7",
+      "src": "/pardais-party-exact.png?v=8",
       "type": "image/png",
       "sizes": "512x512",
       "purpose": "any"
     },
     {
-      "src": "/icon-512.png?v=7",
+      "src": "/pardais-party-exact.png?v=8",
       "type": "image/png",
       "sizes": "512x512",
       "purpose": "maskable"

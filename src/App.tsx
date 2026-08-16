@@ -913,7 +913,15 @@ export default function App() {
                (savedProfile.email && data.user.email && String(savedProfile.email).toLowerCase() === String(data.user.email).toLowerCase()))
             );
             const localProfile = sameAccount ? savedProfile : null;
-            const preservedAvatar = data.user.avatar || localProfile?.avatar || "";
+            // A user-selected DP is sticky. If a freshly cached backend response is
+            // temporarily older than the locally saved profile, never let the old
+            // avatar overwrite the newer user-selected photo during refresh.
+            const backendAvatarTime = Date.parse(String(data.user.avatarUpdatedAt || data.user.profileUpdatedAt || "")) || 0;
+            const localAvatarTime = Date.parse(String(localProfile?.avatarUpdatedAt || localProfile?.profileUpdatedAt || "")) || 0;
+            const localCustomAvatar = Boolean(localProfile?.avatar && localProfile.avatarSource === "user-upload");
+            const useLocalAvatar = Boolean(localProfile?.avatar && localCustomAvatar && localAvatarTime > backendAvatarTime);
+            const preservedAvatar = useLocalAvatar ? localProfile!.avatar : (data.user.avatar || localProfile?.avatar || "");
+            const preservedAvatarUpdatedAt = useLocalAvatar ? localProfile!.avatarUpdatedAt : (data.user.avatarUpdatedAt || localProfile?.avatarUpdatedAt);
             const mergedUser: UserProfile = {
               ...data.user,
               // Backend is authoritative for account identity. Never reuse a previous
@@ -922,7 +930,10 @@ export default function App() {
               username: data.user.username || "",
               uniqueId: data.user.uniqueId || "",
               avatar: preservedAvatar,
-              avatarUrl: data.user.avatarUrl || preservedAvatar,
+              avatarUrl: useLocalAvatar ? localProfile!.avatarUrl || preservedAvatar : (data.user.avatarUrl || preservedAvatar),
+              avatarUpdatedAt: preservedAvatarUpdatedAt,
+              avatarSource: (useLocalAvatar ? localProfile!.avatarSource : data.user.avatarSource) || (preservedAvatar ? "user-upload" : "default"),
+              profileUpdatedAt: data.user.profileUpdatedAt || localProfile?.profileUpdatedAt,
               bio: localProfile?.bio || data.user.bio,
               gender: localProfile?.gender || data.user.gender,
               dob: localProfile?.dob || data.user.dob,
@@ -5225,7 +5236,25 @@ export default function App() {
         .then(res => res.ok ? res.json() : null)
         .then(data => {
           if (data && data.username) {
-            setUser(data);
+            setUser(prev => {
+              const sameAccount = Boolean(
+                prev && ((prev.uid && data.uid && prev.uid === data.uid) ||
+                (prev.email && data.email && String(prev.email).toLowerCase() === String(data.email).toLowerCase()))
+              );
+              const backendAvatarTime = Date.parse(String(data.avatarUpdatedAt || data.profileUpdatedAt || "")) || 0;
+              const localAvatarTime = Date.parse(String(prev?.avatarUpdatedAt || prev?.profileUpdatedAt || "")) || 0;
+              const keepNewerLocalAvatar = Boolean(
+                sameAccount && prev?.avatar && prev.avatarSource === "user-upload" && localAvatarTime > backendAvatarTime
+              );
+              return {
+                ...prev,
+                ...data,
+                avatar: keepNewerLocalAvatar ? prev!.avatar : (data.avatar || prev?.avatar || ""),
+                avatarUrl: keepNewerLocalAvatar ? (prev!.avatarUrl || prev!.avatar) : (data.avatarUrl || data.avatar || prev?.avatar || ""),
+                avatarUpdatedAt: keepNewerLocalAvatar ? prev!.avatarUpdatedAt : data.avatarUpdatedAt,
+                avatarSource: keepNewerLocalAvatar ? prev!.avatarSource : (data.avatarSource || (data.avatar ? "user-upload" : "default")),
+              } as UserProfile;
+            });
             lastSavedUserRef.current = JSON.stringify(data);
             // Sync default fields for editing
             setEditFullName(data.fullName || "");
@@ -6171,6 +6200,9 @@ export default function App() {
         username: user.username,
         avatar: persistentAvatar,
         avatarUrl: persistentAvatar,
+        avatarUpdatedAt: persistentAvatar ? (user.avatarUpdatedAt || new Date().toISOString()) : undefined,
+        avatarSource: persistentAvatar ? "user-upload" : "default",
+        profileUpdatedAt: new Date().toISOString(),
         gender: editGender,
         fullName: editFullName.trim(),
         dob: editDob,
@@ -6515,8 +6547,10 @@ export default function App() {
       }
     }
 
-    // Helper functions for parsing and formatting diamonds
-    const parseSeatDiamonds = (val: string | number | null | undefined): number => {
+    // Helper functions for parsing and formatting per-seat gift totals.
+    // The seat badge shows the full 100% gift value; wallet credit is handled
+    // by the backend at exactly 50%.
+    const parseSeatGiftCoins = (val: string | number | null | undefined): number => {
       if (!val) return 0;
       const str = String(val).trim();
       if (str.toUpperCase().endsWith("K")) return (parseFloat(str) || 0) * 1000;
@@ -6524,7 +6558,7 @@ export default function App() {
       return parseFloat(str) || 0;
     };
 
-    const formatSeatDiamonds = (num: number): string => {
+    const formatSeatGiftCoins = (num: number): string => {
       if (num >= 1000000) return (num / 1000000).toFixed(1) + "M";
       if (num >= 1000) return (num / 1000).toFixed(1) + "K";
       return Math.floor(num).toString();
@@ -6538,11 +6572,11 @@ export default function App() {
                             resolvedRecipientName.toLowerCase().includes(s.name.toLowerCase());
         const isSeatMatch = recipientName.toLowerCase().includes(`seat-${s.id}`) || recipientName.toLowerCase().includes(`seat #${s.id}`);
         if (isNameMatch || isSeatMatch) {
-          const currentDiamonds = parseSeatDiamonds(s.diamonds);
-          const addedDiamonds = Math.floor(totalCost * 1.5);
+          const currentGiftCoins = parseSeatGiftCoins((s as any).giftCoins);
+          const addedGiftCoins = totalCost;
           return {
             ...s,
-            diamonds: formatSeatDiamonds(currentDiamonds + addedDiamonds)
+            giftCoins: formatSeatGiftCoins(currentGiftCoins + addedGiftCoins)
           };
         }
         return s;
@@ -6561,11 +6595,11 @@ export default function App() {
                               resolvedRecipientName.toLowerCase().includes(s.name.toLowerCase());
           const isSeatMatch = recipientName.toLowerCase().includes(`seat-${s.id}`) || recipientName.toLowerCase().includes(`seat #${s.id}`);
           if (isNameMatch || isSeatMatch) {
-            const currentDiamonds = parseSeatDiamonds(s.diamonds);
-            const addedDiamonds = Math.floor(totalCost * 1.5);
+            const currentGiftCoins = parseSeatGiftCoins((s as any).giftCoins);
+            const addedGiftCoins = totalCost;
             return {
               ...s,
-              diamonds: formatSeatDiamonds(currentDiamonds + addedDiamonds)
+              giftCoins: formatSeatGiftCoins(currentGiftCoins + addedGiftCoins)
             };
           }
           return s;
@@ -10227,10 +10261,10 @@ export default function App() {
                                           <span className="text-[6.5px] text-amber-400/80 font-mono font-bold mt-0.5">#{seat.id}</span>
                                           <span
                                             className="inline-flex items-center gap-0.5 mt-0.5 px-1 py-0.5 rounded-full bg-amber-500/10 border border-amber-400/25 text-[6.5px] text-amber-200 font-black font-mono whitespace-nowrap"
-                                            title={`Total gifting received by Seat ${seat.id}`}
+                                            title={`Total gift value received by Seat ${seat.id} (100% display value)`}
                                           >
                                             <span className="text-[8px] leading-none">🎁</span>
-                                            <span>{seat.diamonds || "0"}</span>
+                                            <span>{seat.giftCoins || "0"}</span>
                                           </span>
                                         </div>
                                       </div>

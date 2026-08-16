@@ -2391,7 +2391,17 @@ app.post("/api/v1/user", authenticateUser, (req: any, res) => {
 
   // Username is the permanent account identity. Profile edits can never rename the account.
   const { username: _ignoredUsername, ...profileUpdates } = req.body || {};
-  const updatedUser = { ...user, ...profileUpdates, username: user.username };
+  const profileUpdatedAt = new Date().toISOString();
+  const updatedUser = {
+    ...user,
+    ...profileUpdates,
+    username: user.username,
+    profileUpdatedAt,
+  };
+  if (profileUpdates.avatar !== undefined) {
+    updatedUser.avatarUpdatedAt = profileUpdatedAt;
+    updatedUser.avatarSource = profileUpdates.avatar ? "user-upload" : "default";
+  }
   req.user = updatedUser;
   
   // Sync changes in the persistent users list
@@ -2423,8 +2433,9 @@ app.post("/api/v1/user", authenticateUser, (req: any, res) => {
   }
   saveDatabase();
 
-  // Sync to account-scoped Firestore user documents only.
-  persistUser(updatedUser);
+  // Wait for account-scoped durable persistence so a refresh immediately after
+  // saving can never race ahead of the Firestore write.
+  await persistUserDurably(updatedUser);
   if (idx !== -1) {
     syncDocument("adminUsersList", updatedUser.username, dbData.adminUsersList[idx]);
   }
@@ -2894,8 +2905,28 @@ app.post("/api/v1/gifts/send", authenticateUser, (req, res) => {
   user.coins = userCoins - totalCost;
   user.xp = (user.xp || 0) + Math.floor(totalCost * 0.2);
 
-  const hostEarnings = Math.floor(totalCost * 0.5);
-  const companyShare = totalCost - hostEarnings;
+  // Gift display value is always the full amount, while the recipient
+  // receives exactly 50% in the earning/diamond wallet.
+  const recipientEarnings = Math.floor(totalCost * 0.5);
+  const companyShare = totalCost - recipientEarnings;
+  const hostEarnings = recipientEarnings;
+
+  // Credit the actual recipient's earning wallet when the recipient can be
+  // resolved from the authenticated user database. This is separate from
+  // the 100% gift value shown on the seat/room UI.
+  const normalizedRecipient = String(recipient || '').trim().toLowerCase();
+  const recipientUser = (dbData.users || []).find((u: any) => {
+    const username = String(u?.username || '').trim().toLowerCase();
+    const fullName = String(u?.fullName || '').trim().toLowerCase();
+    return normalizedRecipient && (username === normalizedRecipient || fullName === normalizedRecipient);
+  });
+  if (recipientUser) {
+    recipientUser.diamonds = (Number(recipientUser.diamonds) || 0) + recipientEarnings;
+    recipientUser.updatedAt = new Date().toISOString();
+    const recipientIndex = dbData.users.findIndex((u: any) => u?.uid === recipientUser.uid || u?.username === recipientUser.username);
+    if (recipientIndex >= 0) dbData.users[recipientIndex] = { ...recipientUser };
+    syncDocument('users', recipientUser.username || recipientUser.uid, recipientUser);
+  }
 
   if (!dbData.platformMetrics) {
     dbData.platformMetrics = { totalGiftCoins: 0, companyRevenue: 0, hostDiamondsDistributed: 0 };
@@ -2911,6 +2942,7 @@ app.post("/api/v1/gifts/send", authenticateUser, (req, res) => {
     amount: totalCost,
     currency: "coins",
     hostEarnings,
+    recipientEarnings,
     companyShare,
     sender: user.username,
     senderAvatar: user.avatar || "",
@@ -2934,8 +2966,11 @@ app.post("/api/v1/gifts/send", authenticateUser, (req, res) => {
     totalCoinsSpent: totalCost,
     remainingCoins: user.coins,
     hostEarnings,
+    recipientEarnings,
     companyShare,
     recipient,
+    recipientWalletCredit: recipientEarnings,
+    displayGiftValue: totalCost,
     pkScoreAdded: totalCost,
     timestamp: txLog.timestamp
   };
@@ -3090,8 +3125,11 @@ app.post("/api/v1/gifts/send", authenticateUser, (req, res) => {
       s && s.name && String(s.name).trim().toLowerCase() === normalizedRecipient
     );
     if (recipientSeat) {
+      // Seat badge always displays 100% of the gift value. The recipient
+      // earning wallet receives only recipientEarnings (50%).
       recipientSeat.giftCoins = (Number(recipientSeat.giftCoins) || 0) + totalCost;
       recipientSeat.giftCount = (Number(recipientSeat.giftCount) || 0) + giftCount;
+      recipientSeat.earningCoins = (Number(recipientSeat.earningCoins) || 0) + recipientEarnings;
       recipientSeat.lastGiftAt = Date.now();
       recipientSeat.lastGiftIcon = gift.icon || "🎁";
     }
@@ -7211,10 +7249,14 @@ app.post("/api/v1/user/avatar", authenticateUser, (req: any, res: any, next: any
     }
 
     // Persist the URL against the authenticated account immediately.
+    const avatarUpdatedAt = new Date().toISOString();
     const updatedUser = {
       ...req.user,
       avatar: avatarUrl,
       avatarUrl,
+      avatarUpdatedAt,
+      profileUpdatedAt: avatarUpdatedAt,
+      avatarSource: "user-upload",
     };
     req.user = updatedUser;
 
@@ -7234,10 +7276,12 @@ app.post("/api/v1/user/avatar", authenticateUser, (req: any, res: any, next: any
     // metadata user_profile document from a specific user's avatar update.
     saveDatabase();
 
-    // Do not make the profile-photo UI wait for Firestore propagation.
-    void Promise.resolve(persistUser(updatedUser)).catch((err: any) => {
-      console.warn("[PARDAIS-PARTY AVATAR] Firestore profile sync queued/failed:", err?.message || err);
-    });
+    // Wait for all account-scoped mirrors to be persisted before returning.
+    // This prevents an immediate app refresh from seeing an older avatar mirror.
+    const durableSaved = await persistUserDurably(updatedUser);
+    if (!durableSaved) {
+      console.warn("[PARDAIS-PARTY AVATAR] Durable profile mirror did not fully confirm; local account state remains updated.");
+    }
 
     return res.json({
       success: true,

@@ -477,7 +477,7 @@ export function startFirestoreSynchronization() {
           const locked = u?.usernameLockedAt ? 100000000000 : 0;
           const password = u?.passwordHash ? 10000000000 : 0;
           const profile = u?.profileCompleted ? 1000000000 : 0;
-          const times = [u?.profileUpdatedAt, u?.registrationCompletedAt, u?.usernameLockedAt, u?.registeredAt]
+          const times = [u?.avatarUpdatedAt, u?.profileUpdatedAt, u?.registrationCompletedAt, u?.usernameLockedAt, u?.registeredAt]
             .map((v: any) => v ? Date.parse(String(v)) : 0)
             .filter((v: number) => Number.isFinite(v));
           const latest = times.length ? Math.max(...times) : 0;
