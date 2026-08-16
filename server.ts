@@ -7174,14 +7174,16 @@ app.post("/api/v1/user/avatar", authenticateUser, (req: any, res: any, next: any
           Key: objectKey,
           Body: uploadBuffer,
           ContentType: uploadContentType,
+          ContentLength: uploadBuffer.length,
           CacheControl: "public, max-age=31536000, immutable",
         })),
         new Promise((_, reject) =>
-          setTimeout(() => reject(new Error("R2 profile photo upload timeout")), 30000)
+          setTimeout(() => reject(new Error("R2 profile photo upload timeout after 7s; using fast fallback")), 7000)
         )
       ]);
 
       avatarUrl = `${PUBLIC_API_BASE}/api/v1/user/avatar-media?key=${encodeURIComponent(objectKey)}`;
+      console.log(`[PARDAIS-PARTY AVATAR] R2 upload completed: ${objectKey}`);
     } catch (r2Err: any) {
       // Fallback: save the already-optimized image to the API's persistent public
       // uploads directory. This guarantees profile editing still completes even
