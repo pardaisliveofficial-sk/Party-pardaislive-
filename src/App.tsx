@@ -954,6 +954,7 @@ export default function App() {
   const [editFullName, setEditFullName] = useState<string>(DEFAULT_USER.fullName || "");
   const [editAvatar, setEditAvatar] = useState<string>(DEFAULT_USER.avatar);
   const [editAvatarFile, setEditAvatarFile] = useState<File | null>(null);
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
   const [editDob, setEditDob] = useState<string>(DEFAULT_USER.dob || "");
   const [editGender, setEditGender] = useState<string>(DEFAULT_USER.gender);
   const [editPhoneNumber, setEditPhoneNumber] = useState<string>(DEFAULT_USER.phoneNumber || "");
@@ -6059,22 +6060,47 @@ export default function App() {
   // Save profile edits
   const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSavingProfile) return;
+    setIsSavingProfile(true);
 
     let persistentAvatar = user.avatar;
     const selectedAvatar = editAvatar.trim();
 
-    // Production avatar upload: use the shared authenticated API client so Android/Web
-    // always sends the current Bearer session and gets the normal 401 retry behavior.
-    // Do not round-trip through a data URL because Android WebView camera/gallery files
-    // can be large or use HEIC containers. The server handles optimization/fallback.
-    if (editAvatarFile || (selectedAvatar && selectedAvatar !== user.avatar && selectedAvatar.startsWith("data:image/"))) {
+    // Compress normal browser-readable images before sending them to Railway/R2.
+    // Android camera/gallery files can be very large; a small 512px WebP keeps the
+    // upload fast while the server still accepts HEIC/HEIF as a fallback.
+    const prepareAvatarFile = async (source: File): Promise<File> => {
+      if (source.size <= 900 * 1024 || /image\/(heic|heif|gif|svg\+xml)/i.test(source.type)) return source;
       try {
+        const bitmap = await createImageBitmap(source);
+        const max = 512;
+        const scale = Math.min(1, max / Math.max(bitmap.width, bitmap.height));
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+        canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+        const ctx = canvas.getContext("2d");
+        if (!ctx) return source;
+        ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+        bitmap.close();
+        const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/webp", 0.84));
+        if (!blob || blob.size <= 0) return source;
+        return new File([blob], `avatar-${Date.now()}.webp`, { type: "image/webp" });
+      } catch (err) {
+        console.warn("[PARDAIS PROFILE] Client image optimization skipped:", err);
+        return source;
+      }
+    };
+
+    try {
+      // Production avatar upload: shared authenticated API client keeps the Bearer
+      // session on Android/Web and the server performs the final R2 persistence.
+      if (editAvatarFile || (selectedAvatar && selectedAvatar !== user.avatar && selectedAvatar.startsWith("data:image/"))) {
         let fileToUpload: File;
         if (editAvatarFile) {
-          fileToUpload = editAvatarFile;
+          fileToUpload = await prepareAvatarFile(editAvatarFile);
         } else {
           const blob = await (await fetch(selectedAvatar)).blob();
-          fileToUpload = new File([blob], `avatar-${Date.now()}.jpg`, { type: blob.type || "image/jpeg" });
+          fileToUpload = await prepareAvatarFile(new File([blob], `avatar-${Date.now()}.jpg`, { type: blob.type || "image/jpeg" }));
         }
 
         if (!fileToUpload || fileToUpload.size <= 0) {
@@ -6082,52 +6108,66 @@ export default function App() {
         }
 
         const formData = new FormData();
-        formData.append("avatar", fileToUpload, fileToUpload.name || `avatar-${Date.now()}.jpg`);
+        formData.append("avatar", fileToUpload, fileToUpload.name || `avatar-${Date.now()}.webp`);
 
-        const uploadRes = await authenticatedFetch("/api/v1/user/avatar", {
-          method: "POST",
-          body: formData
-        });
+        // Keep the Save button visibly pending while the backend stores the image.
+        // A 45s client guard prevents an Android WebView from waiting indefinitely.
+        const controller = new AbortController();
+        const timeoutId = window.setTimeout(() => controller.abort(), 45000);
+        let uploadRes: Response;
+        try {
+          uploadRes = await authenticatedFetch("/api/v1/user/avatar", {
+            method: "POST",
+            body: formData,
+            signal: controller.signal
+          });
+        } finally {
+          window.clearTimeout(timeoutId);
+        }
+
         const uploadData: any = await uploadRes.json().catch(() => ({}));
-
         if (!uploadRes.ok || !uploadData?.url) {
           const detail = uploadData?.error || `Profile photo upload failed (HTTP ${uploadRes.status}).`;
           throw new Error(detail);
         }
 
         persistentAvatar = uploadData.url;
-      } catch (err) {
-        console.error("[PARDAIS PROFILE] Avatar upload failed:", err);
-        alert(`Profile photo upload failed. ${err instanceof Error ? err.message : "Please try again."}`);
-        return;
       }
+
+      const updatedUser: UserProfile = {
+        ...user,
+        // Username is the permanent account identity and cannot be changed here.
+        username: user.username,
+        avatar: persistentAvatar,
+        avatarUrl: persistentAvatar,
+        gender: editGender,
+        fullName: editFullName.trim(),
+        dob: editDob,
+        phoneNumber: editPhoneNumber,
+        // These are server/database metrics. They are never editable from Profile.
+        followersCount: user.followersCount ?? 0,
+        followingCount: user.followingCount ?? 0,
+        totalLikesCount: user.totalLikesCount ?? 0
+      };
+
+      localStorage.removeItem("pardais_custom_avatar");
+      localStorage.setItem("pardais_avatar_user_set", persistentAvatar ? "true" : "false");
+
+      saveAndSyncUserProfile(updatedUser);
+      setEditAvatar(persistentAvatar);
+      setEditAvatarFile(null);
+      setIsEditingProfile(false);
+    } catch (err) {
+      console.error("[PARDAIS PROFILE] Profile save/upload failed:", err);
+      const message = err instanceof DOMException && err.name === "AbortError"
+        ? "Upload is taking too long. Please check the connection and try again."
+        : (err instanceof Error ? err.message : "Please try again.");
+      alert(`Profile photo upload failed. ${message}`);
+    } finally {
+      setIsSavingProfile(false);
     }
-
-    const updatedUser: UserProfile = {
-      ...user,
-      // Username is the permanent account identity and cannot be changed here.
-      username: user.username,
-      avatar: persistentAvatar,
-      avatarUrl: persistentAvatar,
-      gender: editGender,
-      fullName: editFullName.trim(),
-      dob: editDob,
-      phoneNumber: editPhoneNumber,
-      // These are server/database metrics. They are never editable from Profile.
-      followersCount: user.followersCount ?? 0,
-      followingCount: user.followingCount ?? 0,
-      totalLikesCount: user.totalLikesCount ?? 0
-    };
-
-    // Remove any stale base64 avatar cache from older builds.
-    localStorage.removeItem("pardais_custom_avatar");
-    localStorage.setItem("pardais_avatar_user_set", persistentAvatar ? "true" : "false");
-
-    saveAndSyncUserProfile(updatedUser);
-    setEditAvatar(persistentAvatar);
-    setEditAvatarFile(null);
-    setIsEditingProfile(false);
   };
+
 
   // Claim Daily Lucky Wallet Coins Bonus with animation
   const claimCoins = () => {
@@ -13761,8 +13801,9 @@ export default function App() {
                                         {/* Gallery Button */}
                                         <button
                                           type="button"
+                                          disabled={isSavingProfile}
                                           onClick={() => document.getElementById("avatar-gallery-file-input")?.click()}
-                                          className="px-2.5 py-1.5 bg-[#1f1f2e] hover:bg-[#28283d] active:scale-95 text-white border border-white/10 rounded-lg text-[9px] font-black flex items-center justify-center space-x-1.5 transition-all shadow cursor-pointer"
+                                          className={`px-2.5 py-1.5 bg-[#1f1f2e] hover:bg-[#28283d] active:scale-95 text-white border border-white/10 rounded-lg text-[9px] font-black flex items-center justify-center space-x-1.5 transition-all shadow ${isSavingProfile ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
                                         >
                                           <ImageIcon className="w-3.5 h-3.5 text-cyan-400" />
                                           <span>📁 Gallery</span>
@@ -13771,14 +13812,15 @@ export default function App() {
                                         {/* Camera Button */}
                                         <button
                                           type="button"
+                                          disabled={isSavingProfile}
                                           onClick={startAvatarCamera}
-                                          className="px-2.5 py-1.5 bg-[#1f1f2e] hover:bg-[#28283d] active:scale-95 text-white border border-white/10 rounded-lg text-[9px] font-black flex items-center justify-center space-x-1.5 transition-all shadow cursor-pointer"
+                                          className={`px-2.5 py-1.5 bg-[#1f1f2e] hover:bg-[#28283d] active:scale-95 text-white border border-white/10 rounded-lg text-[9px] font-black flex items-center justify-center space-x-1.5 transition-all shadow ${isSavingProfile ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
                                         >
                                           <Camera className="w-3.5 h-3.5 text-[#ff007f]" />
                                           <span>📷 Camera</span>
                                         </button>
                                       </div>
-                                      <p className="text-[7.5px] text-gray-400 leading-none">Choose from Gallery or snap photo with Camera</p>
+                                      <p className="text-[7.5px] text-gray-400 leading-none">{isSavingProfile ? "Uploading photo… please wait for confirmation" : "Choose from Gallery or snap photo with Camera"}</p>
                                     </div>
                                   </div>
                                 </div>
@@ -13824,14 +13866,17 @@ export default function App() {
                               <div className="flex space-x-2 pt-1">
                                 <button
                                   type="submit"
-                                  className="flex-1 bg-gradient-to-r from-[#ff007f] to-[#7b2cbf] text-white py-2 rounded-lg text-xs font-black shadow-lg"
+                                  disabled={isSavingProfile}
+                                  aria-busy={isSavingProfile}
+                                  className={`flex-1 bg-gradient-to-r from-[#ff007f] to-[#7b2cbf] text-white py-2 rounded-lg text-xs font-black shadow-lg transition-all ${isSavingProfile ? "opacity-70 cursor-wait" : ""}`}
                                 >
-                                  Save Profile Changes
+                                  {isSavingProfile ? "Uploading Photo… Please wait" : "Save Profile Changes"}
                                 </button>
                                 <button
                                   type="button"
+                                  disabled={isSavingProfile}
                                   onClick={() => setIsEditingProfile(false)}
-                                  className="px-3 bg-[#303040] text-gray-300 py-2 rounded-lg text-xs font-bold"
+                                  className="px-3 bg-[#303040] text-gray-300 py-2 rounded-lg text-xs font-bold disabled:opacity-50 disabled:cursor-not-allowed"
                                 >
                                   Cancel
                                 </button>
