@@ -5,6 +5,7 @@ import AgoraRTC, {
   IAgoraRTCRemoteUser 
 } from "agora-rtc-sdk-ng";
 import { authenticatedFetch, resolveApiUrl } from "../lib/apiClient";
+import type { MusicTrack } from "../musicData";
 
 // Set Agora SDK log level to 1 (ERROR) to expose internal errors in console
 AgoraRTC.setLogLevel(1);
@@ -24,6 +25,9 @@ interface AgoraPartyAudioProps {
   isMuted: boolean;
   username: string;
   avatar: string;
+  musicTrack?: MusicTrack | null;
+  musicPlaying?: boolean;
+  musicVolume?: number;
   onStatusChange?: (status: "idle" | "connecting" | "connected" | "error", details?: string) => void;
 }
 
@@ -45,6 +49,9 @@ export const AgoraPartyAudio: React.FC<AgoraPartyAudioProps> = ({
   isMuted,
   username,
   avatar,
+  musicTrack = null,
+  musicPlaying = false,
+  musicVolume = 0.45,
   onStatusChange
 }) => {
   // Real Agora SDK Instances & Refs
@@ -57,6 +64,13 @@ export const AgoraPartyAudio: React.FC<AgoraPartyAudioProps> = ({
   
   const [activeSpeakers, setActiveSpeakers] = useState<string[]>([]);
   const audioOutputRef = useRef<HTMLAudioElement | null>(null);
+
+  // Party background music is published as a separate Agora audio track so
+  // music and microphone voices can be heard simultaneously by everyone.
+  const partyMusicAudioRef = useRef<HTMLAudioElement | null>(null);
+  const partyMusicContextRef = useRef<AudioContext | null>(null);
+  const partyMusicGainRef = useRef<GainNode | null>(null);
+  const partyMusicCustomTrackRef = useRef<any>(null);
 
   // Status states
   const [status, setStatus] = useState<"idle" | "connecting" | "connected" | "error">("idle");
@@ -100,6 +114,11 @@ export const AgoraPartyAudio: React.FC<AgoraPartyAudioProps> = ({
         }
       }
 
+      // Recover party music playback after a browser/Android autoplay interruption.
+      if (partyMusicAudioRef.current && musicPlaying) {
+        partyMusicAudioRef.current.play().catch(() => {});
+      }
+
       if (clientRef.current) {
         clientRef.current.remoteUsers.forEach(async (u) => {
           try {
@@ -126,7 +145,7 @@ export const AgoraPartyAudio: React.FC<AgoraPartyAudioProps> = ({
       window.removeEventListener("touchstart", handleUserInteraction);
       window.removeEventListener("pointerdown", handleUserInteraction);
     };
-  }, []);
+  }, [musicPlaying]);
 
   // Report status changes to parent
   useEffect(() => {
@@ -481,6 +500,96 @@ export const AgoraPartyAudio: React.FC<AgoraPartyAudioProps> = ({
       isCancelled = true;
     };
   }, [userRole, client, status]);
+
+  // 🎵 Publish background music as a second audio source. The microphone remains
+  // published separately, so music never replaces or mutes the live voices.
+  useEffect(() => {
+    let cancelled = false;
+
+    const stopPartyMusic = async () => {
+      const agoraClient = clientRef.current;
+      const customTrack = partyMusicCustomTrackRef.current;
+      try {
+        if (agoraClient && customTrack && agoraClient.connectionState === "CONNECTED") {
+          await agoraClient.unpublish([customTrack]);
+        }
+      } catch (e) {
+        console.warn("[AgoraPartyAudio] Failed to unpublish party music:", e);
+      }
+      try { customTrack?.stop?.(); } catch {}
+      try { customTrack?.close?.(); } catch {}
+      partyMusicCustomTrackRef.current = null;
+      if (partyMusicAudioRef.current) {
+        partyMusicAudioRef.current.pause();
+        partyMusicAudioRef.current.src = "";
+      }
+      partyMusicGainRef.current = null;
+      if (partyMusicContextRef.current) {
+        try { await partyMusicContextRef.current.close(); } catch {}
+        partyMusicContextRef.current = null;
+      }
+    };
+
+    const startPartyMusic = async () => {
+      const agoraClient = clientRef.current;
+      if (!agoraClient || status !== "connected" || !musicTrack || !musicPlaying || userRole === "listener") return;
+
+      try {
+        await stopPartyMusic();
+        if (cancelled) return;
+
+        const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+        if (!AudioCtx) throw new Error("Web Audio is not supported on this device");
+
+        const audio = new Audio();
+        audio.crossOrigin = "anonymous";
+        audio.preload = "auto";
+        audio.loop = true;
+        audio.src = musicTrack.url;
+        partyMusicAudioRef.current = audio;
+
+        const ctx: AudioContext = new AudioCtx();
+        partyMusicContextRef.current = ctx;
+        if (ctx.state === "suspended") await ctx.resume().catch(() => {});
+
+        const source = ctx.createMediaElementSource(audio);
+        const gain = ctx.createGain();
+        gain.gain.value = Math.max(0, Math.min(1, musicVolume));
+        partyMusicGainRef.current = gain;
+
+        const destination = ctx.createMediaStreamDestination();
+        source.connect(gain);
+        gain.connect(ctx.destination);
+        gain.connect(destination);
+
+        const mediaTrack = destination.stream.getAudioTracks()[0];
+        if (!mediaTrack) throw new Error("Unable to create party music audio track");
+
+        const customTrack = (AgoraRTC as any).createCustomAudioTrack({ mediaStreamTrack: mediaTrack });
+        partyMusicCustomTrackRef.current = customTrack;
+        await agoraClient.publish([customTrack]);
+        await audio.play();
+        console.log("[AgoraPartyAudio] Party background music published:", musicTrack.title);
+      } catch (e) {
+        console.warn("[AgoraPartyAudio] Party music start failed:", e);
+        await stopPartyMusic();
+      }
+    };
+
+    if (musicTrack && musicPlaying && status === "connected") {
+      startPartyMusic();
+    } else if (!musicPlaying || !musicTrack || userRole === "listener") {
+      stopPartyMusic();
+    }
+
+    return () => { cancelled = true; };
+  }, [client, status, userRole, musicTrack?.id, musicPlaying]);
+
+  useEffect(() => {
+    if (partyMusicGainRef.current) {
+      partyMusicGainRef.current.gain.value = Math.max(0, Math.min(1, musicVolume));
+    }
+  }, [musicVolume]);
 
   return (
     <audio ref={audioOutputRef} autoPlay playsInline className="hidden" />

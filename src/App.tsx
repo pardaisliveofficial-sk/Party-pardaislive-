@@ -2139,6 +2139,16 @@ export default function App() {
     const timer = window.setInterval(() => setPartyTimerNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
   }, [clientView, activePartyId]);
+
+  // Stop party music automatically when leaving the party room.
+  useEffect(() => {
+    if (clientView !== "party-room") {
+      setPartyMusicPlaying(false);
+      setPartyMusicTrack(null);
+      setShowPartyMusicLibrary(false);
+      setPartyMusicSearch("");
+    }
+  }, [clientView]);
   const [partyUserProfile, setPartyUserProfile] = useState<{
     username: string;
     avatar?: string;
@@ -2290,6 +2300,12 @@ export default function App() {
   const [giftTargetUser, setGiftTargetUser] = useState<string | null>(null);
   const [partyGiftRecipient, setPartyGiftRecipient] = useState<string>("Host");
   const [partyGiftDrawerOpen, setPartyGiftDrawerOpen] = useState<boolean>(false);
+  // 🎵 Party background music: one shared track per current speaker/host session.
+  const [partyMusicTrack, setPartyMusicTrack] = useState<MusicTrack | null>(null);
+  const [partyMusicPlaying, setPartyMusicPlaying] = useState<boolean>(false);
+  const [partyMusicVolume, setPartyMusicVolume] = useState<number>(0.45);
+  const [showPartyMusicLibrary, setShowPartyMusicLibrary] = useState<boolean>(false);
+  const [partyMusicSearch, setPartyMusicSearch] = useState<string>("");
   const [showPartyGamesModal, setShowPartyGamesModal] = useState<boolean>(false);
   const [showCarnivalWelcomeCard, setShowCarnivalWelcomeCard] = useState<boolean>(true);
 
@@ -8108,6 +8124,11 @@ export default function App() {
     party.hostUsername === user.username || isPartyModerator(party.id, user.username);
 
   const handlePartyToggleLock = async (partyId: string, seatId: number) => {
+    const currentParty = partiesList.find((p: any) => p.id === partyId);
+    if (!currentParty || currentParty.hostUsername !== user.username) {
+      alert("Only the Host can lock or unlock seats.");
+      return;
+    }
     // 1. Optimistic state update: toggle isLocked instantly in local state
     setPartiesList(prev => prev.map(p => {
       if (p.id !== partyId) return p;
@@ -8121,7 +8142,7 @@ export default function App() {
       const response = await authenticatedFetch(`/api/v1/parties/${partyId}/seats/toggle-lock`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ seatId })
+        body: JSON.stringify({ seatId, actorUsername: user.username })
       });
       if (response.ok) {
         const data = await response.json();
@@ -8131,6 +8152,30 @@ export default function App() {
       }
     } catch (e) {
       console.warn("Error toggling lock:", e);
+    }
+  };
+
+  const handlePartyLockAllEmptySeats = async (party: any, locked: boolean) => {
+    if (party.hostUsername !== user.username) {
+      alert("Only the Host can change seat locks.");
+      return;
+    }
+    setPartiesList(prev => prev.map(p => p.id !== party.id ? p : ({
+      ...p,
+      seats: (p.seats || []).map((s: any) => (!s.name && s.id !== 1) ? { ...s, isLocked: locked } : s)
+    })));
+    try {
+      const response = await authenticatedFetch(`/api/v1/parties/${party.id}/seats/toggle-lock-all`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ locked, actorUsername: user.username })
+      });
+      if (response.ok) {
+        const data = await response.json();
+        if (data && !data.error) setPartiesList(prev => prev.map(p => p.id === party.id ? data : p));
+      }
+    } catch (e) {
+      console.warn("Error changing all empty seat locks:", e);
     }
   };
 
@@ -9824,7 +9869,11 @@ export default function App() {
                           setActiveSeatMenu({ seatId, occupantName });
                         } else {
                           // Empty seat clicked
-                          if (mySeatedSeat) {
+                          if (isHostOfRoom) {
+                            // Host gets seat controls on every seat, including empty seats.
+                            // This is where Lock / Unlock is managed without taking the host's seat.
+                            setActiveSeatMenu({ seatId, occupantName: null });
+                          } else if (mySeatedSeat) {
                             // Exchange seat prompt
                             const confirmExchange = window.confirm(`Seat exchange? Empty Seat ${seatId} par move karna chahte hain?`);
                             if (confirmExchange) {
@@ -9835,7 +9884,7 @@ export default function App() {
                           } else {
                             // Request or sit directly
                             const clickedSeat = party.seats?.find((s: any) => s.id === seatId);
-                            if (isHostOfRoom || (clickedSeat && !clickedSeat.isLocked)) {
+                            if (clickedSeat && !clickedSeat.isLocked) {
                               handlePartyJoinSeat(party.id, seatId);
                             } else {
                               handleRequestSeat(seatId);
@@ -10054,6 +10103,13 @@ export default function App() {
                                               <span className="text-[7px] text-red-400 leading-none">🎙️⃠</span>
                                             </div>
                                           )}
+
+                                          {/* Host seat-lock indicator */}
+                                          {seat.isLocked && (
+                                            <div className="absolute top-0.5 right-0.5 bg-black/85 border border-amber-400/70 rounded-full w-4 h-4 flex items-center justify-center shadow-lg z-30 pointer-events-none">
+                                              <Lock className="w-2.5 h-2.5 text-amber-300" />
+                                            </div>
+                                          )}
                                         </div>
 
                                         {/* Seated occupant name, seat label & per-seat gifting */}
@@ -10082,8 +10138,11 @@ export default function App() {
                                 channelName={`party-${party.id}`}
                                 userRole={isHostOfRoom ? "host" : (mySeatedSeat ? "speaker" : "listener")}
                                 isMuted={isHostOfRoom ? false : (isAllGuestsMuted ? true : (mySeatedSeat ? mySeatedSeat.isMuted === true : true))}
-                                username={user.username}
+                                  username={user.username}
                                 avatar={user.avatar}
+                                musicTrack={partyMusicTrack}
+                                musicPlaying={partyMusicPlaying}
+                                musicVolume={partyMusicVolume}
                               />
                             </div>
 
@@ -10138,6 +10197,18 @@ export default function App() {
                                           title="Mute or unmute all guest microphones"
                                         >
                                           {isAllGuestsMuted ? "🔇 ALL MUTED" : "🎙️ MUTE ALL"}
+                                        </button>
+                                      )}
+                                      {isHostOfRoom && (
+                                        <button
+                                          onClick={() => {
+                                            const hasUnlockedEmpty = (party.seats || []).some((s: any) => !s.name && s.id !== 1 && !s.isLocked);
+                                            handlePartyLockAllEmptySeats(party, hasUnlockedEmpty);
+                                          }}
+                                          className="px-1.5 py-0.5 rounded-md border border-amber-400/30 bg-amber-500/10 text-amber-300 font-black cursor-pointer"
+                                          title="Lock or unlock all empty seats"
+                                        >
+                                          🔒 SEATS
                                         </button>
                                       )}
                                     </div>
@@ -10242,6 +10313,20 @@ export default function App() {
                                       className="col-span-2 bg-gradient-to-r from-amber-500/20 to-yellow-600/20 hover:from-amber-500/40 hover:to-yellow-600/40 border border-amber-400/40 text-amber-300 rounded-xl py-2 text-[9.5px] font-black uppercase tracking-wider text-center cursor-pointer transition-all flex items-center justify-center space-x-1"
                                     >
                                       <span>👤 View User Profile & Badges</span>
+                                    </button>
+                                  )}
+
+                                  {isHostOfRoom && activeSeatMenu.seatId !== 1 && (
+                                    <button
+                                      onClick={() => {
+                                        const locked = Boolean(seat?.isLocked);
+                                        setActiveSeatMenu(null);
+                                        handlePartyToggleLock(party.id, activeSeatMenu.seatId);
+                                      }}
+                                      className={`col-span-2 rounded-xl py-2.5 text-[9.5px] font-black uppercase tracking-wider text-center cursor-pointer transition-all flex items-center justify-center gap-1.5 ${seat?.isLocked ? "bg-emerald-500/15 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40" : "bg-amber-500/15 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40"}`}
+                                    >
+                                      {seat?.isLocked ? <Unlock className="w-3 h-3" /> : <Lock className="w-3 h-3" />}
+                                      <span>{seat?.isLocked ? "Unlock Seat" : "Lock Seat"}</span>
                                     </button>
                                   )}
 
@@ -10598,6 +10683,80 @@ export default function App() {
                             />
                           )}
 
+                          {/* 🎵 PARTY BACKGROUND MUSIC LIBRARY */}
+                          {showPartyMusicLibrary && (
+                            <div className="absolute inset-x-3 bottom-16 z-[70] bg-[#090912]/98 border-2 border-amber-400/50 rounded-3xl p-3.5 shadow-[0_0_35px_rgba(245,158,11,0.28)] backdrop-blur-xl flex flex-col max-h-[68%] animate-slide-up">
+                              <div className="flex items-center justify-between border-b border-white/10 pb-2.5 mb-2.5">
+                                <div className="flex items-center gap-2 text-left">
+                                  <div className="w-8 h-8 rounded-xl bg-amber-500/15 border border-amber-400/30 flex items-center justify-center">
+                                    <Music className="w-4 h-4 text-amber-300" />
+                                  </div>
+                                  <div>
+                                    <p className="text-[10px] font-black text-white uppercase tracking-widest font-mono">Party Music Library</p>
+                                    <p className="text-[7.5px] text-gray-400">Background music stays live while voices continue.</p>
+                                  </div>
+                                </div>
+                                <button onClick={() => setShowPartyMusicLibrary(false)} className="w-6 h-6 rounded-full bg-white/5 text-gray-400 hover:text-white flex items-center justify-center cursor-pointer">✕</button>
+                              </div>
+
+                              <div className="flex items-center gap-2 mb-2.5">
+                                <div className="flex-1 flex items-center gap-1.5 bg-black/50 border border-white/10 rounded-xl px-2.5 py-1.5">
+                                  <Search className="w-3 h-3 text-gray-500" />
+                                  <input
+                                    value={partyMusicSearch}
+                                    onChange={(e) => setPartyMusicSearch(e.target.value)}
+                                    placeholder="Search songs, artists, categories..."
+                                    className="flex-1 bg-transparent text-[9px] text-white placeholder-gray-600 focus:outline-none"
+                                  />
+                                </div>
+                                {partyMusicTrack && (
+                                  <button
+                                    onClick={() => { setPartyMusicPlaying(false); setPartyMusicTrack(null); }}
+                                    className="px-2.5 py-1.5 rounded-xl bg-red-500/10 border border-red-500/30 text-red-300 text-[8px] font-black cursor-pointer"
+                                  >STOP</button>
+                                )}
+                              </div>
+
+                              <div className="flex-1 overflow-y-auto space-y-1.5 pr-1">
+                                {MOCK_TRACKS.filter((track) => {
+                                  const q = partyMusicSearch.trim().toLowerCase();
+                                  return !q || `${track.title} ${track.artist} ${track.category}`.toLowerCase().includes(q);
+                                }).map(track => {
+                                  const active = partyMusicTrack?.id === track.id;
+                                  return (
+                                    <button
+                                      key={track.id}
+                                      onClick={() => { setPartyMusicTrack(track); setPartyMusicPlaying(true); }}
+                                      className={`w-full flex items-center gap-2.5 p-2 rounded-xl border text-left transition-all cursor-pointer ${active ? "bg-amber-500/10 border-amber-400/50" : "bg-white/[0.02] border-white/5 hover:bg-white/5"}`}
+                                    >
+                                      <img src={track.cover} className="w-9 h-9 rounded-lg object-cover border border-white/10" alt="" />
+                                      <span className="min-w-0 flex-1">
+                                        <span className={`block text-[9px] font-black truncate ${active ? "text-amber-300" : "text-white"}`}>{track.title}</span>
+                                        <span className="block text-[7px] text-gray-400 truncate">{track.artist} • {track.category}</span>
+                                      </span>
+                                      <span className="text-[7px] text-gray-500 font-mono">{track.duration}</span>
+                                      <span className="text-xs">{active && partyMusicPlaying ? "⏸️" : "▶️"}</span>
+                                    </button>
+                                  );
+                                })}
+                              </div>
+
+                              {partyMusicTrack && (
+                                <div className="mt-2.5 pt-2.5 border-t border-white/10">
+                                  <div className="flex items-center justify-between gap-2 mb-1.5">
+                                    <span className="text-[8px] text-amber-300 font-black truncate">🎵 {partyMusicTrack.title}</span>
+                                    <button onClick={() => setPartyMusicPlaying(v => !v)} className="text-[8px] px-2 py-1 rounded-lg bg-amber-500 text-black font-black cursor-pointer">{partyMusicPlaying ? "PAUSE" : "PLAY"}</button>
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                    <Volume2 className="w-3 h-3 text-amber-300" />
+                                    <input type="range" min="0" max="1" step="0.05" value={partyMusicVolume} onChange={(e) => setPartyMusicVolume(parseFloat(e.target.value))} className="flex-1 accent-amber-400" />
+                                    <span className="text-[7px] text-gray-300 font-mono w-7 text-right">{Math.round(partyMusicVolume * 100)}%</span>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          )}
+
                           {/* ⌨️ INTERACTIVE BOTTOM CONTROL ACTIONS ROW */}
                           <div className="px-3 pt-1 flex items-center space-x-2 shrink-0 bg-transparent">
                             {/* Message Input Form */}
@@ -10660,6 +10819,17 @@ export default function App() {
                                 title="Request to Join Mic Seats"
                               >
                                 <span className="text-sm font-black">+🎙️</span>
+                              </button>
+                            )}
+
+                            {/* 🎵 Party Music Library launcher */}
+                            {(mySeatedSeat || isHostOfRoom) && (
+                              <button
+                                onClick={() => setShowPartyMusicLibrary(true)}
+                                className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 cursor-pointer border transition-all active:scale-90 ${partyMusicPlaying ? "bg-amber-400 text-black border-amber-200 shadow-[0_0_14px_rgba(245,158,11,0.55)]" : "bg-black/60 text-amber-300 border-amber-500/40"}`}
+                                title="Open Party Music Library"
+                              >
+                                <Music className="w-4 h-4" />
                               </button>
                             )}
 

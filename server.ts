@@ -4873,6 +4873,10 @@ app.post("/api/v1/parties/:id/seats/join", (req, res) => {
   const index = dbData.parties?.findIndex((p: any) => p.id === id);
   if (index !== -1 && index !== undefined) {
     const party = dbData.parties[index];
+    const targetSeat = party.seats?.find((seat: any) => seat.id === Number(seatId));
+    if (!targetSeat) return res.status(404).json({ error: "Seat not found" });
+    if (targetSeat.name && targetSeat.name !== username) return res.status(409).json({ error: "Seat is already occupied" });
+    if (targetSeat.isLocked && party.hostUsername !== username) return res.status(403).json({ error: "This seat is locked by the host" });
     party.seats = party.seats.map((seat: any) => {
       if (seat.id === Number(seatId)) {
         return { ...seat, name: username, avatar: avatar || "", isMuted: party.allGuestsMuted ? true : Boolean(seat.isMuted) };
@@ -4942,10 +4946,12 @@ app.post("/api/v1/parties/:id/seats/mute-all", (req, res) => {
 
 app.post("/api/v1/parties/:id/seats/toggle-lock", (req, res) => {
   const { id } = req.params;
-  const { seatId } = req.body;
+  const { seatId, actorUsername } = req.body;
   const index = dbData.parties?.findIndex((p: any) => p.id === id);
   if (index !== -1 && index !== undefined) {
     const party = dbData.parties[index];
+    if (actorUsername !== party.hostUsername) return res.status(403).json({ error: "Only host can lock or unlock seats" });
+    if (Number(seatId) === 1) return res.status(400).json({ error: "Host seat cannot be locked" });
     party.seats = party.seats.map((seat: any) => {
       if (seat.id === Number(seatId)) {
         return { ...seat, isLocked: !seat.isLocked };
@@ -4958,6 +4964,19 @@ app.post("/api/v1/parties/:id/seats/toggle-lock", (req, res) => {
   } else {
     res.status(404).json({ error: "Party Room not found" });
   }
+});
+
+app.post("/api/v1/parties/:id/seats/toggle-lock-all", (req, res) => {
+  const { id } = req.params;
+  const { locked, actorUsername } = req.body;
+  const index = dbData.parties?.findIndex((p: any) => p.id === id);
+  if (index === -1 || index === undefined) return res.status(404).json({ error: "Party Room not found" });
+  const party = dbData.parties[index];
+  if (actorUsername !== party.hostUsername) return res.status(403).json({ error: "Only host can change seat locks" });
+  party.seats = (party.seats || []).map((seat: any) => (!seat.name && seat.id !== 1) ? { ...seat, isLocked: Boolean(locked) } : seat);
+  saveDatabase();
+  syncDocument("parties", id, party);
+  res.json(party);
 });
 
 app.post("/api/v1/parties/:id/close", (req, res) => {
