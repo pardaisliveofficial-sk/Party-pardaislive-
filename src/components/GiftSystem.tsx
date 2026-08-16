@@ -1455,23 +1455,13 @@ export const GiftAnimationEngine: React.FC<GiftAnimationEngineProps> = ({
   // Auto-trigger video playback with unmuted attempt on component mount
   useEffect(() => {
     if (isPlayableVideoUrl && videoRef.current) {
+      // Gift videos are visual overlays. Keep the media element muted so mobile/WebView autoplay
+      // is reliable; gift sound effects are handled separately by the gift audio engine.
       videoRef.current.currentTime = 0;
-      videoRef.current.muted = false;
-      const playPromise = videoRef.current.play();
-      if (playPromise !== undefined) {
-        playPromise.catch(err => {
-          const msg = err instanceof Error ? err.message : String(err || "Autoplay restricted");
-          console.warn("[GiftSystem] Unmuted video autoplay restricted, falling back to muted video:", msg);
-          if (videoRef.current) {
-            videoRef.current.muted = true;
-            videoRef.current.play().catch(retryErr => {
-              const retryMsg = retryErr instanceof Error ? retryErr.message : String(retryErr || "Play retry failed");
-              console.warn("[GiftSystem] Video play retry note:", retryMsg);
-              setVideoError(true);
-            });
-          }
-        });
-      }
+      videoRef.current.muted = true;
+      videoRef.current.play().catch(err => {
+        console.warn("[GiftSystem] Gift overlay autoplay deferred:", err);
+      });
     }
   }, [currentGift?.id, isPlayableVideoUrl, videoSource]);
 
@@ -1562,8 +1552,16 @@ export const GiftAnimationEngine: React.FC<GiftAnimationEngineProps> = ({
               ref={videoRef}
               src={videoSource}
               autoPlay
+              muted
               playsInline
               preload="auto"
+              crossOrigin="anonymous"
+              onCanPlay={(e) => {
+                const el = e.currentTarget;
+                el.currentTime = 0;
+                el.muted = true;
+                el.play().catch(() => setVideoError(true));
+              }}
               onEnded={handleFinish}
               onError={(e) => {
                 const src = (e.currentTarget as HTMLVideoElement)?.currentSrc || (e.currentTarget as HTMLVideoElement)?.src || "";
@@ -2408,13 +2406,31 @@ export const AdminGiftTab: React.FC<AdminGiftTabProps> = ({
                         else if (nameLower.endsWith(".mp4")) setAnimationFormat("mp4" as any);
                         else if (nameLower.endsWith(".gif")) setAnimationFormat("gif" as any);
 
-                        const reader = new FileReader();
-                        reader.onload = (evt) => {
-                          if (evt.target?.result) {
-                            setAnimationFile(evt.target.result as string);
+                        // Upload real animation media to the backend/R2 instead of embedding huge base64 data in the gift record.
+                        (async () => {
+                          try {
+                            const form = new FormData();
+                            form.append("file", file);
+                            form.append("giftId", editingGift?.id || "new");
+                            const response = await fetch(resolveApiUrl("/api/v1/gifts/upload-animation"), {
+                              method: "POST",
+                              body: form
+                            });
+                            const data = await response.json();
+                            if (!response.ok || !data?.url) throw new Error(data?.error || "Animation upload failed");
+                            setAnimationFile(data.url);
+                            alert("✅ Gift animation uploaded successfully. It will play as a real overlay in live rooms.");
+                          } catch (err) {
+                            console.error("[Gift Admin] animation upload failed", err);
+                            // Keep the local preview usable if the backend is temporarily unavailable.
+                            const reader = new FileReader();
+                            reader.onload = (evt) => {
+                              if (evt.target?.result) setAnimationFile(evt.target.result as string);
+                            };
+                            reader.readAsDataURL(file);
+                            alert("⚠️ Cloud upload failed, so a local preview was loaded. Upload again after the server is available for production use.");
                           }
-                        };
-                        reader.readAsDataURL(file);
+                        })();
                       }
                     }}
                   />

@@ -6924,6 +6924,94 @@ const avatarMulterUpload = multer({
   }
 });
 
+const giftAnimationUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 50 * 1024 * 1024,
+  },
+  fileFilter: (_req, file, cb) => {
+    const mime = String(file.mimetype || '').toLowerCase();
+    const name = String(file.originalname || '').toLowerCase();
+    const allowed =
+      mime === 'video/webm' || mime === 'video/mp4' || mime === 'image/svg+xml' ||
+      mime === 'image/gif' || name.endsWith('.webm') || name.endsWith('.mp4') ||
+      name.endsWith('.svg') || name.endsWith('.gif');
+    cb(null, allowed);
+  }
+});
+
+// Production gift-animation storage: upload the original WebM/MP4/SVG/GIF to Cloudflare R2
+// and return a stable API playback URL. The live app never needs to embed giant base64 blobs
+// in the gift catalog, and the playback endpoint supports HTTP Range requests for mobile video.
+app.post('/api/v1/gifts/upload-animation', giftAnimationUpload.single('file'), async (req: any, res: any) => {
+  try {
+    const file = req.file;
+    if (!file?.buffer?.length) return res.status(400).json({ success: false, error: 'No animation file uploaded.' });
+    if (!process.env.R2_ACCESS_KEY_ID || !process.env.R2_SECRET_ACCESS_KEY || !process.env.R2_ENDPOINT) {
+      return res.status(503).json({ success: false, error: 'Gift media storage is not configured on the server.' });
+    }
+
+    const mime = String(file.mimetype || 'application/octet-stream').toLowerCase();
+    const original = String(file.originalname || 'gift-animation');
+    const ext = original.includes('.') ? original.split('.').pop()!.toLowerCase() :
+      (mime === 'video/webm' ? 'webm' : mime === 'video/mp4' ? 'mp4' : mime === 'image/svg+xml' ? 'svg' : 'gif');
+    const safeGiftId = String(req.body?.giftId || 'new').replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 80);
+    const objectKey = `gifts/animations/${safeGiftId}/${Date.now()}-${crypto.randomBytes(6).toString('hex')}.${ext}`;
+    const client = getS3Client();
+    const bucketName = process.env.R2_BUCKET_NAME || 'pardaisparty-reels';
+
+    await client.send(new PutObjectCommand({
+      Bucket: bucketName,
+      Key: objectKey,
+      Body: file.buffer,
+      ContentType: mime,
+      CacheControl: 'public, max-age=31536000, immutable'
+    }));
+
+    const url = `${PUBLIC_API_BASE}/api/v1/gifts/animation?key=${encodeURIComponent(objectKey)}`;
+    return res.json({ success: true, url, key: objectKey, contentType: mime, size: file.size });
+  } catch (err: any) {
+    console.error('[PARDAIS-PARTY GIFT MEDIA] Upload failed:', err?.message || err);
+    return res.status(500).json({ success: false, error: err?.message || 'Gift animation upload failed.' });
+  }
+});
+
+app.get('/api/v1/gifts/animation', async (req: any, res: any) => {
+  try {
+    const key = typeof req.query?.key === 'string' ? req.query.key : '';
+    if (!key || !key.startsWith('gifts/animations/') || key.includes('..')) {
+      return res.status(400).json({ error: 'Invalid gift animation key.' });
+    }
+    if (!process.env.R2_ACCESS_KEY_ID || !process.env.R2_SECRET_ACCESS_KEY || !process.env.R2_ENDPOINT) {
+      return res.status(503).json({ error: 'Gift media storage is unavailable.' });
+    }
+
+    const client = getS3Client();
+    const bucketName = process.env.R2_BUCKET_NAME || 'pardaisparty-reels';
+    const range = typeof req.headers.range === 'string' ? req.headers.range : undefined;
+    const result: any = await client.send(new GetObjectCommand({
+      Bucket: bucketName, Key: key, ...(range ? { Range: range } : {})
+    }));
+
+    const contentType = String(result.ContentType || 'application/octet-stream');
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Accept-Ranges', 'bytes');
+    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    if (result.ContentLength != null) res.setHeader('Content-Length', String(result.ContentLength));
+    if (result.ContentRange) {
+      res.status(206);
+      res.setHeader('Content-Range', String(result.ContentRange));
+    }
+
+    if (result.Body && typeof result.Body.pipe === 'function') result.Body.pipe(res);
+    else if (result.Body) res.end(Buffer.from(await result.Body.transformToByteArray()));
+    else res.status(404).json({ error: 'Gift animation not found.' });
+  } catch (err: any) {
+    console.error('[PARDAIS-PARTY GIFT MEDIA] Playback failed:', err?.message || err);
+    return res.status(404).json({ error: 'Gift animation not found.' });
+  }
+});
+
 // Public profile-avatar playback proxy.
 // R2 objects are private in some production configurations, so the client must
 // never depend on the R2_PUBLIC_URL being directly readable. The API proxies only
