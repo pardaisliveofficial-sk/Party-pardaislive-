@@ -2333,13 +2333,13 @@ export default function App() {
   const [audioSeats, setAudioSeats] = useState<Array<{ id: number; name: string | null; avatar: string | null; isMuted: boolean; isLocked: boolean }>>([
     { id: 1, name: "Host Mehak 🎙️", avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&h=150&q=80", isMuted: false, isLocked: false },
     { id: 2, name: "VIP Prince_Pardais", avatar: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80", isMuted: false, isLocked: false },
-    { id: 3, name: null, avatar: null, isMuted: false, isLocked: false },
+    { id: 3, name: null, avatar: null, isMuted: false, isLocked: false, giftCoins: 0, giftCount: 0 },
     { id: 4, name: "Ali_99", avatar: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=100&h=100&q=80", isMuted: true, isLocked: false },
     { id: 5, name: null, avatar: null, isMuted: false, isLocked: true },
     { id: 6, name: "Sana_Khan", avatar: "https://images.unsplash.com/photo-1517841905240-472988babdf9?auto=format&fit=crop&w=100&h=100&q=80", isMuted: false, isLocked: false },
-    { id: 7, name: null, avatar: null, isMuted: false, isLocked: false },
+    { id: 7, name: null, avatar: null, isMuted: false, isLocked: false, giftCoins: 0, giftCount: 0 },
     { id: 8, name: "DJ_Sam", avatar: "https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?auto=format&fit=crop&w=100&h=100&q=80", isMuted: false, isLocked: false },
-    { id: 9, name: null, avatar: null, isMuted: false, isLocked: false },
+    { id: 9, name: null, avatar: null, isMuted: false, isLocked: false, giftCoins: 0, giftCount: 0 },
     { id: 10, name: null, avatar: null, isMuted: false, isLocked: true }
   ]);
   const [requestedToSpeak, setRequestedToSpeak] = useState<boolean>(false);
@@ -7751,18 +7751,18 @@ export default function App() {
       status: "active",
       connectedViewers: [{ userId: validHost, username: validHost, avatar: user.avatar || "", level: user.userLevel || user.level || 1, vipLevel: user.vipLevel || 0 }],
       seats: [
-        { id: 1, name: validHost, avatar: user.avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80", isMuted: false, isLocked: false },
-        { id: 2, name: null, avatar: null, isMuted: false, isLocked: false },
-        { id: 3, name: null, avatar: null, isMuted: false, isLocked: false },
-        { id: 4, name: null, avatar: null, isMuted: false, isLocked: false },
-        { id: 5, name: null, avatar: null, isMuted: false, isLocked: false },
-        { id: 6, name: null, avatar: null, isMuted: false, isLocked: false },
-        { id: 7, name: null, avatar: null, isMuted: false, isLocked: false },
-        { id: 8, name: null, avatar: null, isMuted: false, isLocked: false },
-        { id: 9, name: null, avatar: null, isMuted: false, isLocked: false },
-        { id: 10, name: null, avatar: null, isMuted: false, isLocked: false },
-        { id: 11, name: null, avatar: null, isMuted: false, isLocked: false },
-        { id: 12, name: null, avatar: null, isMuted: false, isLocked: false }
+        { id: 1, name: validHost, avatar: user.avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80", isMuted: false, isLocked: false, giftCoins: 0, giftCount: 0 },
+        { id: 2, name: null, avatar: null, isMuted: false, isLocked: false, giftCoins: 0, giftCount: 0 },
+        { id: 3, name: null, avatar: null, isMuted: false, isLocked: false, giftCoins: 0, giftCount: 0 },
+        { id: 4, name: null, avatar: null, isMuted: false, isLocked: false, giftCoins: 0, giftCount: 0 },
+        { id: 5, name: null, avatar: null, isMuted: false, isLocked: false, giftCoins: 0, giftCount: 0 },
+        { id: 6, name: null, avatar: null, isMuted: false, isLocked: false, giftCoins: 0, giftCount: 0 },
+        { id: 7, name: null, avatar: null, isMuted: false, isLocked: false, giftCoins: 0, giftCount: 0 },
+        { id: 8, name: null, avatar: null, isMuted: false, isLocked: false, giftCoins: 0, giftCount: 0 },
+        { id: 9, name: null, avatar: null, isMuted: false, isLocked: false, giftCoins: 0, giftCount: 0 },
+        { id: 10, name: null, avatar: null, isMuted: false, isLocked: false, giftCoins: 0, giftCount: 0 },
+        { id: 11, name: null, avatar: null, isMuted: false, isLocked: false, giftCoins: 0, giftCount: 0 },
+        { id: 12, name: null, avatar: null, isMuted: false, isLocked: false, giftCoins: 0, giftCount: 0 }
       ],
       comments: [
         {
@@ -8422,39 +8422,35 @@ export default function App() {
                           </div>
                         )}
                         
-                        {/* 🟢 COMPACT HOME-ONLY QUICK LINKS OVERLAY */}
-                        <div className="absolute top-2 left-2 right-2 z-30 flex items-center justify-center gap-2 pointer-events-none">
-                          <a
-                            href="https://play.google.com/store/apps/details?id=com.PardaisLive"
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="pointer-events-auto flex items-center gap-1.5 px-2.5 py-1.5 rounded-full bg-black/65 backdrop-blur-md border border-white/15 text-white shadow-lg hover:bg-black/80 hover:scale-[1.02] transition-all active:scale-95"
-                            title="Install Pardais Live from Google Play"
-                          >
-                            <span className="w-5 h-5 rounded-full bg-white/95 flex items-center justify-center shrink-0 shadow-sm">
-                              <svg viewBox="0 0 24 24" className="w-3.5 h-3.5" aria-hidden="true">
-                                <path d="M3.5 2.9 13.1 12 3.5 21.1c-.35-.42-.55-.96-.55-1.55V4.45c0-.59.2-1.13.55-1.55Z" fill="#34A853"/>
-                                <path d="m13.1 12 2.65-2.52 3.55 2.02c.47.27.47.94 0 1.21l-3.55 2.02L13.1 12Z" fill="#FBBC04"/>
-                                <path d="m3.5 2.9 9.6 9.1 2.65-2.52L5.15 2.2c-.6-.35-1.25-.1-1.65.7Z" fill="#4285F4"/>
-                                <path d="m3.5 21.1 9.6-9.1 2.65 2.52-10.6 6.38c-.6.35-1.25.1-1.65-.7Z" fill="#EA4335"/>
-                              </svg>
-                            </span>
-                            <span className="text-[9px] font-black uppercase tracking-wide whitespace-nowrap">Install Pardais Live</span>
-                          </a>
-
+                        {/* 🟢 COMPACT HOME QUICK-LINK ICONS — no large banners */}
+                        <div className="absolute top-2 right-2 z-30 flex items-center gap-2 pointer-events-none">
                           <a
                             href={whatsappChannelUrl}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="pointer-events-auto flex items-center gap-1.5 px-2.5 py-1.5 rounded-full bg-black/65 backdrop-blur-md border border-[#25D366]/45 text-white shadow-lg hover:bg-black/80 hover:border-[#25D366]/70 hover:scale-[1.02] transition-all active:scale-95"
+                            className="pointer-events-auto w-10 h-10 rounded-full bg-black/65 backdrop-blur-md border-2 border-[#25D366]/70 text-[#25D366] shadow-[0_0_14px_rgba(37,211,102,0.25)] hover:bg-[#25D366]/15 hover:scale-105 transition-all active:scale-95 flex items-center justify-center"
                             title="Pardais Official WhatsApp Channel"
+                            aria-label="WhatsApp Channel"
                           >
-                            <span className="w-5 h-5 rounded-full bg-[#25D366] flex items-center justify-center shrink-0 shadow-sm">
-                              <svg viewBox="0 0 24 24" className="w-3.5 h-3.5 text-white" aria-hidden="true">
-                                <path fill="currentColor" d="M20.52 3.48A11.84 11.84 0 0 0 12.06 0C5.51 0 .18 5.32.18 11.88c0 2.09.55 4.13 1.59 5.92L.08 24l6.34-1.66a11.9 11.9 0 0 0 5.64 1.43h.01c6.55 0 11.88-5.33 11.88-11.88 0-3.17-1.23-6.14-3.43-8.41Zm-8.46 18.27h-.01a9.83 9.83 0 0 1-5.01-1.37l-.36-.21-3.76.98 1-3.66-.23-.38a9.82 9.82 0 1 1 8.37 4.64Zm5.4-7.36c-.29-.15-1.7-.84-1.96-.93-.26-.1-.45-.15-.64.15-.19.29-.73.93-.9 1.12-.17.19-.33.22-.62.07-.29-.15-1.23-.45-2.34-1.44-.87-.77-1.45-1.72-1.62-2.01-.17-.29-.02-.45.13-.6.13-.13.29-.33.44-.49.15-.17.19-.29.29-.48.1-.19.05-.36-.02-.51-.07-.15-.64-1.54-.88-2.11-.23-.55-.47-.48-.64-.49h-.54c-.19 0-.51.07-.78.36-.26.29-1.02 1-1.02 2.43 0 1.43 1.04 2.81 1.18 3 .15.19 2.05 3.13 4.96 4.39.69.3 1.23.48 1.65.61.69.22 1.32.19 1.81.12.55-.08 1.7-.69 1.94-1.35.24-.66.24-1.22.17-1.34-.07-.12-.26-.19-.55-.33Z"/>
-                              </svg>
-                            </span>
-                            <span className="text-[9px] font-black uppercase tracking-wide whitespace-nowrap">WhatsApp Channel</span>
+                            <svg viewBox="0 0 24 24" className="w-5 h-5" aria-hidden="true">
+                              <path fill="currentColor" d="M20.52 3.48A11.84 11.84 0 0 0 12.06 0C5.51 0 .18 5.32 .18 11.88c0 2.09 .55 4.13 1.59 5.92L.08 24l6.34-1.66a11.9 11.9 0 0 0 5.64 1.43h.01c6.55 0 11.88-5.33 11.88-11.88 0-3.17-1.23-6.14-3.43-8.41Zm-8.46 18.27h-.01a9.83 9.83 0 0 1-5.01-1.37l-.36-.21-3.76.98 1-3.66-.23-.38a9.82 9.82 0 1 1 8.37 4.64Zm5.4-7.36c-.29-.15-1.7-.84-1.96-.93-.26-.1-.45-.15-.64.15-.19.29-.73.93-.9 1.12-.17.19-.33.22-.62.07-.29-.15-1.23-.45-2.34-1.44-.87-.77-1.45-1.72-1.62-2.01-.17-.29-.02-.45.13-.6.13-.13.29-.33.44-.49.15-.17.19-.29.29-.48.1-.19.05-.36-.02-.51-.07-.15-.64-1.54-.88-2.11-.23-.55-.47-.48-.64-.49h-.54c-.19 0-.51.07-.78.36-.26.29-1.02 1-1.02 2.43 0 1.43 1.04 2.81 1.18 3 .15.19 2.05 3.13 4.96 4.39.69.3 1.23.48 1.65.61.69.22 1.32.19 1.81.12.55-.08 1.7-.69 1.94-1.35.24-.66.24-1.22.17-1.34-.07-.12-.26-.19-.55-.33Z"/>
+                            </svg>
+                          </a>
+
+                          <a
+                            href="https://play.google.com/store/apps/details?id=com.PardaisLive"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="pointer-events-auto w-10 h-10 rounded-full bg-black/65 backdrop-blur-md border-2 border-white/30 text-white shadow-lg hover:bg-black/85 hover:scale-105 transition-all active:scale-95 flex items-center justify-center"
+                            title="Install Pardais Live from Google Play"
+                            aria-label="Install Pardais Live"
+                          >
+                            <svg viewBox="0 0 24 24" className="w-5 h-5" aria-hidden="true">
+                              <path d="M3.5 2.9 13.1 12 3.5 21.1c-.35-.42-.55-.96-.55-1.55V4.45c0-.59.2-1.13.55-1.55Z" fill="#34A853"/>
+                              <path d="m13.1 12 2.65-2.52 3.55 2.02c.47.27.47.94 0 1.21l-3.55 2.02L13.1 12Z" fill="#FBBC04"/>
+                              <path d="m3.5 2.9 9.6 9.1 2.65-2.52L5.15 2.2c-.6-.35-1.25-.1-1.65.7Z" fill="#4285F4"/>
+                              <path d="m3.5 21.1 9.6-9.1 2.65 2.52-10.6 6.38c-.6.35-1.25-.1-1.65-.7Z" fill="#EA4335"/>
+                            </svg>
                           </a>
                         </div>
 
@@ -9507,6 +9503,21 @@ export default function App() {
                             if (data.remainingCoins !== undefined) {
                               setUser(prev => ({ ...prev, coins: data.remainingCoins }));
                             }
+                            // Update the recipient seat instantly; backend also persists these totals for all viewers.
+                            setPartiesList(prev => prev.map(p => {
+                              if (p.id !== party.id) return p;
+                              return {
+                                ...p,
+                                seats: (p.seats || []).map((s: any) => {
+                                  if (!s.name || s.name !== actualTargetName) return s;
+                                  return {
+                                    ...s,
+                                    giftCoins: (Number(s.giftCoins) || 0) + totalCost,
+                                    giftCount: (Number(s.giftCount) || 0) + count
+                                  };
+                                })
+                              };
+                            }));
                           }
                         } catch (err) {
                           console.error("Backend party gift transaction API error:", err);
@@ -9966,6 +9977,11 @@ export default function App() {
                                           {isOccupied && (
                                             <span className="text-[7px] text-amber-400/80 font-mono font-bold mt-0.5">#{seat.id}</span>
                                           )}
+                                          <span className="mt-0.5 inline-flex items-center gap-0.5 rounded-full bg-black/55 border border-pink-500/25 px-1.5 py-0.5 text-[6.5px] font-black text-pink-200 whitespace-nowrap" title={`Gifts received: ${(Number(seat.giftCoins) || 0).toLocaleString()} coins • ${Number(seat.giftCount) || 0} gifts`}>
+                                            <span>🎁</span>
+                                            <span>{(Number(seat.giftCoins) || 0).toLocaleString()}</span>
+                                            {(Number(seat.giftCount) || 0) > 0 && <span className="text-pink-300/70">· x{Number(seat.giftCount)}</span>}
+                                          </span>
                                         </div>
                                       </div>
                                     );

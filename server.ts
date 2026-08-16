@@ -3050,6 +3050,19 @@ app.post("/api/v1/gifts/send", authenticateUser, (req, res) => {
   );
 
   if (activePartyMatch) {
+    // Persist per-seat gift totals so every viewer can see how much each seated user has received.
+    const normalizedRecipient = String(recipient || "").trim().toLowerCase();
+    if (!Array.isArray(activePartyMatch.seats)) activePartyMatch.seats = [];
+    const recipientSeat = activePartyMatch.seats.find((s: any) =>
+      s && s.name && String(s.name).trim().toLowerCase() === normalizedRecipient
+    );
+    if (recipientSeat) {
+      recipientSeat.giftCoins = (Number(recipientSeat.giftCoins) || 0) + totalCost;
+      recipientSeat.giftCount = (Number(recipientSeat.giftCount) || 0) + giftCount;
+      recipientSeat.lastGiftAt = Date.now();
+      recipientSeat.lastGiftIcon = gift.icon || "🎁";
+    }
+
     activePartyMatch.lastGiftEvent = giftEvent;
     if (!Array.isArray(activePartyMatch.giftEventQueue)) {
       activePartyMatch.giftEventQueue = [];
