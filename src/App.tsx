@@ -8541,15 +8541,16 @@ export default function App() {
                           </div>
                         )}
                         
-                        {/* 📲 COMPACT OFFICIAL APP LINKS — HOME SCREEN ONLY */}
-                        <div className="flex items-center justify-end gap-2 px-1 py-1.5 relative z-30">
+                        {/* 📲 COMPACT OFFICIAL APP LINKS — HOME SCREEN ONLY
+                            Overlayed on the hero card so they do not consume vertical space. */}
+                        <div className="absolute top-2 right-2 z-40 flex items-center gap-2 pointer-events-none">
                           <a
                             href="https://play.google.com/store/apps/details?id=com.PardaisLive"
                             target="_blank"
                             rel="noopener noreferrer"
                             aria-label="Install Pardais Live from Google Play"
                             title="Install Pardais Live — Google Play"
-                            className="w-11 h-11 rounded-full bg-[#11151b]/90 border border-white/15 backdrop-blur-md shadow-lg flex items-center justify-center transition-all hover:scale-105 active:scale-95 cursor-pointer"
+                            className="w-10 h-10 rounded-full bg-[#11151b]/90 border border-white/15 backdrop-blur-md shadow-lg flex items-center justify-center transition-all hover:scale-105 active:scale-95 cursor-pointer pointer-events-auto"
                           >
                             <span className="relative flex items-center justify-center">
                               <Play className="w-5 h-5 text-white fill-white" />
@@ -8565,7 +8566,7 @@ export default function App() {
                             rel="noopener noreferrer"
                             aria-label="Open Pardais Official WhatsApp Channel"
                             title="Pardais Official WhatsApp Channel"
-                            className="w-11 h-11 rounded-full bg-[#25D366]/15 border border-[#25D366]/60 backdrop-blur-md shadow-[0_0_14px_rgba(37,211,102,0.25)] flex items-center justify-center transition-all hover:scale-105 active:scale-95 cursor-pointer"
+                            className="w-10 h-10 rounded-full bg-[#25D366]/15 border border-[#25D366]/60 backdrop-blur-md shadow-[0_0_14px_rgba(37,211,102,0.25)] flex items-center justify-center transition-all hover:scale-105 active:scale-95 cursor-pointer pointer-events-auto"
                           >
                             <MessageCircle className="w-5 h-5 text-[#25D366]" />
                           </a>
@@ -8583,7 +8584,7 @@ export default function App() {
                           const banner = activeBanners[currentBannerIndex % activeBanners.length];
                           if (!banner) return null;
                           return (
-                            <div className="relative rounded-xl overflow-hidden shadow-lg h-32 group select-none transition-all duration-500 border border-[#303040]/30">
+                            <div className="relative rounded-xl overflow-hidden shadow-lg h-36 group select-none transition-all duration-500 border border-[#303040]/30 -mt-1">
                               <img src={banner.image} className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105" alt={banner.title} />
                               <div className="absolute inset-0 bg-gradient-to-t from-black via-black/40 to-transparent p-3 flex flex-col justify-between">
                                 <div className="flex items-center justify-between bg-transparent">
@@ -10055,14 +10056,19 @@ export default function App() {
                                           )}
                                         </div>
 
-                                        {/* Seated occupant name & seat label */}
-                                        <div className="flex flex-col items-center leading-none max-w-[65px] mt-1">
+                                        {/* Seated occupant name, seat label & per-seat gifting */}
+                                        <div className="flex flex-col items-center leading-none max-w-[72px] mt-1">
                                           <p className="text-[8.5px] font-extrabold text-amber-100/95 truncate text-center font-sans tracking-tight">
                                             {isOccupied ? (isMe ? "You" : seat.name) : `Seat ${seat.id}`}
                                           </p>
-                                          {isOccupied && (
-                                            <span className="text-[7px] text-amber-400/80 font-mono font-bold mt-0.5">#{seat.id}</span>
-                                          )}
+                                          <span className="text-[6.5px] text-amber-400/80 font-mono font-bold mt-0.5">#{seat.id}</span>
+                                          <span
+                                            className="inline-flex items-center gap-0.5 mt-0.5 px-1 py-0.5 rounded-full bg-amber-500/10 border border-amber-400/25 text-[6.5px] text-amber-200 font-black font-mono whitespace-nowrap"
+                                            title={`Total gifting received by Seat ${seat.id}`}
+                                          >
+                                            <span className="text-[8px] leading-none">🎁</span>
+                                            <span>{seat.diamonds || "0"}</span>
+                                          </span>
                                         </div>
                                       </div>
                                     );
