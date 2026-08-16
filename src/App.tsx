@@ -6471,7 +6471,9 @@ export default function App() {
     }
 
     const requestId = `req-gift-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
-    processedGiftEventIdsRef.current.add(requestId);
+    // Do not pre-mark the request as processed; the sender must render the same
+    // gift animation event as every other participant. Deduplication happens
+    // inside processIncomingGiftEvent after the event is actually rendered.
 
     // Determine target side for PK score & earnings
     const recLower = resolvedRecipientName.toLowerCase();
@@ -9634,7 +9636,8 @@ export default function App() {
                         }
 
                         const requestId = `req-party-gift-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
-                        processedGiftEventIdsRef.current.add(requestId);
+                        // Do not pre-mark this event as processed: the sender must render the same
+                        // broadcast animation as every other participant in the room.
 
                         // Determine actual target name if "Host" or "Seat-X"
                         let actualTargetName = recipientName || party.hostUsername || "Host";

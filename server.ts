@@ -2947,6 +2947,7 @@ app.post("/api/v1/gifts/send", authenticateUser, (req, res) => {
 
   // Construct full gift event payload for 60FPS WebM animation synchronization
   const eventId = requestId || `ge-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+  const partyIdForBroadcast = req.body.partyId || req.body.roomId || null;
   const giftEvent = {
     eventId,
     giftId: gift.id,
@@ -2958,6 +2959,12 @@ app.post("/api/v1/gifts/send", authenticateUser, (req, res) => {
     recipient: recipient || "Host",
     totalCost,
     targetHostSide: targetHostSide || "hostA",
+    // Audience metadata: the backend attaches this event to every relevant live
+    // room/stream state so sender, recipient, seated guests, viewers/listeners,
+    // and both PK sides receive the exact same animation event.
+    audienceRoomId: partyIdForBroadcast,
+    audienceHostId: req.body.hostId || null,
+    audienceMode: partyIdForBroadcast ? "party" : (targetHostSide ? "pk-or-live" : "live"),
     animationFile: gift.animationFile || gift.videoUrl || gift.animationUrl || gift.icon || "",
     videoUrl: gift.videoUrl || gift.animationUrl || gift.animationFile || "",
     animationUrl: gift.animationUrl || gift.videoUrl || gift.animationFile || "",
@@ -3025,19 +3032,45 @@ app.post("/api/v1/gifts/send", authenticateUser, (req, res) => {
       }
     }
 
-    activeHostMatch.lastGiftEvent = giftEvent;
-    if (!Array.isArray(activeHostMatch.giftEventQueue)) {
-      activeHostMatch.giftEventQueue = [];
-    }
-    activeHostMatch.giftEventQueue.push(giftEvent);
-    if (activeHostMatch.giftEventQueue.length > 25) {
-      activeHostMatch.giftEventQueue = activeHostMatch.giftEventQueue.slice(-25);
-    }
+    const appendGiftEventToHost = (hostState: any) => {
+      if (!hostState) return;
+      hostState.lastGiftEvent = giftEvent;
+      if (!Array.isArray(hostState.giftEventQueue)) hostState.giftEventQueue = [];
+      // Prevent the same event from being appended twice to a PK host.
+      if (!hostState.giftEventQueue.some((evt: any) => evt?.eventId === giftEvent.eventId)) {
+        hostState.giftEventQueue.push(giftEvent);
+      }
+      if (hostState.giftEventQueue.length > 25) {
+        hostState.giftEventQueue = hostState.giftEventQueue.slice(-25);
+      }
+      hostState.likes = (hostState.likes || 0) + Math.max(1, Math.floor(totalCost * 0.1));
+      syncDocument("hosts", hostState.id, hostState);
+      console.log(`[REALTIME GIFT SYNC] Updated host ${hostState.id} with gift ${gift.name} from @${user.username}`);
+    };
 
-    activeHostMatch.likes = (activeHostMatch.likes || 0) + Math.max(1, Math.floor(totalCost * 0.1));
+    appendGiftEventToHost(activeHostMatch);
 
-    syncDocument("hosts", activeHostMatch.id, activeHostMatch);
-    console.log(`[REALTIME GIFT SYNC] Updated host ${activeHostMatch.id} with gift ${gift.name} from @${user.username}`);
+    // PK: publish the same gift event to BOTH host streams so host A, host B,
+    // their guests and every viewer/listener in the PK see one synchronized overlay.
+    if (targetHostSide === "hostB" || targetHostSide === "hostA") {
+      Object.values(activePkSessions).forEach((sess: any) => {
+        if (!sess || sess.status === "ended") return;
+        const participants = [sess.hostA, sess.hostB].filter(Boolean);
+        const related = participants.some((h: any) =>
+          (activeHostMatch?.hostUsername && String(h.username || "").toLowerCase() === String(activeHostMatch.hostUsername).toLowerCase()) ||
+          (h.username && String(h.username).toLowerCase() === String(recipient || "").toLowerCase()) ||
+          (h.userId && String(h.userId).toLowerCase() === String(recipient || "").toLowerCase())
+        );
+        if (!related) return;
+        participants.forEach((h: any) => {
+          const counterpart = (dbData.hosts || []).find((host: any) =>
+            (h.username && String(host.hostUsername || host.name || "").toLowerCase() === String(h.username).toLowerCase()) ||
+            (h.userId && String(host.hostUid || host.id || "").toLowerCase() === String(h.userId).toLowerCase())
+          );
+          if (counterpart && counterpart.id !== activeHostMatch.id) appendGiftEventToHost(counterpart);
+        });
+      });
+    }
   }
 
   // Update active party room state with lastGiftEvent & giftEventQueue
