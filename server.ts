@@ -7178,7 +7178,7 @@ app.post("/api/v1/user/avatar", authenticateUser, (req: any, res: any, next: any
           CacheControl: "public, max-age=31536000, immutable",
         })),
         new Promise((_, reject) =>
-          setTimeout(() => reject(new Error("R2 profile photo upload timeout after 7s; using fast fallback")), 7000)
+          setTimeout(() => reject(new Error("R2 profile photo upload timeout after 10s; using fast fallback")), 10000)
         )
       ]);
 

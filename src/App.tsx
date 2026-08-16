@@ -1090,8 +1090,23 @@ export default function App() {
       if (ctx) {
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
         const dataUrl = canvas.toDataURL("image/jpeg", 0.9);
+        // Keep the camera capture as an actual File. Do not rely on fetch(data:...),
+        // because authenticatedFetch intentionally rewrites fetch URLs to the API
+        // and Android WebView can reject data: URLs as a network request.
         setEditAvatar(dataUrl);
-        setEditAvatarFile(null);
+        try {
+          const comma = dataUrl.indexOf(",");
+          const meta = comma >= 0 ? dataUrl.slice(0, comma) : "data:image/jpeg;base64";
+          const base64 = comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl;
+          const binary = atob(base64);
+          const bytes = new Uint8Array(binary.length);
+          for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+          const mime = /data:([^;]+)/i.exec(meta)?.[1] || "image/jpeg";
+          setEditAvatarFile(new File([bytes], `avatar-camera-${Date.now()}.jpg`, { type: mime }));
+        } catch (fileErr) {
+          console.warn("[PARDAIS PROFILE] Could not create camera File; keeping data URL preview:", fileErr);
+          setEditAvatarFile(null);
+        }
       }
     }
     stopAvatarCamera();
@@ -6099,8 +6114,24 @@ export default function App() {
         if (editAvatarFile) {
           fileToUpload = await prepareAvatarFile(editAvatarFile);
         } else {
-          const blob = await (await fetch(selectedAvatar)).blob();
-          fileToUpload = await prepareAvatarFile(new File([blob], `avatar-${Date.now()}.jpg`, { type: blob.type || "image/jpeg" }));
+          // selectedAvatar can be a camera-generated data URL. Convert it directly
+          // instead of calling the app's authenticated fetch wrapper (which only
+          // accepts API/HTTP URLs and can turn this into "Network fetch failed").
+          if (selectedAvatar.startsWith("data:image/")) {
+            const comma = selectedAvatar.indexOf(",");
+            const meta = comma >= 0 ? selectedAvatar.slice(0, comma) : "data:image/jpeg;base64";
+            const base64 = comma >= 0 ? selectedAvatar.slice(comma + 1) : selectedAvatar;
+            const binary = atob(base64);
+            const bytes = new Uint8Array(binary.length);
+            for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+            const mime = /data:([^;]+)/i.exec(meta)?.[1] || "image/jpeg";
+            const ext = mime.includes("png") ? "png" : "jpg";
+            fileToUpload = await prepareAvatarFile(new File([bytes], `avatar-camera-${Date.now()}.${ext}`, { type: mime }));
+          } else {
+            const nativeFetch = window.fetch.bind(window);
+            const blob = await (await nativeFetch(selectedAvatar)).blob();
+            fileToUpload = await prepareAvatarFile(new File([blob], `avatar-${Date.now()}.jpg`, { type: blob.type || "image/jpeg" }));
+          }
         }
 
         if (!fileToUpload || fileToUpload.size <= 0) {
@@ -13763,17 +13794,40 @@ export default function App() {
                                           accept="image/*"
                                           className="hidden"
                                           onChange={(e) => {
-                                            const file = e.target.files?.[0];
-                                            if (file) {
-                                              const reader = new FileReader();
-                                              reader.onload = (ev) => {
-                                                if (ev.target?.result) {
-                                                  setEditAvatar(ev.target.result as string);
-                                                  setEditAvatarFile(file);
+                                            const input = e.currentTarget;
+                                            const file = input.files?.[0];
+                                            if (!file) return;
+                                            const reader = new FileReader();
+                                            reader.onload = (ev) => {
+                                              const result = ev.target?.result;
+                                              if (typeof result === "string" && result.startsWith("data:image/")) {
+                                                setEditAvatar(result);
+                                                // Android camera providers can report a zero-byte File even though
+                                                // FileReader has a valid captured image. Rebuild the File from the
+                                                // actual data URL so upload never sees an empty photo.
+                                                try {
+                                                  const comma = result.indexOf(",");
+                                                  const meta = comma >= 0 ? result.slice(0, comma) : "data:image/jpeg;base64";
+                                                  const base64 = comma >= 0 ? result.slice(comma + 1) : result;
+                                                  const binary = atob(base64);
+                                                  const bytes = new Uint8Array(binary.length);
+                                                  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+                                                  const mime = /data:([^;]+)/i.exec(meta)?.[1] || file.type || "image/jpeg";
+                                                  const ext = mime.includes("png") ? "png" : "jpg";
+                                                  setEditAvatarFile(new File([bytes], `avatar-${Date.now()}.${ext}`, { type: mime }));
+                                                } catch (convertErr) {
+                                                  console.warn("[PARDAIS PROFILE] Camera/gallery data conversion failed:", convertErr);
+                                                  setEditAvatarFile(file.size > 0 ? file : null);
                                                 }
-                                              };
-                                              reader.readAsDataURL(file);
-                                            }
+                                              }
+                                            };
+                                            reader.onerror = () => {
+                                              console.warn("[PARDAIS PROFILE] Could not read selected photo:", reader.error);
+                                              setEditAvatarFile(file.size > 0 ? file : null);
+                                            };
+                                            reader.readAsDataURL(file);
+                                            // Allow selecting/capturing the same image again.
+                                            input.value = "";
                                           }}
                                         />
 
@@ -13784,17 +13838,40 @@ export default function App() {
                                           capture="user"
                                           className="hidden"
                                           onChange={(e) => {
-                                            const file = e.target.files?.[0];
-                                            if (file) {
-                                              const reader = new FileReader();
-                                              reader.onload = (ev) => {
-                                                if (ev.target?.result) {
-                                                  setEditAvatar(ev.target.result as string);
-                                                  setEditAvatarFile(file);
+                                            const input = e.currentTarget;
+                                            const file = input.files?.[0];
+                                            if (!file) return;
+                                            const reader = new FileReader();
+                                            reader.onload = (ev) => {
+                                              const result = ev.target?.result;
+                                              if (typeof result === "string" && result.startsWith("data:image/")) {
+                                                setEditAvatar(result);
+                                                // Android camera providers can report a zero-byte File even though
+                                                // FileReader has a valid captured image. Rebuild the File from the
+                                                // actual data URL so upload never sees an empty photo.
+                                                try {
+                                                  const comma = result.indexOf(",");
+                                                  const meta = comma >= 0 ? result.slice(0, comma) : "data:image/jpeg;base64";
+                                                  const base64 = comma >= 0 ? result.slice(comma + 1) : result;
+                                                  const binary = atob(base64);
+                                                  const bytes = new Uint8Array(binary.length);
+                                                  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+                                                  const mime = /data:([^;]+)/i.exec(meta)?.[1] || file.type || "image/jpeg";
+                                                  const ext = mime.includes("png") ? "png" : "jpg";
+                                                  setEditAvatarFile(new File([bytes], `avatar-${Date.now()}.${ext}`, { type: mime }));
+                                                } catch (convertErr) {
+                                                  console.warn("[PARDAIS PROFILE] Camera/gallery data conversion failed:", convertErr);
+                                                  setEditAvatarFile(file.size > 0 ? file : null);
                                                 }
-                                              };
-                                              reader.readAsDataURL(file);
-                                            }
+                                              }
+                                            };
+                                            reader.onerror = () => {
+                                              console.warn("[PARDAIS PROFILE] Could not read selected photo:", reader.error);
+                                              setEditAvatarFile(file.size > 0 ? file : null);
+                                            };
+                                            reader.readAsDataURL(file);
+                                            // Allow selecting/capturing the same image again.
+                                            input.value = "";
                                           }}
                                         />
 

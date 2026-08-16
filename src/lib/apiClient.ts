@@ -128,10 +128,50 @@ export const removeAuthToken = (): void => {
   localStorage.removeItem("pardais_auth_token");
 };
 
-// Do not create guest sessions automatically.
-// A valid session must come from Email OTP or Google authentication.
+// Refresh the server session when the local token is missing/expired.
+// This uses the native browser fetch deliberately so it never recurses through
+// authenticatedFetch while trying to repair authentication. The server refresh
+// endpoint resolves the existing account by uid/username and returns a fresh
+// session token that survives Railway restarts.
 export const refreshSession = async (): Promise<string | null> => {
-  return getAuthToken();
+  if (typeof window === "undefined") return null;
+
+  const existingToken = getAuthToken();
+  const savedRaw = localStorage.getItem("pardais_user_profile");
+  if (!savedRaw) return existingToken;
+
+  let saved: any = null;
+  try { saved = JSON.parse(savedRaw); } catch { saved = null; }
+  if (!saved?.uid && !saved?.username) return existingToken;
+
+  try {
+    const deviceId = localStorage.getItem("pardais_device_id") || "";
+    const response = await window.fetch(resolveApiUrl("/api/v1/auth/refresh-session"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        uid: saved.uid || "",
+        username: saved.username || "",
+        fullName: saved.fullName || "Pardais Member",
+        email: saved.email || "",
+        deviceId
+      })
+    });
+
+    const data = await response.json().catch(() => ({}));
+    if (response.ok && data?.token) {
+      setAuthToken(String(data.token));
+      if (data.user) {
+        localStorage.setItem("pardais_user_profile", JSON.stringify(data.user));
+      }
+      localStorage.setItem("pardais_is_logged_in", "true");
+      return String(data.token);
+    }
+  } catch (err) {
+    console.warn("[PARDAIS-PARTY API CLIENT] Session refresh failed:", err);
+  }
+
+  return existingToken || null;
 };
 
 // Shared Authenticated Fetch wrapper
