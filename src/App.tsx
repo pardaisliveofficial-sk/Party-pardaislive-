@@ -17926,12 +17926,13 @@ export default function App() {
                                         return (
                                           <div className="w-full h-full relative flex items-center justify-center animate-fade-in">
                                             {!pinnedGuest.isCamMuted ? (
-                                              <img
-                                                src={pinnedGuest.avatar || ""}
-                                                className="w-full h-full object-cover"
-                                                alt="Pinned guest portrait"
-                                              />
-                                              {Number(pinnedGuest.vipLevel || 0) > 0 && (() => {
+                                              <>
+                                                <img
+                                                  src={pinnedGuest.avatar || ""}
+                                                  className="w-full h-full object-cover"
+                                                  alt="Pinned guest portrait"
+                                                />
+                                                {Number(pinnedGuest.vipLevel || 0) > 0 && (() => {
                                                 const vipFrame = VIP_FRAMES_LIST.find(
                                                   f => f.vipLevel === Number(pinnedGuest.vipLevel) && f.isActive
                                                 );
@@ -17944,7 +17945,8 @@ export default function App() {
                                                     draggable={false}
                                                   />
                                                 );
-                                              })()}
+                                                })()}
+                                              </>
                                             ) : (
                                               <div className="flex flex-col items-center space-y-1 bg-black/40 p-3 rounded-2xl">
                                                 <CameraOff className="w-6 h-6 text-pink-500/80" />
