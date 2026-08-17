@@ -2109,12 +2109,39 @@ export default function App() {
   const [adminOffAgeCoins, setAdminOffAgeCoins] = useState<string>("");
   const [adminOffAgeRates, setAdminOffAgeRates] = useState<string>("");
 
-  const [appTheme, setAppTheme] = useState<"dark-pink" | "dark-purple" | "dark-gold" | "dark-teal" | "light-elegant">("dark-[#120e2e]");
-  const [wallpaperStyle, setWallpaperStyle] = useState<"fiesta" | "neon" | "royal" | "whatsapp-teal" | "sunset">(() => {
-    const saved = localStorage.getItem("pardais_wallpaper_style");
-    return (saved as any) || "fiesta";
-  });
+  type PardaisTheme = "dark-pink" | "dark-purple" | "dark-gold" | "dark-teal" | "light-elegant";
+  type PardaisWallpaper = "fiesta" | "neon" | "royal" | "whatsapp-teal" | "sunset";
+
+  const getSavedPreference = <T extends string>(key: string, fallback: T): T => {
+    try {
+      const saved = localStorage.getItem(key);
+      return (saved as T) || fallback;
+    } catch {
+      return fallback;
+    }
+  };
+
+  const initialTheme = getSavedPreference<PardaisTheme>("pardais_app_theme", "dark-pink");
+  const initialWallpaper = getSavedPreference<PardaisWallpaper>("pardais_wallpaper_style", "fiesta");
+
+  const [appTheme, setAppTheme] = useState<PardaisTheme>(initialTheme);
+  const [pendingAppTheme, setPendingAppTheme] = useState<PardaisTheme>(initialTheme);
+  const [wallpaperStyle, setWallpaperStyle] = useState<PardaisWallpaper>(initialWallpaper);
+  const [pendingWallpaperStyle, setPendingWallpaperStyle] = useState<PardaisWallpaper>(initialWallpaper);
   const [showWallpaperPickerModal, setShowWallpaperPickerModal] = useState<boolean>(false);
+
+  // Load the saved appearance for the currently logged-in user.
+  // localStorage survives normal refreshes and app updates, so the user's
+  // saved choice stays active until they explicitly save a different one.
+  useEffect(() => {
+    const usernameKey = String(user?.username || "guest").trim().toLowerCase().replace(/[^a-z0-9_-]/g, "_");
+    const savedTheme = getSavedPreference<PardaisTheme>(`pardais_app_theme_${usernameKey}`, initialTheme);
+    const savedWallpaper = getSavedPreference<PardaisWallpaper>(`pardais_wallpaper_style_${usernameKey}`, initialWallpaper);
+    setAppTheme(savedTheme);
+    setPendingAppTheme(savedTheme);
+    setWallpaperStyle(savedWallpaper);
+    setPendingWallpaperStyle(savedWallpaper);
+  }, [user?.username]);
 
   const getWallpaperClass = () => {
     switch (wallpaperStyle) {
@@ -14455,9 +14482,9 @@ export default function App() {
                                 <button
                                   key={t.id}
                                   type="button"
-                                  onClick={() => setAppTheme(t.id as any)}
+                                  onClick={() => setPendingAppTheme(t.id as PardaisTheme)}
                                   className={`p-1 rounded-lg border flex flex-col items-center justify-center space-y-1 transition-all ${
-                                    appTheme === t.id 
+                                    pendingAppTheme === t.id 
                                       ? "border-pink-500 bg-pink-500/10 scale-105" 
                                       : "border-transparent hover:border-gray-500/30 bg-black/20"
                                   }`}
@@ -14467,6 +14494,22 @@ export default function App() {
                                 </button>
                               ))}
                             </div>
+                            {pendingAppTheme !== appTheme && (
+                              <div className="flex items-center justify-end pt-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const usernameKey = String(user?.username || "guest").trim().toLowerCase().replace(/[^a-z0-9_-]/g, "_");
+                                    setAppTheme(pendingAppTheme);
+                                    localStorage.setItem("pardais_app_theme", pendingAppTheme);
+                                    localStorage.setItem(`pardais_app_theme_${usernameKey}`, pendingAppTheme);
+                                  }}
+                                  className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-pink-500 to-purple-600 text-white text-[8px] font-black uppercase shadow-lg active:scale-95 transition-all"
+                                >
+                                  ✓ Save Theme
+                                </button>
+                              </div>
+                            )}
                           </div>
 
                           {/* ===================================================================== */}
@@ -25917,7 +25960,7 @@ export default function App() {
                                   type="button"
                                   onClick={() => setAppTheme(t.id as any)}
                                   className={`p-1 rounded-lg border flex flex-col items-center justify-center space-y-1 transition-all cursor-pointer ${
-                                    appTheme === t.id 
+                                    pendingAppTheme === t.id 
                                       ? "border-pink-500 bg-pink-500/10 scale-105" 
                                       : "border-transparent hover:border-gray-500/30 bg-black/20"
                                   }`}
@@ -25952,12 +25995,9 @@ export default function App() {
                                 <button
                                   key={w.id}
                                   type="button"
-                                  onClick={() => {
-                                    setWallpaperStyle(w.id as any);
-                                    localStorage.setItem("pardais_wallpaper_style", w.id);
-                                  }}
+                                  onClick={() => setPendingWallpaperStyle(w.id as PardaisWallpaper)}
                                   className={`p-1 rounded-lg border flex flex-col items-center justify-center space-y-1 transition-all cursor-pointer ${
-                                    wallpaperStyle === w.id 
+                                    pendingWallpaperStyle === w.id 
                                       ? "border-[#ff007f] bg-white/10 ring-1 ring-[#ff007f] scale-105" 
                                       : "border-[#303040] hover:border-white/30 bg-black/40"
                                   }`}
@@ -25969,6 +26009,22 @@ export default function App() {
                                 </button>
                               ))}
                             </div>
+                            {pendingWallpaperStyle !== wallpaperStyle && (
+                              <div className="flex items-center justify-end pt-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const usernameKey = String(user?.username || "guest").trim().toLowerCase().replace(/[^a-z0-9_-]/g, "_");
+                                    setWallpaperStyle(pendingWallpaperStyle);
+                                    localStorage.setItem("pardais_wallpaper_style", pendingWallpaperStyle);
+                                    localStorage.setItem(`pardais_wallpaper_style_${usernameKey}`, pendingWallpaperStyle);
+                                  }}
+                                  className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-cyan-500 to-blue-600 text-white text-[8px] font-black uppercase shadow-lg active:scale-95 transition-all"
+                                >
+                                  ✓ Save Wallpaper
+                                </button>
+                              </div>
+                            )}
                           </div>
 
                           {/* 🛡️ REPORT & BLOCKING SECURITY PANEL */}
