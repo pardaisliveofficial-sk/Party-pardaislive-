@@ -17932,10 +17932,17 @@ export default function App() {
                                                 alt="Pinned guest portrait"
                                               />
                                               {Number(pinnedGuest.vipLevel || 0) > 0 && (() => {
-                                                const vipFrame = VIP_FRAMES_LIST.find(f => f.vipLevel === Number(pinnedGuest.vipLevel) && f.isActive);
+                                                const vipFrame = VIP_FRAMES_LIST.find(
+                                                  f => f.vipLevel === Number(pinnedGuest.vipLevel) && f.isActive
+                                                );
                                                 if (!vipFrame) return null;
                                                 return (
-                                                  <img src={vipFrame.asset} alt={`VIP ${pinnedGuest.vipLevel} frame`} className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[48%] h-[48%] object-contain pointer-events-none z-10" draggable={false} />
+                                                  <img
+                                                    src={vipFrame.asset}
+                                                    alt={`VIP ${pinnedGuest.vipLevel} frame`}
+                                                    className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[72%] h-[72%] object-contain pointer-events-none z-10"
+                                                    draggable={false}
+                                                  />
                                                 );
                                               })()}
                                             ) : (
