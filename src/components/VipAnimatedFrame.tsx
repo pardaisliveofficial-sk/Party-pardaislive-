@@ -39,7 +39,7 @@ export const VipAnimatedFrame: React.FC<{
    The supplied artwork has a transparent inner opening; 205% keeps
    the full avatar inside that opening while the artwork surrounds it. */
   frameScale?: number;
-}> = ({ frameId, vipLevel, showLevelBadge = true, className = "", children, frameScale = 205 }) => {
+}> = ({ frameId, vipLevel, showLevelBadge = true, className = "", children, frameScale = 178 }) => {
   let frame: VipFrameConfig | undefined;
 
   if (frameId) {
@@ -64,7 +64,7 @@ export const VipAnimatedFrame: React.FC<{
       <img
         src={frame.asset}
         alt={`${frame.name} profile frame`}
-        className="absolute pointer-events-none z-20 left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 object-contain"
+        className="absolute pointer-events-none z-10 left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 object-contain"
         style={{
           width: `${frameScale}%`,
           height: "auto",
@@ -81,7 +81,7 @@ export const VipAnimatedFrame: React.FC<{
           </span>
         </div>
       )}
-      <div className="relative z-30">{children}</div>
+      <div className="relative z-20">{children}</div>
     </div>
   );
 };
