@@ -6335,51 +6335,55 @@ app.post("/api/v1/reels", async (req, res) => {
   if (!dbData.reels) dbData.reels = [];
   dbData.reels.unshift(newReel);
 
-  // IMPORTANT: the client must receive a success response immediately after the
-  // reel record is safely written locally. Firestore/R2 synchronization is
-  // deliberately performed in the background so a slow/temporary cloud write
-  // cannot keep the publish screen spinning at 100% or turn a successful upload
-  // into a false HTTP 502/timeout.
+  // CRITICAL: a reel is not considered permanently published until at least
+  // one durable cloud copy of its metadata has been confirmed. The old flow
+  // returned 201 before Firestore/R2 finished, so a Railway restart or app
+  // update immediately after publishing could lose the reel from Creator Hub.
   saveDatabase();
 
-  const syncReelDurably = async () => {
-    let firestoreOk = false;
-    let r2Ok = false;
+  let firestoreOk = false;
+  let r2Ok = false;
 
-    for (let attempt = 1; attempt <= 3; attempt++) {
-      try {
-        await syncDocument("reels", newReel.id, newReel);
-        firestoreOk = true;
-        break;
-      } catch (err: any) {
-        console.warn(`[PARDAIS-PARTY REELS] Firestore metadata sync attempt ${attempt}/3 failed:`, err?.message || err);
-        await new Promise(resolve => setTimeout(resolve, attempt * 1500));
-      }
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      firestoreOk = await syncDocument("reels", newReel.id, newReel);
+      if (firestoreOk) break;
+    } catch (err: any) {
+      console.warn(`[PARDAIS-PARTY REELS] Firestore metadata sync attempt ${attempt}/3 failed:`, err?.message || err);
     }
+    if (attempt < 3) await new Promise(resolve => setTimeout(resolve, attempt * 1200));
+  }
 
-    for (let attempt = 1; attempt <= 3; attempt++) {
-      try {
-        r2Ok = await persistReelMetadataToR2(newReel);
-        if (r2Ok) break;
-      } catch (err: any) {
-        console.warn(`[PARDAIS-PARTY REELS] R2 metadata sync attempt ${attempt}/3 failed:`, err?.message || err);
-      }
-      await new Promise(resolve => setTimeout(resolve, attempt * 1500));
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      r2Ok = await persistReelMetadataToR2(newReel);
+      if (r2Ok) break;
+    } catch (err: any) {
+      console.warn(`[PARDAIS-PARTY REELS] R2 metadata sync attempt ${attempt}/3 failed:`, err?.message || err);
     }
+    if (attempt < 3) await new Promise(resolve => setTimeout(resolve, attempt * 1200));
+  }
 
-    console.log(`[PARDAIS-PARTY REELS] Durable metadata sync complete for ${newReel.id}: Firestore=${firestoreOk}, R2=${r2Ok}`);
-  };
+  console.log(`[PARDAIS-PARTY REELS] Durable metadata sync complete for ${newReel.id}: Firestore=${firestoreOk}, R2=${r2Ok}`);
 
-  // Never block the HTTP response on cloud metadata persistence.
-  void syncReelDurably().catch(err => {
-    console.error("[PARDAIS-PARTY REELS] Background metadata persistence failed:", err);
-  });
+  // Require at least one durable cloud store before telling the client the
+  // reel is permanently saved. The local DB is only a fallback/cache.
+  if (!firestoreOk && !r2Ok) {
+    // Keep the local record so it can be retried/recovered, but do not report
+    // a successful permanent publish when no cloud copy exists.
+    return res.status(503).json({
+      success: false,
+      persisted: false,
+      error: "Reel uploaded but permanent cloud saving could not be confirmed. Please retry publishing."
+    });
+  }
 
   return res.status(201).json({
     success: true,
     persisted: true,
-    persistencePending: true,
-    message: "Reel uploaded and published successfully. Cloud metadata synchronization is continuing in the background.",
+    persistencePending: false,
+    durableStores: { firestore: firestoreOk, r2Metadata: r2Ok },
+    message: "Reel uploaded and permanently saved.",
     ...newReel
   });
 });
