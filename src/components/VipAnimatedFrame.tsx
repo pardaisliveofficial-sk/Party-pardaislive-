@@ -35,7 +35,11 @@ export const VipAnimatedFrame: React.FC<{
   showLevelBadge?: boolean;
   className?: string;
   children: React.ReactNode;
-}> = ({ frameId, vipLevel, showLevelBadge = true, className = "", children }) => {
+  /** Scale of the decorative frame relative to the avatar.
+   The supplied artwork has a transparent inner opening; 205% keeps
+   the full avatar inside that opening while the artwork surrounds it. */
+  frameScale?: number;
+}> = ({ frameId, vipLevel, showLevelBadge = true, className = "", children, frameScale = 205 }) => {
   let frame: VipFrameConfig | undefined;
 
   if (frameId) {
@@ -60,7 +64,13 @@ export const VipAnimatedFrame: React.FC<{
       <img
         src={frame.asset}
         alt={`${frame.name} profile frame`}
-        className="absolute pointer-events-none z-20 left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[168%] h-[168%] object-contain"
+        className="absolute pointer-events-none z-20 left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 object-contain"
+        style={{
+          width: `${frameScale}%`,
+          height: "auto",
+          maxWidth: "none",
+          aspectRatio: "384 / 341"
+        }}
         draggable={false}
       />
       {showLevelBadge && (
@@ -71,7 +81,7 @@ export const VipAnimatedFrame: React.FC<{
           </span>
         </div>
       )}
-      <div className="relative z-10">{children}</div>
+      <div className="relative z-30">{children}</div>
     </div>
   );
 };

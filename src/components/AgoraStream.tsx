@@ -6,6 +6,7 @@ import AgoraRTC, {
 } from "agora-rtc-sdk-ng";
 import { Mic, MicOff, Volume2, Radio, AlertCircle } from "lucide-react";
 import { authenticatedFetch, resolveApiUrl } from "../lib/apiClient";
+import { VipAnimatedFrame } from "./VipAnimatedFrame";
 
 // Set Agora SDK log level to 1 (ERROR) to expose internal errors in console
 AgoraRTC.setLogLevel(1);
@@ -19,6 +20,7 @@ interface AgoraStreamProps {
   facingMode?: "user" | "environment";
   hostAvatar?: string;
   hostName?: string;
+  vipLevel?: number;
   coverPhoto?: string;
   showCoverPhoto?: boolean;
   publishCameraTrack?: boolean;
@@ -28,6 +30,7 @@ interface AgoraStreamProps {
   isCoHostMode?: boolean;
   coHostAvatar?: string;
   coHostName?: string;
+  coHostVipLevel?: number;
   coHostVideoMuted?: boolean;
 }
 
@@ -49,13 +52,15 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
   publishMicrophoneTrack = true,
   hostAvatar = "",
   hostName = "Streamer",
+  vipLevel = 0,
   coverPhoto = "",
   showCoverPhoto = true,
   onStatusChange,
   onPublishSuccess,
   isCoHostMode = false,
   coHostAvatar = "",
-  coHostName = "Co-Host"
+  coHostName = "Co-Host",
+  coHostVipLevel = 0
 }) => {
   // Real Agora States
   const [client, setClient] = useState<IAgoraRTCClient | null>(null);
@@ -595,11 +600,13 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
             <div className="relative">
               <div className="absolute -inset-3 rounded-full bg-red-500/30 animate-ping" />
               <div className="absolute -inset-2 rounded-full bg-gradient-to-tr from-red-600 via-pink-500 to-amber-500 blur-sm opacity-80 animate-pulse" />
-              <img 
-                src={avatarUrl} 
-                className="relative w-16 h-16 md:w-20 md:h-20 rounded-full object-cover border-2 border-red-500 shadow-[0_0_20px_rgba(239,68,68,0.7)]"
-                alt={hostName}
-              />
+              <VipAnimatedFrame vipLevel={vipLevel} showLevelBadge={false} frameScale={145} className="w-16 h-16 md:w-20 md:h-20">
+                <img 
+                  src={avatarUrl} 
+                  className="relative w-full h-full rounded-full object-cover border-2 border-red-500 shadow-[0_0_20px_rgba(239,68,68,0.7)]"
+                  alt={hostName}
+                />
+              </VipAnimatedFrame>
               <div className="absolute -bottom-1 -right-1 bg-red-600 text-white text-[7.5px] font-black px-1.5 py-0.5 rounded-full border border-white shadow flex items-center space-x-1">
                 {muted && role === "publisher" ? (
                   <MicOff className="w-2.5 h-2.5 text-red-200" />
@@ -656,11 +663,13 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
             <div className="relative">
               <div className="absolute -inset-3 rounded-full bg-blue-500/30 animate-ping" />
               <div className="absolute -inset-2 rounded-full bg-gradient-to-tr from-blue-600 via-cyan-400 to-indigo-400 blur-sm opacity-80 animate-pulse" />
-              <img 
-                src={coHostAvatarUrl} 
-                className="relative w-16 h-16 md:w-20 md:h-20 rounded-full object-cover border-2 border-blue-500 shadow-[0_0_20px_rgba(59,130,246,0.7)]"
-                alt={coHostName}
-              />
+              <VipAnimatedFrame vipLevel={coHostVipLevel} showLevelBadge={false} frameScale={145} className="w-16 h-16 md:w-20 md:h-20">
+                <img 
+                  src={coHostAvatarUrl} 
+                  className="relative w-full h-full rounded-full object-cover border-2 border-blue-500 shadow-[0_0_20px_rgba(59,130,246,0.7)]"
+                  alt={coHostName}
+                />
+              </VipAnimatedFrame>
               <div className="absolute -bottom-1 -right-1 bg-blue-600 text-white text-[7.5px] font-black px-1.5 py-0.5 rounded-full border border-white shadow flex items-center space-x-1">
                 <span className="w-1.5 h-1.5 rounded-full bg-white animate-ping" />
                 <span>AUDIO</span>
@@ -747,13 +756,15 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
           <div className="absolute -inset-4 rounded-full bg-gradient-to-r from-pink-500 via-purple-500 to-cyan-400 opacity-60 blur-lg group-hover:opacity-100 transition duration-1000 animate-pulse" />
           <div className="absolute -inset-2 rounded-full bg-pink-500/20 animate-ping" />
           
-          <div className="relative w-28 h-28 md:w-32 md:h-32 rounded-full p-1 bg-[#120c24] overflow-hidden border-2 border-pink-500/80 shadow-[0_0_30px_rgba(255,0,127,0.6)]">
-            <img 
-              src={avatarUrl} 
-              alt={hostName}
-              className="w-full h-full object-cover rounded-full"
-            />
-          </div>
+          <VipAnimatedFrame vipLevel={vipLevel} showLevelBadge={false} frameScale={145} className="w-28 h-28 md:w-32 md:h-32">
+            <div className="relative w-full h-full rounded-full p-1 bg-[#120c24] overflow-hidden border-2 border-pink-500/80 shadow-[0_0_30px_rgba(255,0,127,0.6)]">
+              <img 
+                src={avatarUrl} 
+                alt={hostName}
+                className="w-full h-full object-cover rounded-full"
+              />
+            </div>
+          </VipAnimatedFrame>
 
           {/* Mic Status Badge */}
           <div className="absolute bottom-1 right-1 px-2 py-0.5 rounded-full bg-gradient-to-r from-pink-600 to-purple-600 border border-white/80 text-white text-[8px] font-black uppercase tracking-wider flex items-center space-x-1 shadow-md font-mono">

@@ -4793,7 +4793,7 @@ app.get("/api/v1/parties/:id", (req, res) => {
 });
 
 app.post("/api/v1/parties", (req, res) => {
-  const { title, hostUsername, hostAvatar, category, isPublic, password, language, description } = req.body;
+  const { title, hostUsername, hostAvatar, hostVipLevel, category, isPublic, password, language, description } = req.body;
   
   if (!dbData.parties) {
     dbData.parties = [];
@@ -4810,6 +4810,7 @@ app.post("/api/v1/parties", (req, res) => {
     title: title || `${validHost}'s Audio Lounge 🎙️`,
     hostUsername: validHost,
     hostAvatar: hostAvatar || "",
+    vipLevel: Number(hostVipLevel || 0),
     category: category || "Music",
     participantCount: 1,
     maxCapacity: 12,
@@ -4821,9 +4822,9 @@ app.post("/api/v1/parties", (req, res) => {
     allGuestsMuted: existingIdx !== -1 ? Boolean(dbData.parties[existingIdx].allGuestsMuted) : false,
     moderators: existingIdx !== -1 && Array.isArray(dbData.parties[existingIdx].moderators) ? dbData.parties[existingIdx].moderators : [],
     createdAt: existingIdx !== -1 ? (dbData.parties[existingIdx].createdAt || Date.now()) : Date.now(),
-    connectedViewers: [{ userId: validHost, username: validHost, avatar: hostAvatar || "", level: 1, vipLevel: 0 }],
+    connectedViewers: [{ userId: validHost, username: validHost, avatar: hostAvatar || "", level: 1, vipLevel: Number(hostVipLevel || 0) }],
     seats: (existingIdx !== -1 && dbData.parties[existingIdx].seats) ? dbData.parties[existingIdx].seats : [
-      { id: 1, name: validHost, avatar: hostAvatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80", isMuted: false, isLocked: false },
+      { id: 1, name: validHost, avatar: hostAvatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80", vipLevel: Number(hostVipLevel || 0), isMuted: false, isLocked: false },
       { id: 2, name: null, avatar: null, isMuted: false, isLocked: false },
       { id: 3, name: null, avatar: null, isMuted: false, isLocked: false },
       { id: 4, name: null, avatar: null, isMuted: false, isLocked: false },
@@ -4848,7 +4849,13 @@ app.post("/api/v1/parties", (req, res) => {
   };
 
   if (existingIdx !== -1) {
-    dbData.parties[existingIdx] = { ...dbData.parties[existingIdx], ...newParty, status: "active" };
+    const mergedParty = { ...dbData.parties[existingIdx], ...newParty, status: "active" };
+    mergedParty.seats = (mergedParty.seats || []).map((seat: any) =>
+      seat.id === 1
+        ? { ...seat, name: validHost, avatar: hostAvatar || seat.avatar || "", vipLevel: Number(hostVipLevel || 0) }
+        : seat
+    );
+    dbData.parties[existingIdx] = mergedParty;
     saveDatabase();
     syncDocument("parties", id, dbData.parties[existingIdx]);
     console.log(`[PARDAIS-PARTY PARTY] Updated existing party room: ${id} by @${validHost}`);
@@ -4903,7 +4910,7 @@ app.post("/api/v1/parties/:id/leave", (req, res) => {
     // Clean up from seats immediately
     party.seats = party.seats.map((seat: any) => {
       if (seat.name === username || (seat.name && seat.name.startsWith(username))) {
-        return { ...seat, name: null, avatar: null, isMuted: false };
+        return { ...seat, name: null, avatar: null, vipLevel: 0, isMuted: false };
       }
       return seat;
     });
@@ -4950,7 +4957,7 @@ app.post("/api/v1/parties/:id/seats/join", (req, res) => {
     if (targetSeat.isLocked && party.hostUsername !== username) return res.status(403).json({ error: "This seat is locked by the host" });
     party.seats = party.seats.map((seat: any) => {
       if (seat.id === Number(seatId)) {
-        return { ...seat, name: username, avatar: avatar || "", isMuted: party.allGuestsMuted ? true : Boolean(seat.isMuted) };
+        return { ...seat, name: username, avatar: avatar || "", vipLevel: Number(vipLevel || 0), isMuted: party.allGuestsMuted ? true : Boolean(seat.isMuted) };
       }
       return seat;
     });

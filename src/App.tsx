@@ -2457,6 +2457,7 @@ export default function App() {
     id: number;
     name: string | null;
     avatar: string | null;
+    vipLevel?: number;
     diamonds?: string | null;
     isMuted: boolean;
     isCamMuted: boolean;
@@ -2846,6 +2847,7 @@ export default function App() {
     id: number;
     name: string | null;
     avatar: string | null;
+    vipLevel?: number;
     diamonds: string | null;
     isMuted: boolean;
     isCamMuted: boolean;
@@ -3930,7 +3932,7 @@ export default function App() {
   const [userLivePkActive, setUserLivePkActive] = useState<boolean>(false);
   const [userLivePkConnected, setUserLivePkConnected] = useState<boolean>(false);
   const [userLivePkInvitePanelOpen, setUserLivePkInvitePanelOpen] = useState<boolean>(false);
-  const [userLiveCoHost, setUserLiveCoHost] = useState<{ username: string; avatar: string; fans: string; level: number; isCamOff?: boolean; userId?: string } | null>(null);
+  const [userLiveCoHost, setUserLiveCoHost] = useState<{ username: string; avatar: string; fans: string; level: number; vipLevel?: number; isCamOff?: boolean; userId?: string } | null>(null);
   const [userLiveAvailableHosts, setUserLiveAvailableHosts] = useState<Array<any>>([]);
   const [userLivePkState, setUserLivePkState] = useState<string>("idle"); // "idle" | "1v1_connected" | "pk_countdown" | "pk_active" | "pk_finished"
   const [userLivePkCountdown, setUserLivePkCountdown] = useState<number>(3);
@@ -4137,6 +4139,7 @@ export default function App() {
                   userId: otherHost.userId || otherHost.username,
                   avatar: otherHost.avatar || "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=100&q=80",
                   level: Number(otherHost.level) || 1,
+                  vipLevel: Number(otherHost.vipLevel) || 0,
                   fans: otherHost.fans || "10K fans"
                 });
                 setUserLivePkConnected(true);
@@ -4177,6 +4180,7 @@ export default function App() {
                 userId: otherHost.userId || otherHost.username,
                 avatar: otherHost.avatar || "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=100&q=80",
                 level: Number(otherHost.level) || 1,
+                vipLevel: Number(otherHost.vipLevel) || 0,
                 fans: otherHost.fans || "10K fans"
               });
               setUserLivePkConnected(true);
@@ -4889,6 +4893,7 @@ export default function App() {
           pkScoreOpponent: userLivePkScoreOther,
           coHostUsername: userLiveCoHost?.username,
           coHostAvatar: userLiveCoHost?.avatar,
+          coHostVipLevel: Number(userLiveCoHost?.vipLevel || 0),
           guestModeActive: isGuest,
           guestSeats: userLiveGuestSeats,
           category: currentCategory,
@@ -5176,6 +5181,7 @@ export default function App() {
               guestModeActive: isHostGuestMode,
               coHostUsername: data.coHostUsername !== undefined ? data.coHostUsername : prev.coHostUsername,
               coHostAvatar: data.coHostAvatar !== undefined ? data.coHostAvatar : prev.coHostAvatar,
+              coHostVipLevel: data.coHostVipLevel !== undefined ? Number(data.coHostVipLevel) : Number(prev.coHostVipLevel || 0),
               opponentName: data.coHostUsername || data.opponentName || prev.opponentName,
               opponentAvatar: data.coHostAvatar || data.opponentAvatar || prev.opponentAvatar,
               inPk: isHostPkActive,
@@ -6942,6 +6948,7 @@ export default function App() {
       hostUsername: user.username,
       uniqueId: user.uniqueId,
       avatar: user.avatar,
+      vipLevel: user.vipLevel || 0,
       hostAvatar: user.avatar,
       coverPhoto: initialCover,
       showCoverPhoto: Boolean(initialCover),
@@ -6995,6 +7002,7 @@ export default function App() {
           id: 1,
           name: topReq.username || topReq.name || "Guest",
           avatar: topReq.avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&h=150&q=80",
+          vipLevel: topReq.vipLevel || 0,
           isMuted: false,
           isCamMuted: false,
           isModerator: false,
@@ -7025,6 +7033,7 @@ export default function App() {
             id: 1,
             name: "Alex (Guest)",
             avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&h=150&q=80",
+            vipLevel: 0,
             isMuted: false,
             isCamMuted: false,
             isModerator: false,
@@ -8012,7 +8021,7 @@ export default function App() {
       createdAt: Date.now(),
       connectedViewers: [{ userId: validHost, username: validHost, avatar: user.avatar || "", level: user.userLevel || user.level || 1, vipLevel: user.vipLevel || 0 }],
       seats: [
-        { id: 1, name: validHost, avatar: user.avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80", isMuted: false, isLocked: false },
+        { id: 1, name: validHost, avatar: user.avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80", vipLevel: user.vipLevel || 0, isMuted: false, isLocked: false },
         { id: 2, name: null, avatar: null, isMuted: false, isLocked: false },
         { id: 3, name: null, avatar: null, isMuted: false, isLocked: false },
         { id: 4, name: null, avatar: null, isMuted: false, isLocked: false },
@@ -8054,6 +8063,7 @@ export default function App() {
           title: finalRoomTitle,
           hostUsername: validHost,
           hostAvatar: user.avatar,
+          hostVipLevel: user.vipLevel || 0,
           category: partyFormCategory || "Music",
           isPublic: partyFormIsPublic,
           password: partyFormPassword,
@@ -8168,7 +8178,7 @@ export default function App() {
       if (p.id === partyId) {
         return {
           ...p,
-          seats: p.seats.map((s: any) => s.id === seatId ? { ...s, name: user.username, avatar: user.avatar } : s)
+          seats: p.seats.map((s: any) => s.id === seatId ? { ...s, name: user.username, avatar: user.avatar, vipLevel: vipLvl } : s)
         };
       }
       return p;
@@ -10078,12 +10088,14 @@ export default function App() {
                                 title="Click to view Host Profile"
                               >
                                 <div className="relative shrink-0">
-                                  <span className="absolute -top-2.5 left-1/2 -translate-x-1/2 text-[11px] drop-shadow-[0_0_6px_rgba(245,158,11,0.9)] z-10 animate-bounce">👑</span>
-                                  <img 
-                                    src={party.hostAvatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80"} 
-                                    className="w-8.5 h-8.5 rounded-full object-cover p-[1.5px] bg-gradient-to-tr from-amber-300 via-yellow-400 to-amber-600 shadow-[0_0_12px_rgba(245,158,11,0.5)] group-hover:scale-105 transition-transform" 
-                                    alt="Host" 
-                                  />
+                                  <span className="absolute -top-2.5 left-1/2 -translate-x-1/2 text-[11px] drop-shadow-[0_0_6px_rgba(245,158,11,0.9)] z-30 animate-bounce">👑</span>
+                                  <VipAnimatedFrame vipLevel={Number(party.seats?.find((s: any) => s.id === 1)?.vipLevel || 0)} showLevelBadge={false} frameScale={145} className="w-8.5 h-8.5">
+                                    <img 
+                                      src={party.hostAvatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80"} 
+                                      className="w-8.5 h-8.5 rounded-full object-cover p-[1.5px] bg-gradient-to-tr from-amber-300 via-yellow-400 to-amber-600 shadow-[0_0_12px_rgba(245,158,11,0.5)] group-hover:scale-105 transition-transform" 
+                                      alt="Host" 
+                                    />
+                                  </VipAnimatedFrame>
                                 </div>
                                 <div className="bg-transparent leading-tight truncate">
                                   <h4 className="text-[10px] font-extrabold text-white uppercase truncate flex items-center space-x-1.5 bg-transparent tracking-wide">
@@ -10141,7 +10153,7 @@ export default function App() {
                                   const fullSeats = Array.from({ length: 12 }, (_, i) => {
                                     const sId = i + 1;
                                     const found = party.seats?.find((s: any) => s.id === sId);
-                                    return found || { id: sId, name: null, avatar: null, isMuted: false };
+                                    return found || { id: sId, name: null, avatar: null, vipLevel: 0, isMuted: false };
                                   });
 
                                   return fullSeats.map((seat) => {
@@ -10203,16 +10215,18 @@ export default function App() {
                                               <div className="absolute inset-0 bg-gradient-to-br from-amber-300/15 via-transparent to-purple-900/20 pointer-events-none" />
 
                                               {isOccupied ? (
-                                                <img 
-                                                  src={seat.avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80"} 
-                                                  className="w-full h-full object-cover cursor-pointer hover:scale-110 transition-transform" 
-                                                  alt={seat.name}
-                                                  onClick={(e) => {
-                                                    e.stopPropagation();
-                                                    handleOpenPartyUserProfile(seat.name, seat.avatar, seat.id);
-                                                  }}
-                                                  title={`Click to view @${seat.name}'s Profile`}
-                                                />
+                                                <VipAnimatedFrame vipLevel={Number(seat.vipLevel || 0)} showLevelBadge={false} frameScale={145} className="w-full h-full">
+                                                  <img 
+                                                    src={seat.avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80"} 
+                                                    className="w-full h-full object-cover cursor-pointer hover:scale-110 transition-transform" 
+                                                    alt={seat.name}
+                                                    onClick={(e) => {
+                                                      e.stopPropagation();
+                                                      handleOpenPartyUserProfile(seat.name, seat.avatar, seat.id, undefined, Number(seat.vipLevel || 0));
+                                                    }}
+                                                    title={`Click to view @${seat.name}'s Profile`}
+                                                  />
+                                                </VipAnimatedFrame>
                                               ) : (
                                                 <div className="flex flex-col items-center justify-center bg-transparent text-amber-400">
                                                   <span className="text-[13px] bg-transparent font-black leading-none drop-shadow-[0_0_8px_rgba(245,158,11,0.9)] animate-pulse">🎙️</span>
@@ -10221,6 +10235,19 @@ export default function App() {
                                               )}
                                             </div>
                                           </div>
+
+                                          {isOccupied && Number(seat.vipLevel || 0) > 0 && (() => {
+                                            const vipFrame = VIP_FRAMES_LIST.find(f => f.vipLevel === Number(seat.vipLevel) && f.isActive);
+                                            if (!vipFrame) return null;
+                                            return (
+                                              <img
+                                                src={vipFrame.asset}
+                                                alt={`VIP ${seat.vipLevel} frame`}
+                                                className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[145%] h-[145%] object-contain pointer-events-none z-25"
+                                                draggable={false}
+                                              />
+                                            );
+                                          })()}
 
                                           {/* HOST Badge */}
                                           {isHostSeat && (
@@ -11930,13 +11957,15 @@ export default function App() {
                                           }}
                                           className="flex items-center space-x-1.5 bg-black/60 px-2 py-1 rounded-full border border-white/10 shrink-0 shadow-md cursor-pointer"
                                         >
-                                          <div className="w-7 h-7 rounded-full bg-purple-900 border border-purple-400 flex items-center justify-center font-black text-white text-xs overflow-hidden shrink-0">
-                                            {activeHost.avatar ? (
-                                              <img src={activeHost.avatar} className="w-full h-full object-cover" alt={hostAName} />
-                                            ) : (
-                                              <span>Y</span>
-                                            )}
-                                          </div>
+                                          <VipAnimatedFrame vipLevel={Number(activeHost.vipLevel || 0)} showLevelBadge={false} frameScale={145} className="w-7 h-7 shrink-0">
+                                            <div className="w-7 h-7 rounded-full bg-purple-900 border border-purple-400 flex items-center justify-center font-black text-white text-xs overflow-hidden">
+                                              {activeHost.avatar ? (
+                                                <img src={activeHost.avatar} className="w-full h-full object-cover" alt={hostAName} />
+                                              ) : (
+                                                <span>Y</span>
+                                              )}
+                                            </div>
+                                          </VipAnimatedFrame>
                                           <div className="flex flex-col text-left leading-none">
                                             <div className="flex items-center space-x-1">
                                               <span className="text-[10px] font-black text-white truncate max-w-[70px]">{hostAName}</span>
@@ -12455,6 +12484,8 @@ export default function App() {
                                   videoMuted={activeHost.category === "audio" || activeHost.cameraEnabled === false || activeHost.isCamOff === true || activeHost.cameraMuted === true}
                                   hostAvatar={activeHost.avatar || activeHost.hostAvatar || liveBroadcasterAvatar}
                                   hostName={activeHost.name || activeHost.hostUsername || liveBroadcasterName}
+                                  vipLevel={Number(activeHost.vipLevel || 0)}
+                                  coHostVipLevel={Number(activeHost.coHostVipLevel || activeHost.opponentVipLevel || 0)}
                                   coverPhoto={activeHost.coverPhoto || userLiveCoverPhoto}
                                   showCoverPhoto={activeHost.showCoverPhoto !== undefined ? activeHost.showCoverPhoto : userLiveShowCoverPhoto}
                                   isCoHostMode={Boolean(
@@ -17743,6 +17774,8 @@ export default function App() {
                                     facingMode={cameraFacingMode}
                                     hostAvatar={user.avatar || DEFAULT_USER.avatar}
                                     hostName={user.username || DEFAULT_USER.username}
+                                    vipLevel={Number(user.vipLevel || 0)}
+                                    coHostVipLevel={Number(userLiveCoHost?.vipLevel || 0)}
                                     coverPhoto={userLiveCoverPhoto}
                                     showCoverPhoto={userLiveShowCoverPhoto}
                                     isCoHostMode={Boolean(userLivePkConnected || userLiveCoHost)}
@@ -17898,6 +17931,13 @@ export default function App() {
                                                 className="w-full h-full object-cover"
                                                 alt="Pinned guest portrait"
                                               />
+                                              {Number(pinnedGuest.vipLevel || 0) > 0 && (() => {
+                                                const vipFrame = VIP_FRAMES_LIST.find(f => f.vipLevel === Number(pinnedGuest.vipLevel) && f.isActive);
+                                                if (!vipFrame) return null;
+                                                return (
+                                                  <img src={vipFrame.asset} alt={`VIP ${pinnedGuest.vipLevel} frame`} className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[48%] h-[48%] object-contain pointer-events-none z-10" draggable={false} />
+                                                );
+                                              })()}
                                             ) : (
                                               <div className="flex flex-col items-center space-y-1 bg-black/40 p-3 rounded-2xl">
                                                 <CameraOff className="w-6 h-6 text-pink-500/80" />
@@ -17932,11 +17972,13 @@ export default function App() {
                                                 />
                                               ) : (
                                                 <div className="relative w-full h-full flex flex-col items-center justify-center bg-[#120e24] p-1 text-center overflow-hidden">
-                                                  <img 
-                                                    src={user.avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80"}
-                                                    className="w-10 h-10 rounded-full object-cover border-2 border-pink-500/60 shadow"
-                                                    alt={user.username}
-                                                  />
+                                                  <VipAnimatedFrame vipLevel={Number(user.vipLevel || 0)} showLevelBadge={false} frameScale={145} className="w-10 h-10">
+                                                    <img 
+                                                      src={user.avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80"}
+                                                      className="w-full h-full rounded-full object-cover border-2 border-pink-500/60 shadow"
+                                                      alt={user.username}
+                                                    />
+                                                  </VipAnimatedFrame>
                                                   <span className="text-[6px] text-pink-300 font-bold uppercase mt-0.5">Cam Off</span>
                                                 </div>
                                               )}
@@ -17972,11 +18014,13 @@ export default function App() {
                                                 />
                                                 <div className="relative z-10 flex flex-col items-center justify-center space-y-3 p-4">
                                                   <div className="relative">
-                                                    <img
-                                                      src={user.avatar || liveBroadcasterAvatar || DEFAULT_USER.avatar}
-                                                      className="w-24 h-24 rounded-full object-cover border-4 border-pink-500/80 shadow-2xl"
-                                                      alt={user.username}
-                                                    />
+                                                    <VipAnimatedFrame vipLevel={Number(user.vipLevel || 0)} showLevelBadge={false} frameScale={145} className="w-24 h-24">
+                                                      <img
+                                                        src={user.avatar || liveBroadcasterAvatar || DEFAULT_USER.avatar}
+                                                        className="w-full h-full rounded-full object-cover border-4 border-pink-500/80 shadow-2xl"
+                                                        alt={user.username}
+                                                      />
+                                                    </VipAnimatedFrame>
                                                     <div className="absolute bottom-0 right-0 bg-gray-900/90 text-pink-400 p-1.5 rounded-full border border-pink-500/40 shadow">
                                                       <CameraOff className="w-4 h-4" />
                                                     </div>
@@ -18062,6 +18106,18 @@ export default function App() {
                                                   alt="guest avatar" 
                                                 />
                                                 <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/10 to-transparent"></div>
+                                                {Number(seat.vipLevel || 0) > 0 && (() => {
+                                                  const vipFrame = VIP_FRAMES_LIST.find(f => f.vipLevel === Number(seat.vipLevel) && f.isActive);
+                                                  if (!vipFrame) return null;
+                                                  return (
+                                                    <img
+                                                      src={vipFrame.asset}
+                                                      alt={`VIP ${seat.vipLevel} frame`}
+                                                      className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[62%] h-[62%] object-contain pointer-events-none z-10"
+                                                      draggable={false}
+                                                    />
+                                                  );
+                                                })()}
                                               </>
                                             ) : (
                                               <div className="absolute inset-0 bg-[#0c0919] flex flex-col items-center justify-center space-y-1">
@@ -18395,9 +18451,11 @@ export default function App() {
                                       videoMuted={!userLiveCam}
                                       hostAvatar={user.avatar || DEFAULT_USER.avatar}
                                       hostName={user.username || DEFAULT_USER.username}
+                                      vipLevel={Number(user.vipLevel || 0)}
                                       isCoHostMode={true}
                                       coHostAvatar={userLiveCoHost?.avatar}
                                       coHostName={userLiveCoHost?.username}
+                                      coHostVipLevel={Number(userLiveCoHost?.vipLevel || 0)}
                                       coHostVideoMuted={userLiveCoHost?.isCamOff}
                                       onPublishSuccess={handleHostPublishSuccess}
                                     />
@@ -20409,6 +20467,7 @@ export default function App() {
                                                 id: updatedSeats[emptySeatIdx].id,
                                                 name: req.username,
                                                 avatar: req.avatar,
+                                                vipLevel: req.vipLevel || 0,
                                                 diamonds: "10.0K",
                                                 isMuted: false,
                                                 isCamMuted: false,
