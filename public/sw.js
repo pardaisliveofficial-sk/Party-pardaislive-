@@ -1,13 +1,13 @@
-// Pardais Party — Android PWA Service Worker v7
-const CACHE_NAME = "pardais-party-v8";
+// Pardais Party — PWA Service Worker v9
+const CACHE_NAME = "pardais-party-v9";
 const ASSETS_TO_CACHE = [
   "/",
   "/?mode=standalone",
-  "/manifest.json?v=8",
-  "/icon-192.png?v=8",
-  "/icon-512.png?v=8",
-  "/icon.svg?v=8",
-  "/pardais-party-exact.png?v=8"
+  "/manifest.json?v=9",
+  "/icon-192.png?v=9",
+  "/icon-512.png?v=9",
+  "/icon.svg?v=9",
+  "/pardais-party-exact.png?v=9"
 ];
 
 self.addEventListener("install", (event) => {

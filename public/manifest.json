@@ -1,5 +1,5 @@
 {
-  "id": "/",
+  "id": "https://pardaisparty.soulverseapps.com/",
   "short_name": "Pardais Party",
   "name": "Pardais Party — Live Audio, Video & Games",
   "description": "Pakistan's #1 Live Stream, Multi-Guest Audio Rooms, PK Battles & Party Games App for Android.",
@@ -51,13 +51,20 @@
       "label": "Pardais Party Live Audio & PK"
     }
   ],
-  "start_url": "/",
-  "scope": "/",
+  "start_url": "https://pardaisparty.soulverseapps.com/",
+  "scope": "https://pardaisparty.soulverseapps.com/",
   "display": "standalone",
-  "display_override": ["standalone", "minimal-ui"],
+  "display_override": [
+    "standalone",
+    "minimal-ui"
+  ],
   "orientation": "portrait",
   "background_color": "#09090e",
   "theme_color": "#09090e",
-  "categories": ["entertainment", "social", "games"],
+  "categories": [
+    "entertainment",
+    "social",
+    "games"
+  ],
   "prefer_related_applications": false
 }
