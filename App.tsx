@@ -1177,7 +1177,17 @@ export default function App() {
         });
 
         // Sync profileReels dynamically from Firestore as well!
-        const myReels = (firestoreReels || []).filter(r => r && (r.uploaderId === user.uniqueId || (r.uploaderId === "" && r.creator === (user.fullName || user.username))));
+        const myReels = (firestoreReels || []).filter(r => {
+          if (!r) return false;
+          const email = String(user.email || "").toLowerCase().trim();
+          const reelEmail = String(r.uploaderEmail || r.ownerEmail || "").toLowerCase().trim();
+          const stableUid = String(user.uid || "");
+          const reelUid = String(r.uploaderUid || r.ownerUid || "");
+          return (r.uploaderId && r.uploaderId === user.uniqueId) ||
+            (reelEmail && email && reelEmail === email) ||
+            (reelUid && stableUid && reelUid === stableUid) ||
+            (!r.uploaderId && !reelEmail && !reelUid && r.creator === (user.fullName || user.username));
+        });
         
         const myUploaded = (myReels || []).filter(r => r && r.privacy !== "private").map(r => ({
           id: r.id,
@@ -1622,6 +1632,8 @@ export default function App() {
         if (!r) return false;
         if (r.privacy === "private" || r.isPrivate) return false;
         const matchesUploader = (r.uploaderId && r.uploaderId === userUniqueId) ||
+          (r.uploaderEmail && String(r.uploaderEmail).toLowerCase() === String(user.email || "").toLowerCase()) ||
+          (r.uploaderUid && r.uploaderUid === String(user.uid || "")) ||
           (r.creator && (r.creator === userFullName || r.creator === userUsername || r.creator === "You"));
         return matchesUploader;
       })
@@ -1737,6 +1749,8 @@ export default function App() {
         if (!r) return false;
         if (!(r.privacy === "private" || r.isPrivate)) return false;
         const matchesUploader = (r.uploaderId && r.uploaderId === userUniqueId) ||
+          (r.uploaderEmail && String(r.uploaderEmail).toLowerCase() === String(user.email || "").toLowerCase()) ||
+          (r.uploaderUid && r.uploaderUid === String(user.uid || "")) ||
           (r.creator && (r.creator === userFullName || r.creator === userUsername || r.creator === "You"));
         return matchesUploader;
       })
@@ -4507,6 +4521,9 @@ export default function App() {
         isFollowed: false,
         comments: [],
         uploaderId: user.uniqueId || "",
+        uploaderEmail: user.email || "",
+        uploaderUid: user.uid || "",
+        ownerKey: user.email || user.uid || user.uniqueId || "",
         createdAt: new Date().toISOString()
       };
       

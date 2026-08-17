@@ -6408,8 +6408,19 @@ async function hydrateReelsFromR2Metadata() {
   try {
     const client = getS3Client();
     const bucketName = process.env.R2_BUCKET_NAME || "pardaisparty-reels";
-    const listed = await client.send(new ListObjectsV2Command({ Bucket: bucketName, Prefix: "reels/_metadata/" }));
-    const keys = (listed.Contents || []).map((x: any) => x.Key).filter((k: any) => typeof k === "string" && k.endsWith(".json"));
+    const keys: string[] = [];
+    let continuationToken: string | undefined = undefined;
+    do {
+      const listed = await client.send(new ListObjectsV2Command({
+        Bucket: bucketName,
+        Prefix: "reels/_metadata/",
+        ContinuationToken: continuationToken
+      }));
+      for (const item of (listed.Contents || [])) {
+        if (typeof item?.Key === "string" && item.Key.endsWith(".json")) keys.push(item.Key);
+      }
+      continuationToken = listed.IsTruncated ? listed.NextContinuationToken : undefined;
+    } while (continuationToken);
     if (!keys.length) return [];
 
     const restored: any[] = [];
@@ -6549,9 +6560,17 @@ app.post("/api/v1/wallet/withdraw", authenticateUser, async (req: any, res) => {
 
 // Reels endpoints
 app.get("/api/v1/reels", async (req, res) => {
-  await hydrateReelsFromFirestore();
+  await hydrateReelsFromFirestore(true);
   await hydrateReelsFromR2Metadata();
-  res.json(dbData.reels || []);
+  const map = new Map<string, any>();
+  (dbData.reels || []).forEach((r: any) => { if (r?.id) map.set(String(r.id), r); });
+  dbData.reels = Array.from(map.values()).sort((a: any, b: any) => {
+    const ta = Date.parse(a?.createdAt || "") || 0;
+    const tb = Date.parse(b?.createdAt || "") || 0;
+    return tb - ta;
+  });
+  saveDatabase();
+  res.json(dbData.reels);
 });
 
 app.post("/api/v1/reels", async (req, res) => {
@@ -6690,15 +6709,32 @@ app.post("/api/v1/chats", (req, res) => {
   res.status(201).json(newMsg);
 });
 
-app.post("/api/v1/reels/sync", (req, res) => {
-  dbData.reels = req.body;
-  saveDatabase();
-  if (Array.isArray(req.body)) {
-    req.body.forEach((r: any) => {
-      if (r.id) syncDocument("reels", r.id, r);
+app.post("/api/v1/reels/sync", async (req, res) => {
+  try {
+    // Never replace the durable reel collection with a partial/stale client list.
+    // Merge by stable reel ID and persist each record instead.
+    const incoming = Array.isArray(req.body) ? req.body : [];
+    if (!Array.isArray(dbData.reels)) dbData.reels = [];
+    const reelMap = new Map<string, any>();
+    dbData.reels.forEach((r: any) => { if (r?.id) reelMap.set(String(r.id), r); });
+    incoming.forEach((r: any) => { if (r?.id) reelMap.set(String(r.id), { ...reelMap.get(String(r.id)), ...r }); });
+    dbData.reels = Array.from(reelMap.values()).sort((a: any, b: any) => {
+      const ta = Date.parse(a?.createdAt || "") || 0;
+      const tb = Date.parse(b?.createdAt || "") || 0;
+      return tb - ta;
     });
+    saveDatabase();
+
+    const results = await Promise.all(incoming.filter((r: any) => r?.id).map(async (r: any) => ({
+      id: r.id,
+      firestore: await syncDocument("reels", String(r.id), reelMap.get(String(r.id))),
+      r2: await persistReelMetadataToR2(reelMap.get(String(r.id)))
+    })));
+    res.json({ success: true, merged: true, count: results.length, results });
+  } catch (err: any) {
+    console.error("[PARDAIS-PARTY REELS] Durable sync failed:", err?.message || err);
+    res.status(500).json({ success: false, error: "Reel synchronization failed." });
   }
-  res.json({ success: true });
 });
 
 app.post("/api/v1/stories/sync", (req, res) => {
