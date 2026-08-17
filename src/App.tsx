@@ -8068,6 +8068,8 @@ export default function App() {
           hostAvatar: user.avatar,
           hostVipLevel: user.vipLevel || 0,
           category: partyFormCategory || "Music",
+          seatCount: seatCapacity,
+          maxCapacity: seatCapacity,
           isPublic: partyFormIsPublic,
           password: partyFormPassword,
           language: partyFormLanguage || "Urdu",
@@ -8078,9 +8080,20 @@ export default function App() {
       if (response.ok) {
         const data = await response.json();
         if (data && data.id) {
+          // Preserve the seat mode selected in Create Room. Older backends may
+          // omit maxCapacity/seatCount; never downgrade a selected 25-seat room
+          // back to the 12-seat default on the client.
+          const normalizedParty = {
+            ...data,
+            seatCount: Number(data.seatCount || data.maxCapacity || seatCapacity) === 25 ? 25 : 12,
+            maxCapacity: Number(data.maxCapacity || data.seatCount || seatCapacity) === 25 ? 25 : 12,
+            seats: Array.isArray(data.seats) && data.seats.length >= seatCapacity
+              ? data.seats
+              : createEmptySeats(seatCapacity)
+          };
           setPartiesList(prev => {
             const filtered = prev.filter(p => p.id !== tempId && p.id !== data.id);
-            return [data, ...filtered];
+            return [normalizedParty, ...filtered];
           });
           setActivePartyId(data.id);
           fetch(`/api/v1/parties/${data.id}/heartbeat`, {
