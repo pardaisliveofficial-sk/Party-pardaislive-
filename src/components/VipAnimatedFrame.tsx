@@ -52,15 +52,15 @@ export const VipAnimatedFrame: React.FC<{
   }
 
   if (!frame) {
-    return <div className={`relative inline-block ${className}`}>{children}</div>;
+    return <div className={`relative inline-block overflow-visible ${className}`}>{children}</div>;
   }
 
   return (
-    <div className={`relative inline-block ${className}`}>
+    <div className={`relative inline-block overflow-visible ${className}`}>
       <img
         src={frame.asset}
         alt={`${frame.name} profile frame`}
-        className="absolute pointer-events-none z-20 left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[145%] h-[145%] object-contain"
+        className="absolute pointer-events-none z-20 left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[168%] h-[168%] object-contain"
         draggable={false}
       />
       {showLevelBadge && (
