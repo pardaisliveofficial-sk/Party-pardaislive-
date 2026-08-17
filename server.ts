@@ -112,6 +112,14 @@ async function loadDatabase() {
     // Reels synchronization merges by ID and never clears the cache on
     // transient empty snapshots.
     startFirestoreSynchronization();
+    // Firestore user snapshots can arrive after listeners start; retry until the one-time V61 coin migration has a canonical user set.
+    const runCoinMigration = async () => {
+      try { await migrateCoinSystemOnce(); } catch (err) { console.warn("[COIN SYSTEM] Deferred migration failed:", err); }
+      if (Number(dbData.configurations?.coinSystemMigrationVersion || 0) < 1) {
+        setTimeout(() => { void runCoinMigration(); }, 5000);
+      }
+    };
+    setTimeout(() => { void runCoinMigration(); }, 8000);
 
     // Permanent email identity migration. Existing email accounts are copied into
     // the durable registry once; a locked registry entry can never be reassigned.
@@ -719,6 +727,79 @@ app.get("/api/v1/ip-info", (req, res) => {
 // ------------------------------------------------------------------
 // PERSISTENT EMAIL ACCOUNT IDENTITY + PASSWORD AUTH
 // ------------------------------------------------------------------
+const DEFAULT_ADMIN_EMAILS_SERVER = [
+  "pardaisliveofficial@gmail.com",
+  "saifkhokhar657@gmail.com",
+  "dark330angel@gmail.com",
+  "pardaislive@gmail.com"
+];
+const ADMIN_STARTING_COINS = 1_000_000;
+const DAILY_COIN_REWARD = 120;
+const DAILY_XP_REWARD = 300;
+
+function getConfiguredAdminEmails(): string[] {
+  const nominated = Array.isArray(dbData?.nominatedAdminEmails) ? dbData.nominatedAdminEmails : [];
+  return Array.from(new Set([
+    ...DEFAULT_ADMIN_EMAILS_SERVER,
+    ...nominated
+  ].map((e: any) => String(e || "").toLowerCase().trim()).filter(Boolean)));
+}
+
+function isAdminEmail(email: any): boolean {
+  const clean = String(email || "").toLowerCase().trim();
+  return !!clean && getConfiguredAdminEmails().includes(clean);
+}
+
+function isAdminAccount(user: any): boolean {
+  return Boolean(user && isAdminEmail(user.email));
+}
+
+function applyAdminAccountState(user: any, opts: { initializeCoins?: boolean } = {}) {
+  if (!user) return user;
+  const admin = isAdminAccount(user);
+  user.isAdmin = admin;
+  user.role = admin ? "admin" : (user.role === "admin" ? "user" : (user.role || "user"));
+  if (admin) {
+    if (opts.initializeCoins && !user.adminCoinInitializedAt) {
+      user.coins = ADMIN_STARTING_COINS;
+      user.adminCoinInitializedAt = new Date().toISOString();
+    }
+  } else if (user.isAdmin !== true) {
+    user.isAdmin = false;
+  }
+  return user;
+}
+
+async function migrateCoinSystemOnce() {
+  if (!dbData.configurations || typeof dbData.configurations !== "object") dbData.configurations = {};
+  if (Number(dbData.configurations.coinSystemMigrationVersion || 0) >= 1) return;
+
+  const users = Array.isArray(dbData.users) ? dbData.users : [];
+  // Firestore users may arrive just after local startup. Do not mark the migration complete until at least one user record is available.
+  if (users.length === 0) return;
+  const changed: any[] = [];
+  for (const user of users) {
+    if (!user) continue;
+    const admin = isAdminAccount(user);
+    if (admin) {
+      user.isAdmin = true;
+      user.role = "admin";
+      user.coins = ADMIN_STARTING_COINS;
+      user.adminCoinInitializedAt = new Date().toISOString();
+    } else {
+      user.isAdmin = false;
+      // V61 coin reset: all non-admin balances start from zero.
+      user.coins = 0;
+      user.diamonds = Number(user.diamonds) || 0;
+    }
+    changed.push(user);
+  }
+  dbData.configurations.coinSystemMigrationVersion = 1;
+  dbData.configurations.coinSystemMigratedAt = new Date().toISOString();
+  saveDatabase();
+  await Promise.all(changed.map(u => persistUserDurably(u).catch(() => false)));
+}
+
 function stablePardaisId(email: string): string {
   const clean = email.toLowerCase().trim();
   const hash = crypto.createHash("sha256").update(clean).digest("hex").slice(0, 10).toUpperCase();
@@ -1015,6 +1096,7 @@ app.post("/api/v1/auth/google-login", async (req, res) => {
     if (photoURL?.trim() && (!user.avatar || String(user.avatar).includes("dicebear"))) user.avatar = photoURL.trim();
   }
 
+  applyAdminAccountState(user, { initializeCoins: true });
   const needsProfileCompletion = !isCompletedEmailAccount(user) || !user.passwordHash || !user.username || !user.profileCompleted;
   if (needsProfileCompletion) {
     user.accountStatus = "pending_profile";
@@ -1412,6 +1494,7 @@ app.post("/api/v1/auth/verify-email-otp", async (req, res) => {
   }
 
   ensureStableEmailIdentity(user, cleanEmail);
+  applyAdminAccountState(user, { initializeCoins: true });
 
   // Create the signed session token locally. createSession itself does not await
   // Firestore; the mirror is already background-only.
@@ -1487,6 +1570,7 @@ app.post("/api/v1/auth/recover-email-session", async (req, res) => {
     dbData.users.push(user);
   }
   ensureStableEmailIdentity(user, cleanEmail);
+  applyAdminAccountState(user, { initializeCoins: true });
   const token = await createSession(user);
   return res.status(200).json({
     success: true,
@@ -1581,6 +1665,7 @@ app.post("/api/v1/auth/create-account", authenticateUser, async (req: any, res) 
   req.user.usernameLockedAt = new Date().toISOString();
   ensureStableEmailIdentity(req.user, currentEmail);
   req.user.uniqueId = stablePardaisId(currentEmail);
+  applyAdminAccountState(req.user, { initializeCoins: true });
 
   saveDatabase();
   // Do not hold the signup request open on a slow Firestore mirror. The local
@@ -1640,6 +1725,7 @@ app.post("/api/v1/auth/password-login", async (req, res) => {
   if (user.isBanned) return res.status(403).json({ error: "ACCOUNT_BANNED" });
 
   if (user.email) ensureStableEmailIdentity(user, String(user.email).toLowerCase());
+  applyAdminAccountState(user, { initializeCoins: true });
   const persisted = await persistUserDurably(user);
   if (!persisted) return res.status(503).json({ error: "Account could not be restored from permanent storage. Please try again." });
   const token = await createSession(user);
@@ -2200,7 +2286,7 @@ app.post("/api/v1/auth/guest-login", (req, res) => {
         bio: "Pardais Party Member 🇵🇰",
         gender: "Male",
         country: "Pakistan",
-        coins: 1000000,
+        coins: 0,
         diamonds: 0,
         vipLevel: 0,
         userLevel: 1,
@@ -2248,6 +2334,7 @@ app.post("/api/v1/auth/refresh-session", async (req, res) => {
 
   const requestedUsername = req.body?.username || `user_${Math.floor(1000 + Math.random() * 9000)}`;
   const requestedUid = req.body?.uid || `guest_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+  const requestedEmail = typeof req.body?.email === "string" ? req.body.email.toLowerCase().trim() : "";
   
   let user = dbData.users?.find((u: any) => 
     (requestedUid && u.uid === requestedUid) || 
@@ -2259,12 +2346,13 @@ app.post("/api/v1/auth/refresh-session", async (req, res) => {
       uid: requestedUid,
       username: requestedUsername,
       uniqueId: `pardais_${Math.floor(1000 + Math.random() * 9000)}`,
+      email: requestedEmail,
       fullName: req.body?.fullName || "Pardais Member",
       avatar: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80",
       bio: "Pardais Party Member 🇵🇰",
       gender: "Male",
       country: "Pakistan",
-      coins: 1000000,
+      coins: 0,
       diamonds: 0,
       vipLevel: 0,
       userLevel: 1,
@@ -2274,7 +2362,10 @@ app.post("/api/v1/auth/refresh-session", async (req, res) => {
     };
     if (!Array.isArray(dbData.users)) dbData.users = [];
     dbData.users.push(user);
+    applyAdminAccountState(user, { initializeCoins: true });
     syncDocument("users", user.username, user);
+  } else {
+    applyAdminAccountState(user, { initializeCoins: true });
   }
 
   const token = `pardais_session_${user.uid}_${Math.random().toString(36).substring(2, 10)}`;
@@ -2844,6 +2935,19 @@ const DEFAULT_ADVANCED_GIFTS_SERVER = [
   { id: "g-dragon", name: "Golden Dragon", cost: 29999, type: "luxury", icon: "🐉", color: "from-amber-500 to-red-600", animationClass: "animate-bounce", category: "Luxury", description: "Screaming golden fire storm!", animationFile: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4", animationFormat: "mp4", animationDuration: 30, animationDisplayType: "ultra", comboSupported: false, status: "active", featured: true, priority: 2 }
 ];
 
+const PARDAIS_LEVEL_THRESHOLDS_SERVER = [500, 2000, 5000, 10000, 20000, 35000, 55000, 80000, 120000, 175000, 250000, 350000, 500000, 700000, 1000000, 1250000, 1550000, 1900000, 2300000, 2800000, 3300000, 3900000, 4500000, 5200000, 6000000, 7000000, 8200000, 9600000, 11200000, 13000000, 15000000, 17200000, 19600000, 22200000, 25000000, 28000000, 31500000, 35000000, 39000000, 43000000, 47000000, 51000000, 55000000, 58000000, 61000000, 63000000, 65000000, 67000000, 69000000, 70000000, 75000000, 90000000, 110000000, 135000000, 165000000, 200000000, 245000000, 300000000, 370000000, 450000000, 550000000, 670000000, 820000000, 1000000000, 1200000000, 1450000000, 1750000000, 2100000000, 2500000000, 3000000000, 3600000000, 4300000000, 5100000000, 6000000000, 7000000000, 8200000000, 9500000000, 11000000000, 12700000000, 15000000000, 17500000000, 20000000000, 23000000000, 26000000000, 30000000000, 34000000000, 38500000000, 43000000000, 48000000000, 54000000000, 59000000000, 64000000000, 69000000000, 74000000000, 80000000000, 84000000000, 88000000000, 92000000000, 96000000000, 100000000000];
+function getProgressionFromServerCoins(xp: number) {
+  const value = Math.max(0, Number(xp) || 0);
+  let level = 1;
+  for (let i = 0; i < PARDAIS_LEVEL_THRESHOLDS_SERVER.length; i++) {
+    if (value >= PARDAIS_LEVEL_THRESHOLDS_SERVER[i]) level = i + 1;
+    else break;
+  }
+  level = Math.min(100, Math.max(1, level));
+  const vipLevel = Math.min(12, Math.max(0, Math.floor(level / 8)));
+  return { level, vipLevel };
+}
+
 app.get("/api/v1/gifts", (req, res) => {
   if (!dbData.gifts || dbData.gifts.length === 0) {
     dbData.gifts = [...DEFAULT_ADVANCED_GIFTS_SERVER];
@@ -2904,6 +3008,10 @@ app.post("/api/v1/gifts/send", authenticateUser, (req, res) => {
 
   user.coins = userCoins - totalCost;
   user.xp = (user.xp || 0) + Math.floor(totalCost * 0.2);
+  const giftProgress = getProgressionFromServerCoins(user.xp);
+  user.userLevel = giftProgress.level;
+  user.vipLevel = giftProgress.vipLevel;
+  user.wealthLevel = Math.max(Number(user.wealthLevel) || 1, (Number(user.wealthLevel) || 1) + 1);
 
   // Gift display value is always the full amount, while the recipient
   // receives exactly 50% in the earning/diamond wallet.
@@ -2958,6 +3066,33 @@ app.post("/api/v1/gifts/send", authenticateUser, (req, res) => {
   if (!dbData.transactions) dbData.transactions = [];
   dbData.transactions.unshift(txLog);
 
+  // Persist both sides of the wallet transfer immediately. React state is only a display cache.
+  const senderIndex = dbData.users.findIndex((u: any) => u?.uid === user?.uid || (u?.email && user?.email && String(u.email).toLowerCase() === String(user.email).toLowerCase()));
+  if (senderIndex >= 0) dbData.users[senderIndex] = { ...dbData.users[senderIndex], ...user };
+  else if (user?.uid) dbData.users.push(user);
+  void persistUserDurably(user).catch(err => console.warn("[GIFT] sender durable persistence delayed", err));
+  if (recipientUser) void persistUserDurably(recipientUser).catch(err => console.warn("[GIFT] recipient durable persistence delayed", err));
+
+  if (!Array.isArray(dbData.notifications)) dbData.notifications = [];
+  if (recipientUser?.username) {
+    const notification = {
+      id: `gift_${txId}`,
+      type: "Gifts",
+      category: "wallet",
+      targetUsername: recipientUser.username,
+      actorUsername: user.username,
+      title: "🎁 Gift Received!",
+      message: `@${user.username} sent you ${giftCount}x ${gift.name} worth ${totalCost.toLocaleString()} Coins. Your Creator Center received ${recipientEarnings.toLocaleString()} Coins (50%).`,
+      giftCoins: totalCost,
+      creatorCoins: recipientEarnings,
+      timestamp: new Date().toISOString(),
+      read: false
+    };
+    dbData.notifications.unshift(notification);
+    void syncDocument("notifications", notification.id, notification).catch(() => undefined);
+  }
+  saveDatabase();
+
   const responseData = {
     success: true,
     transactionId: txId,
@@ -2970,6 +3105,7 @@ app.post("/api/v1/gifts/send", authenticateUser, (req, res) => {
     companyShare,
     recipient,
     recipientWalletCredit: recipientEarnings,
+    recipientCreatorBalance: recipientUser ? Number(recipientUser.diamonds) || 0 : null,
     displayGiftValue: totalCost,
     pkScoreAdded: totalCost,
     timestamp: txLog.timestamp
@@ -6309,6 +6445,107 @@ async function hydrateReelsFromR2Metadata() {
     return [];
   }
 }
+
+// ------------------------------------------------------------------
+// DAILY COIN REWARD — the only free coin source for normal users
+// ------------------------------------------------------------------
+app.get("/api/v1/daily-tasks/status", authenticateUser, (req: any, res) => {
+  const last = Number(req.user?.dailyCoinClaimAt || 0);
+  const elapsed = Date.now() - last;
+  const available = !last || elapsed >= 24 * 60 * 60 * 1000;
+  const nextClaimAt = available ? null : last + 24 * 60 * 60 * 1000;
+  res.json({ success: true, available, lastClaimAt: last || null, nextClaimAt, rewardCoins: DAILY_COIN_REWARD, rewardXp: DAILY_XP_REWARD });
+});
+
+app.post("/api/v1/daily-tasks/claim", authenticateUser, async (req: any, res) => {
+  const user = req.user;
+  if (isAdminAccount(user)) {
+    return res.status(400).json({ success: false, error: "Admin accounts use the Admin wallet and do not need the daily free-coin reward." });
+  }
+  const last = Number(user.dailyCoinClaimAt || 0);
+  const remaining = 24 * 60 * 60 * 1000 - (Date.now() - last);
+  if (last && remaining > 0) {
+    return res.status(429).json({ success: false, code: "DAILY_CLAIM_COOLDOWN", error: "Daily reward is not ready yet.", nextClaimAt: last + 24 * 60 * 60 * 1000, remainingMs: remaining });
+  }
+
+  const beforeCoins = Number(user.coins) || 0;
+  const beforeXp = Number(user.xp) || 0;
+  user.coins = beforeCoins + DAILY_COIN_REWARD;
+  user.xp = beforeXp + DAILY_XP_REWARD;
+  const progression = getProgressionFromServerCoins(user.xp);
+  user.userLevel = progression.level;
+  user.vipLevel = progression.vipLevel;
+  user.dailyCoinClaimAt = Date.now();
+  user.dailyCoinClaimCount = (Number(user.dailyCoinClaimCount) || 0) + 1;
+  user.updatedAt = new Date().toISOString();
+
+  if (!Array.isArray(dbData.coinTransactions)) dbData.coinTransactions = [];
+  const tx = {
+    id: `daily_${Date.now()}_${Math.random().toString(36).slice(2,7)}`,
+    type: "daily_reward",
+    username: user.username,
+    amount: DAILY_COIN_REWARD,
+    currency: "coins",
+    xp: DAILY_XP_REWARD,
+    timestamp: new Date().toISOString(),
+    status: "Completed",
+    balanceBefore: beforeCoins,
+    balanceAfter: user.coins
+  };
+  dbData.coinTransactions.unshift(tx);
+  if (!Array.isArray(dbData.transactions)) dbData.transactions = [];
+  dbData.transactions.unshift(tx);
+  const idx = dbData.users.findIndex((u: any) => u?.uid === user?.uid || (u?.email && user?.email && String(u.email).toLowerCase() === String(user.email).toLowerCase()));
+  if (idx >= 0) dbData.users[idx] = { ...dbData.users[idx], ...user };
+  else dbData.users.push(user);
+  saveDatabase();
+  const persisted = await persistUserDurably(user);
+  if (!persisted) return res.status(503).json({ success: false, error: "Daily reward could not be permanently saved. Please try again." });
+  void syncDocument("coinTransactions", tx.id, tx).catch(() => undefined);
+  res.json({ success: true, rewardCoins: DAILY_COIN_REWARD, rewardXp: DAILY_XP_REWARD, remainingCoins: user.coins, xp: user.xp, userLevel: user.userLevel, vipLevel: user.vipLevel, nextClaimAt: Date.now() + 24 * 60 * 60 * 1000 });
+});
+
+// ------------------------------------------------------------------
+// CREATOR CENTER WALLET — 50% gift earnings / exchange / withdrawal
+// ------------------------------------------------------------------
+app.post("/api/v1/wallet/exchange", authenticateUser, async (req: any, res) => {
+  const amount = Math.floor(Number(req.body?.amount) || 0);
+  if (amount <= 0) return res.status(400).json({ error: "Enter a valid Creator Center coin amount." });
+  const creatorBalance = Number(req.user?.diamonds) || 0;
+  if (amount > creatorBalance) return res.status(400).json({ error: `Insufficient Creator Center balance. Available: ${creatorBalance}.` });
+  req.user.diamonds = creatorBalance - amount;
+  req.user.coins = (Number(req.user.coins) || 0) + amount;
+  const tx = { id: `exchange_${Date.now()}_${Math.random().toString(36).slice(2,7)}`, type: "creator_exchange", username: req.user.username, amount, currency: "coins", timestamp: new Date().toISOString(), status: "Completed", from: "creator_center", to: "gifting_wallet" };
+  if (!Array.isArray(dbData.transactions)) dbData.transactions = [];
+  dbData.transactions.unshift(tx);
+  const idx = dbData.users.findIndex((u: any) => u?.uid === req.user?.uid || (u?.email && req.user?.email && String(u.email).toLowerCase() === String(req.user.email).toLowerCase()));
+  if (idx >= 0) dbData.users[idx] = { ...dbData.users[idx], ...req.user };
+  saveDatabase();
+  const persisted = await persistUserDurably(req.user);
+  if (!persisted) return res.status(503).json({ error: "Exchange could not be permanently saved. Please try again." });
+  void syncDocument("transactions", tx.id, tx).catch(() => undefined);
+  res.json({ success: true, creatorBalance: req.user.diamonds, coinsBalance: req.user.coins, amount });
+});
+
+app.post("/api/v1/wallet/withdraw", authenticateUser, async (req: any, res) => {
+  const amount = Math.floor(Number(req.body?.amount) || 0);
+  if (amount <= 0) return res.status(400).json({ error: "Enter a valid Creator Center coin amount." });
+  const creatorBalance = Number(req.user?.diamonds) || 0;
+  if (amount > creatorBalance) return res.status(400).json({ error: `Insufficient Creator Center balance. Available: ${creatorBalance}.` });
+  req.user.diamonds = creatorBalance - amount;
+  const request = { id: `withdraw_${Date.now()}_${Math.random().toString(36).slice(2,7)}`, type: "withdraw", username: req.user.username, amount, currency: "creator_coins", timestamp: new Date().toISOString(), status: "Pending", details: `Withdrawal requested for ${amount.toLocaleString()} Creator Center Coins` };
+  if (!Array.isArray(dbData.withdrawals)) dbData.withdrawals = [];
+  dbData.withdrawals.unshift(request);
+  if (!Array.isArray(dbData.transactions)) dbData.transactions = [];
+  dbData.transactions.unshift(request);
+  const idx = dbData.users.findIndex((u: any) => u?.uid === req.user?.uid || (u?.email && req.user?.email && String(u.email).toLowerCase() === String(req.user.email).toLowerCase()));
+  if (idx >= 0) dbData.users[idx] = { ...dbData.users[idx], ...req.user };
+  saveDatabase();
+  const persisted = await persistUserDurably(req.user);
+  if (!persisted) return res.status(503).json({ error: "Withdrawal could not be permanently saved. Please try again." });
+  void syncDocument("withdrawals", request.id, request).catch(() => undefined);
+  res.json({ success: true, creatorBalance: req.user.diamonds, request });
+});
 
 // Reels endpoints
 app.get("/api/v1/reels", async (req, res) => {

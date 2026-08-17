@@ -2915,11 +2915,12 @@ export default function App() {
     giftName: string;
     giftIcon: string;
     recipient: string;
+    totalCost: number;
   } | null>(null);
 
-  const triggerGlobalGiftBanner = (sender: string, giftName: string, giftIcon: string, recipient: string) => {
+  const triggerGlobalGiftBanner = (sender: string, giftName: string, giftIcon: string, recipient: string, totalCost: number = 0) => {
     const id = Date.now().toString() + "-" + Math.random().toString(36).substr(2, 4);
-    setGlobalGiftBanner({ id, sender, giftName, giftIcon, recipient });
+    setGlobalGiftBanner({ id, sender, giftName, giftIcon, recipient, totalCost });
     setTimeout(() => {
       setGlobalGiftBanner(prev => prev?.id === id ? null : prev);
     }, 5500);
@@ -3255,6 +3256,25 @@ export default function App() {
 
   // Daily Missions Progression
   const [missions, setMissions] = useState(DAILY_MISSIONS);
+  const [dailyClaimAvailable, setDailyClaimAvailable] = useState(true);
+  const [dailyNextClaimAt, setDailyNextClaimAt] = useState<number | null>(null);
+  const [dailyClaimBusy, setDailyClaimBusy] = useState(false);
+
+  const refreshDailyClaimStatus = useCallback(async () => {
+    if (!user?.uid && !user?.username) return;
+    try {
+      const res = await authenticatedFetch("/api/v1/daily-tasks/status");
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        setDailyClaimAvailable(Boolean(data.available));
+        setDailyNextClaimAt(data.nextClaimAt || null);
+      }
+    } catch (e) {
+      console.warn("[DAILY TASKS] status check failed", e);
+    }
+  }, [user?.uid, user?.username]);
+
+  useEffect(() => { void refreshDailyClaimStatus(); }, [refreshDailyClaimStatus]);
 
   // Platform Admin Panel Dashboard States
   const [adminTab, setAdminTab] = useState<"dashboard" | "users" | "kyc" | "ranks" | "levels" | "withdrawals" | "moderation" | "agency" | "wallet" | "family" | "whatsapp" | "reels_live" | "notifications_tab" | "api_ctrl" | "vip_ctrl">("dashboard");
@@ -3706,7 +3726,7 @@ export default function App() {
     const recipient = giftEvt.recipient || "Host";
 
     // Trigger Global Gift Banner for ALL viewers and host in the room!
-    triggerGlobalGiftBanner(sender, giftName, `${giftIcon} x${count}`, recipient);
+    triggerGlobalGiftBanner(sender, giftName, `${giftIcon} x${count}`, recipient, Number(giftEvt.totalCost) || 0);
 
     // Real-time Toast Overlay
     const newToast = {
@@ -6680,7 +6700,7 @@ export default function App() {
 
     // Perform secure backend transaction call
     try {
-      const resp = await fetch("/api/v1/gifts/send", {
+      const resp = await authenticatedFetch("/api/v1/gifts/send", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -6696,8 +6716,15 @@ export default function App() {
       });
       if (resp.ok) {
         const data = await resp.json();
-        if (data.remainingCoins !== undefined) {
-          setUser(prev => ({ ...prev, coins: data.remainingCoins }));
+        if (data.remainingCoins !== undefined || data.recipientCreatorBalance !== undefined) {
+          setUser(prev => ({
+            ...prev,
+            coins: data.remainingCoins !== undefined ? data.remainingCoins : prev.coins,
+            ...(data.recipientCreatorBalance !== undefined && data.recipientRecipientUsername && data.recipientRecipientUsername === prev.username ? { diamonds: data.recipientCreatorBalance } : {})
+          }));
+          if (data.recipientCreatorBalance !== undefined && String(data.recipient || "").toLowerCase() === String(user.username || "").toLowerCase()) {
+            setUser(prev => ({ ...prev, diamonds: data.recipientCreatorBalance }));
+          }
         }
       }
     } catch (err) {
@@ -7753,7 +7780,7 @@ export default function App() {
       isVerified: false,
       isBanned: false,
       twoFactorEnabled: false,
-      coins: 1000000,
+      coins: 0,
       diamonds: 0,
       vipLevel: 0,
       userLevel: 1,
@@ -7939,59 +7966,41 @@ export default function App() {
   };
 
   // Diamond Withdrawal simulation
-  const handleWithdraw = (diamondsToWithdraw: number) => {
+  const handleWithdraw = async (diamondsToWithdraw: number) => {
     if (!user.isVerified) {
-      alert("❌ Withdrawal Rejected!\n\nUnder Pakistan financial regulations and Pardais security policies, unverified users are NOT permitted to withdraw funds.\n\nPlease complete your KYC Verification in Settings first!");
+      alert("Please complete your profile verification first.");
       return;
     }
-
     if (user.diamonds < diamondsToWithdraw) {
-      alert("Insufficient Diamond Balance!");
+      alert("Insufficient Creator Center Balance!");
       return;
     }
-
-    const usdVal = (diamondsToWithdraw / 100).toFixed(2);
-    setUser(prev => ({
-      ...prev,
-      diamonds: prev.diamonds - diamondsToWithdraw
-    }));
-
-    const newTx: Transaction = {
-      id: `WITH-${Date.now().toString().slice(-4)}`,
-      type: "withdraw",
-      amount: parseFloat(usdVal),
-      currency: "USD",
-      timestamp: new Date().toISOString().replace("T", " ").slice(0, 16),
-      status: "Completed",
-      details: `Withdrew ${diamondsToWithdraw} Diamonds as $${usdVal} Cash`
-    };
-    setTransactions(prev => [newTx, ...prev]);
+    try {
+      const resp = await authenticatedFetch("/api/v1/wallet/withdraw", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ amount: diamondsToWithdraw }) });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(data?.error || "Withdrawal request failed.");
+      setUser(prev => ({ ...prev, diamonds: data.creatorBalance }));
+      setTransactions(prev => [{ id: data.request?.id || `WITH-${Date.now()}`, type: "withdraw", amount: diamondsToWithdraw, currency: "creator_coins", timestamp: new Date().toISOString().replace("T", " ").slice(0, 16), status: "Pending", details: `Withdrawal requested for ${diamondsToWithdraw} Creator Coins` }, ...prev]);
+    } catch (err: any) {
+      alert(err?.message || "Withdrawal request failed. Please try again.");
+    }
   };
 
   // Diamond to Coin Exchange simulation
-  const handleExchange = (diamondsToExchange: number) => {
+  const handleExchange = async (diamondsToExchange: number) => {
     if (user.diamonds < diamondsToExchange) {
-      alert("Insufficient Diamond Balance!");
+      alert("Insufficient Creator Center Balance!");
       return;
     }
-
-    const coinsReceived = diamondsToExchange;
-    setUser(prev => ({
-      ...prev,
-      diamonds: prev.diamonds - diamondsToExchange,
-      coins: prev.coins + coinsReceived
-    }));
-
-    const newTx: Transaction = {
-      id: `EXCH-${Date.now().toString().slice(-4)}`,
-      type: "recharge",
-      amount: coinsReceived,
-      currency: "coins",
-      timestamp: new Date().toISOString().replace("T", " ").slice(0, 16),
-      status: "Completed",
-      details: `Exchanged ${diamondsToExchange} Diamonds for ${coinsReceived} Coins`
-    };
-    setTransactions(prev => [newTx, ...prev]);
+    try {
+      const resp = await authenticatedFetch("/api/v1/wallet/exchange", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ amount: diamondsToExchange }) });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(data?.error || "Exchange failed.");
+      setUser(prev => ({ ...prev, diamonds: data.creatorBalance, coins: data.coinsBalance }));
+      setTransactions(prev => [{ id: data.transactionId || `EXCH-${Date.now()}`, type: "recharge", amount: diamondsToExchange, currency: "coins", timestamp: new Date().toISOString().replace("T", " ").slice(0, 16), status: "Completed", details: `Exchanged ${diamondsToExchange} Creator Coins for ${diamondsToExchange} Gifting Coins` }, ...prev]);
+    } catch (err: any) {
+      alert(err?.message || "Exchange failed. Please try again.");
+    }
   };
 
   // Coin Transfer simulation to another user
@@ -9847,7 +9856,7 @@ export default function App() {
                         const gObj = gift as any;
                         const totalCost = (gift.cost || gObj.coins || 0) * count;
                         if (user.coins < totalCost) {
-                          alert(`❌ Insufficient Coins!\n\nGift: ${gift.name} (${gift.cost || gObj.coins} Coins)\nQuantity: x${count}\nTotal Required: ${totalCost.toLocaleString()} Coins\nYour Balance: ${user.coins.toLocaleString()} Coins\n\nPlease recharge in the Pardais Wallet! 💎`);
+                          alert(`❌ Insufficient Coins!\n\nGift: ${gift.name} (${gift.cost || gObj.coins} Coins)\nQuantity: x${count}\nTotal Required: ${totalCost.toLocaleString()} Coins\nYour Balance: ${user.coins.toLocaleString()} Coins\n\nPlease recharge through the Coins Wallet. 💎`);
                           return;
                         }
 
@@ -9889,7 +9898,7 @@ export default function App() {
 
                         // Perform secure backend transaction call
                         try {
-                          const resp = await fetch("/api/v1/gifts/send", {
+                          const resp = await authenticatedFetch("/api/v1/gifts/send", {
                             method: "POST",
                             headers: { "Content-Type": "application/json" },
                             body: JSON.stringify({
@@ -13619,7 +13628,8 @@ export default function App() {
                                     <span className="text-[#66fcf1]">@{globalGiftBanner.sender}</span>
                                     <span className="text-gray-100 font-medium"> sent </span>
                                     <span className="text-yellow-200 font-black">{globalGiftBanner.giftName} {globalGiftBanner.giftIcon}</span>
-                                    <span className="text-gray-100 font-medium"> to </span>
+                  <span className="text-amber-200 font-black ml-1">🪙 {Number(globalGiftBanner.totalCost || 0).toLocaleString()}</span>
+<span className="text-gray-100 font-medium"> to </span>
                                     <span className="text-[#ff007f] font-black">@{globalGiftBanner.recipient}</span>
                                   </p>
                                 </div>
@@ -14549,26 +14559,31 @@ export default function App() {
                                           </span>
                                           <button
                                             type="button"
-                                            disabled={isDone}
-                                            onClick={() => {
-                                              // Simulate task completion
-                                              setMissions(prev => prev.map(item => {
-                                                if (item.id === m.id) {
-                                                  return { ...item, current: item.target, status: "Completed" };
+                                            disabled={isDone || !dailyClaimAvailable || dailyClaimBusy}
+                                            onClick={async () => {
+                                              if (!dailyClaimAvailable || dailyClaimBusy) return;
+                                              setDailyClaimBusy(true);
+                                              try {
+                                                const resp = await authenticatedFetch("/api/v1/daily-tasks/claim", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) });
+                                                const data = await resp.json().catch(() => ({}));
+                                                if (!resp.ok) {
+                                                  if (data?.nextClaimAt) { setDailyClaimAvailable(false); setDailyNextClaimAt(data.nextClaimAt); }
+                                                  throw new Error(data?.error || "Daily reward could not be claimed.");
                                                 }
-                                                return item;
-                                              }));
-                                              // Award Coins and XP
-                                              setUser(prev => ({
-                                                ...prev,
-                                                coins: prev.coins + m.coinsReward,
-                                                xp: prev.xp + m.xpReward
-                                              }));
-                                              alert(`🎉 Completed Task!\nClaimed +${m.coinsReward} Gold Coins and +${m.xpReward} XP!`);
+                                                setUser(prev => ({ ...prev, coins: data.remainingCoins, xp: data.xp, userLevel: data.userLevel, vipLevel: data.vipLevel }));
+                                                setMissions(prev => prev.map(item => ({ ...item, current: item.target, status: "Completed" })));
+                                                setDailyClaimAvailable(false);
+                                                setDailyNextClaimAt(data.nextClaimAt || Date.now() + 86400000);
+                                                alert(`🎉 Daily Reward Claimed!\n+${data.rewardCoins.toLocaleString()} Coins\n+${data.rewardXp.toLocaleString()} XP\nNext reward after 24 hours.`);
+                                              } catch (err: any) {
+                                                alert(err?.message || "Daily reward could not be claimed.");
+                                              } finally {
+                                                setDailyClaimBusy(false);
+                                              }
                                             }}
                                             className={`text-[8px] font-black px-2 py-0.5 rounded transition-all ${isDone ? "bg-green-500/10 text-green-500/40 cursor-not-allowed" : "bg-gradient-to-r from-[#ff007f] to-purple-600 text-white hover:opacity-90"}`}
                                           >
-                                            {isDone ? "Completed ✓" : "Claim"}
+                                            {isDone || !dailyClaimAvailable ? "Claimed ✓" : (dailyClaimBusy ? "Saving…" : "Claim Daily")}
                                           </button>
                                         </div>
                                       </div>
@@ -16667,7 +16682,7 @@ export default function App() {
                                         key={g.id}
                                         onClick={() => {
                                           if (user.coins < g.cost) {
-                                            alert("⚠ Insufficient Gold Coins! Go to your profile wallet and tap 'Claim Bonus Coins' to get free virtual coins! 🪙");
+                                            alert("⚠ Insufficient Gold Coins! Use the Coins Wallet to purchase/recharge coins. 🪙");
                                             return;
                                           }
                                           // Deduct coins
@@ -21887,7 +21902,8 @@ export default function App() {
                                         <span className="text-[#66fcf1]">@{globalGiftBanner.sender}</span>
                                         <span className="text-gray-100 font-medium"> sent </span>
                                         <span className="text-yellow-200 font-black">{globalGiftBanner.giftName} {globalGiftBanner.giftIcon}</span>
-                                        <span className="text-gray-100 font-medium"> to </span>
+                  <span className="text-amber-200 font-black ml-1">🪙 {Number(globalGiftBanner.totalCost || 0).toLocaleString()}</span>
+<span className="text-gray-100 font-medium"> to </span>
                                         <span className="text-[#ff007f] font-black">@{globalGiftBanner.recipient}</span>
                                       </p>
                                     </div>
@@ -22020,11 +22036,11 @@ export default function App() {
                           <div className="space-y-4 animate-pop-gift">
                             {/* Earnings overview block */}
                             <div className="bg-gradient-to-br from-[#1a1a2e] to-[#12121e] p-4 rounded-xl border border-purple-500/20 text-center space-y-1.5">
-                              <span className="text-[9px] uppercase tracking-widest text-purple-400 font-bold font-mono">Host Stream Earnings</span>
+                              <span className="text-[9px] uppercase tracking-widest text-purple-400 font-bold font-mono">Creator Center Earnings</span>
                               <div className="flex items-center justify-center space-x-2">
                                 <DollarSign className="w-6 h-6 text-[#66fcf1]" />
                                 <p className="text-2xl font-black text-white font-mono tracking-tight">{(user?.diamonds ?? 0).toLocaleString()}</p>
-                                <span className="text-xs text-gray-400 font-bold">Diamonds</span>
+                                <span className="text-xs text-gray-400 font-bold">Creator Coins</span>
                               </div>
                               <p className="text-xs text-[#25D366] font-mono font-bold">
                                 Estimated Value: ${(((user?.diamonds ?? 0) / 100)).toFixed(2)} USD (~{(((user?.diamonds ?? 0) * 2.8)).toFixed(0)} PKR)
@@ -22043,7 +22059,7 @@ export default function App() {
                                   <span className="text-[8px] bg-green-500/10 text-green-400 px-1.5 py-0.5 rounded font-mono">Instant Support</span>
                                 </div>
                                 <p className="text-[9.5px] text-gray-400 leading-relaxed">
-                                  Cash out diamonds directly to bank accounts, JazzCash, EasyPaisa or digital wallets. (Minimum: 100 Diamonds)
+                                  Cash out Creator Coins directly to bank accounts, JazzCash, EasyPaisa or digital wallets. (Minimum: 100 Creator Coins)
                                 </p>
 
                                 {/* Quick withdraw buttons */}
@@ -22053,7 +22069,7 @@ export default function App() {
                                     id="btn_withdraw_quick_100"
                                     onClick={() => {
                                       handleWithdraw(100);
-                                      setReportSuccessToast("Withdrawal request for 100 Diamonds approved successfully!");
+                                      setReportSuccessToast("Withdrawal request for 100 Creator Coins approved successfully!");
                                       setTimeout(() => setReportSuccessToast(null), 3500);
                                     }}
                                     className="p-2 bg-[#12121a] hover:bg-green-500/15 border border-white/5 hover:border-green-500/30 rounded text-gray-300 hover:text-white transition-all text-left font-mono"
@@ -22066,7 +22082,7 @@ export default function App() {
                                     id="btn_withdraw_quick_1000"
                                     onClick={() => {
                                       handleWithdraw(1000);
-                                      setReportSuccessToast("Withdrawal request for 1000 Diamonds processed safely!");
+                                      setReportSuccessToast("Withdrawal request for 1000 Creator Coins processed safely!");
                                       setTimeout(() => setReportSuccessToast(null), 3500);
                                     }}
                                     className="p-2 bg-[#12121a] hover:bg-green-500/15 border border-white/5 hover:border-green-500/30 rounded text-gray-300 hover:text-white transition-all text-left font-mono"
@@ -22078,12 +22094,12 @@ export default function App() {
 
                                 {/* Custom withdrawal input */}
                                 <div className="space-y-2 pt-1">
-                                  <label className="text-[8px] text-gray-400 uppercase tracking-widest font-mono font-bold block">Or Enter Custom Diamonds Count</label>
+                                  <label className="text-[8px] text-gray-400 uppercase tracking-widest font-mono font-bold block">Or Enter Custom Creator Coins Count</label>
                                   <div className="flex space-x-2">
                                     <input
                                       type="number"
                                       id="input_withdraw_custom_amount"
-                                      placeholder="Minimum 100 Diamonds..."
+                                      placeholder="Minimum 100 Creator Coins..."
                                       value={withdrawAmountInput}
                                       onChange={(e) => setWithdrawAmountInput(e.target.value)}
                                       className="flex-1 bg-[#12121a] border border-[#303040] text-xs text-white rounded px-2.5 py-1.5 focus:outline-none focus:border-green-500"
@@ -22094,7 +22110,7 @@ export default function App() {
                                       onClick={() => {
                                         const amt = parseInt(withdrawAmountInput) || 0;
                                         if (amt < 100) {
-                                          alert("Minimum custom withdrawal is 100 Diamonds!");
+                                          alert("Minimum custom withdrawal is 100 Creator Coins!");
                                           return;
                                         }
                                         if (amt > (user?.diamonds ?? 0)) {
@@ -22103,7 +22119,7 @@ export default function App() {
                                         }
                                         handleWithdraw(amt);
                                         setWithdrawAmountInput("");
-                                        setReportSuccessToast(`Success! Withdrew ${amt} Diamonds safely to your account!`);
+                                        setReportSuccessToast(`Success! Withdrew ${amt} Creator Coins safely to your account!`);
                                         setTimeout(() => setReportSuccessToast(null), 3500);
                                       }}
                                       className="bg-green-500 hover:bg-green-600 text-black font-black uppercase text-[9.5px] px-3.5 py-1.5 rounded transition-all cursor-pointer"
@@ -22129,21 +22145,21 @@ export default function App() {
                                 <div className="flex justify-between items-center border-b border-white/5 pb-1.5">
                                   <h5 className="text-[11px] font-black text-white uppercase tracking-wider font-mono flex items-center">
                                     <span className="text-yellow-400 mr-1.5">🔄</span>
-                                    Option 2: Exchange Diamonds to Coins
+                                    Option 2: Exchange Creator Coins to Gifting Coins
                                   </h5>
                                   <span className="text-[8px] bg-yellow-500/15 text-yellow-400 px-1.5 py-0.5 rounded font-mono font-bold">No Fee</span>
                                 </div>
                                 <p className="text-[9.5px] text-gray-400 leading-relaxed">
-                                  Instantly convert your received Diamonds into Coins. Exchanged coins will transfer directly into your Coins Wallet for stream gifting!
+                                  Instantly convert your received Creator Coins into Gifting Coins. Exchanged coins will transfer directly into your Coins Wallet for stream gifting!
                                 </p>
 
                                 <div className="space-y-2">
-                                  <label className="text-[8px] text-gray-400 uppercase tracking-widest font-mono font-bold block">Enter Diamonds to Convert</label>
+                                  <label className="text-[8px] text-gray-400 uppercase tracking-widest font-mono font-bold block">Enter Creator Coins to Convert</label>
                                   <div className="flex space-x-2">
                                     <input
                                       type="number"
                                       id="input_exchange_dia_amount"
-                                      placeholder="e.g. 500 Diamonds"
+                                      placeholder="e.g. 500 Creator Coins"
                                       value={exchangeAmount}
                                       onChange={(e) => setExchangeAmount(e.target.value)}
                                       className="flex-1 bg-[#12121a] border border-[#303040] text-xs text-white rounded px-2.5 py-1.5 focus:outline-none focus:border-yellow-500"
@@ -22154,16 +22170,16 @@ export default function App() {
                                       onClick={() => {
                                         const amt = parseInt(exchangeAmount) || 0;
                                         if (amt <= 0) {
-                                          alert("Please enter a valid amount of diamonds to exchange!");
+                                          alert("Please enter a valid Creator Coin amount to exchange!");
                                           return;
                                         }
                                         if (amt > (user?.diamonds ?? 0)) {
-                                          alert("Insufficient Diamonds to exchange!");
+                                          alert("Insufficient Creator Coins to exchange!");
                                           return;
                                         }
                                         handleExchange(amt);
                                         setExchangeAmount("");
-                                        setReportSuccessToast(`Mubarak! Exchanged ${amt} Diamonds to ${amt} Coins successfully!`);
+                                        setReportSuccessToast(`Mubarak! Exchanged ${amt} Creator Coins to ${amt} Gifting Coins successfully!`);
                                         setTimeout(() => setReportSuccessToast(null), 3500);
                                       }}
                                       className="bg-yellow-400 hover:bg-yellow-500 text-black font-black uppercase text-[9.5px] px-3.5 py-1.5 rounded transition-all cursor-pointer"
@@ -22173,7 +22189,7 @@ export default function App() {
                                   </div>
                                   {(parseInt(exchangeAmount) || 0) > 0 && (
                                     <p className="text-[8.5px] text-yellow-400 font-mono font-bold animate-pulse">
-                                      ✨ Conversion Rate: {parseInt(exchangeAmount) || 0} Diamonds ➔ {parseInt(exchangeAmount) || 0} Coins!
+                                      ✨ Conversion Rate: {parseInt(exchangeAmount) || 0} Creator Coins ➔ {parseInt(exchangeAmount) || 0} Gifting Coins!
                                     </p>
                                   )}
                                 </div>
@@ -25645,15 +25661,11 @@ export default function App() {
                               </button>
                               <button
                                 type="button"
-                                onClick={() => {
-                                  const updated = { ...user, coins: user.coins + 5000 };
-                                  setUser(updated);
-                                  localStorage.setItem("pardais_user_profile", JSON.stringify(updated));
-                                  alert("Mubarak! 5,000 Gold Coins added to your wallet safely!");
-                                }}
+                                onClick={() => { setClientView("profile"); setShowDailyTasksOverlay(true); setShowSettingsDrawer(false); }}
                                 className="w-full bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-600 hover:to-yellow-600 text-gray-950 font-black text-[9px] uppercase py-2 rounded-xl transition-all shadow-md active:scale-95 flex items-center justify-center space-x-1 cursor-pointer"
                               >
-                                <span>+5,000 Coins</span>
+                                <Target className="w-3.5 h-3.5" />
+                                <span>Daily Reward</span>
                               </button>
                             </div>
                           </div>
@@ -25670,7 +25682,7 @@ export default function App() {
                               </span>
                             </div>
                             <p className="text-[8px] text-gray-400">
-                              Direct access to Pardais official announcements, free coin giveaways, and instant admin support.
+                              Direct access to Pardais official announcements and instant admin support.
                             </p>
                             <div className="space-y-1.5 pt-0.5">
                               <a
@@ -25919,18 +25931,7 @@ export default function App() {
 
                               <div className="flex justify-between items-center py-1 border-t border-[#303040]/30">
                                 <span className="text-gray-300">Coins Wallet Balance</span>
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    const updated = { ...user, coins: user.coins + 5000 };
-                                    setUser(updated);
-                                    localStorage.setItem("pardais_user_profile", JSON.stringify(updated));
-                                    alert("Mubarak! 5,000 Coins added to your wallet safely!");
-                                  }}
-                                  className="bg-yellow-500 hover:bg-yellow-400 text-gray-900 font-bold px-2 py-0.5 rounded text-[8px] uppercase active:scale-95 transition-all"
-                                >
-                                  +5,000 Coins
-                                </button>
+                                <span className="text-[7.5px] text-emerald-400 font-mono font-bold">Daily reward only</span>
                               </div>
                             </div>
                           </div>
@@ -30501,7 +30502,8 @@ export default function App() {
                   <span className="text-[#66fcf1]">@{globalGiftBanner.sender}</span>
                   <span className="text-gray-100 font-medium"> sent </span>
                   <span className="text-yellow-200 font-black">{globalGiftBanner.giftName} {globalGiftBanner.giftIcon}</span>
-                  <span className="text-gray-100 font-medium"> to </span>
+                  <span className="text-amber-200 font-black ml-1">🪙 {Number(globalGiftBanner.totalCost || 0).toLocaleString()}</span>
+<span className="text-gray-100 font-medium"> to </span>
                   <span className="text-[#ff007f] font-black">@{globalGiftBanner.recipient}</span>
                 </p>
               </div>
@@ -31257,9 +31259,10 @@ export default function App() {
                                 })
                               });
                               if (res.ok) {
+                                const paymentData = await res.json().catch(() => ({}));
                                 setUser(prev => ({
                                   ...prev,
-                                  coins: prev.coins + (currentPkg?.coins || 10000)
+                                  coins: typeof paymentData.newCoinBalance === 'number' ? paymentData.newCoinBalance : prev.coins
                                 }));
                                 alert('Card Payment Approved!');
                                 setShowCardPaymentModal(false);

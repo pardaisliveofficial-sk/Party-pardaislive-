@@ -106,7 +106,8 @@ export const COLLECTIONS = [
   "coinTransactions",
   "approvalStatus",
   "adminActions",
-  "coinSellers"
+  "coinSellers",
+  "withdrawals"
 ];
 
 // Memory Cache synced with Firestore

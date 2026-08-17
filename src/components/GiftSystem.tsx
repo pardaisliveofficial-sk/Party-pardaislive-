@@ -665,7 +665,7 @@ export const ViewerGiftBox: React.FC<ViewerGiftBoxProps> = ({
 
     // VALIDATION against REAL user wallet coin balance
     if (userCoinBalance < totalCost) {
-      alert(`❌ Insufficient Coins!\n\nGift: ${selectedGift.name} (${selectedGift.cost} Coins)\nQuantity: x${currentComboQty}${sendToAll ? " per occupant" : ""}\nOccupants: ${sendToAll ? `${activeOccupants.length} occupants` : "1 person"}\nTotal Required: ${totalCost.toLocaleString()} Coins\nAvailable Wallet Balance: ${userCoinBalance.toLocaleString()} Coins\n\nPlease recharge in the Wallet module! 💎`);
+      alert(`❌ Insufficient Coins!\n\nGift: ${selectedGift.name} (${selectedGift.cost} Coins)\nQuantity: x${currentComboQty}${sendToAll ? " per occupant" : ""}\nOccupants: ${sendToAll ? `${activeOccupants.length} occupants` : "1 person"}\nTotal Required: ${totalCost.toLocaleString()} Coins\nAvailable Wallet Balance: ${userCoinBalance.toLocaleString()} Coins\n\nPlease recharge through the Coins Wallet. 💎`);
       return;
     }
 
@@ -1782,7 +1782,7 @@ export const GiftHistoryModal: React.FC<GiftHistoryModalProps> = ({ onClose, use
                     </div>
                   </div>
                   <div className="text-right">
-                    <p className="text-[9px] text-green-400 font-bold font-mono">+{Math.floor(item.amount * 0.1)} Diamonds</p>
+                    <p className="text-[9px] text-green-400 font-bold font-mono">+{Math.floor(item.amount * 0.5)} Creator Coins</p>
                     <p className="text-[7px] text-gray-400">from @{item.sender}</p>
                   </div>
                 </div>
@@ -1800,15 +1800,15 @@ export const GiftHistoryModal: React.FC<GiftHistoryModalProps> = ({ onClose, use
                 </div>
                 <div className="flex items-baseline space-x-1.5">
                   <span className="text-lg font-black text-cyan-400 font-mono">{user.diamonds}</span>
-                  <span className="text-[8px] text-cyan-300 font-black">DIAMONDS</span>
+                  <span className="text-[8px] text-cyan-300 font-black">CREATOR COINS</span>
                 </div>
               </div>
 
               <p className="text-[7.5px] text-gray-500 uppercase font-black border-b border-white/5 pb-1">Ledger Notes</p>
               <div className="space-y-1 text-[7.5px] text-gray-400 leading-relaxed font-semibold">
                 <p>• Coins are used to purchase gifts for hosts & guest seat members.</p>
-                <p>• Diamonds represent stream contribution value accumulated from receiving gifts.</p>
-                <p>• Diamonds can be withdrawn to JazzCash/EasyPaisa via the Agency Panel.</p>
+                <p>• Creator Coins represent 50% of the full gift value received from gifting.</p>
+                <p>• Creator Coins can be withdrawn or exchanged from the Creator Center.</p>
               </div>
             </div>
           )}

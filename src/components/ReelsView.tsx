@@ -1012,7 +1012,7 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
                 key={g.id}
                 onClick={() => {
                   if (user.coins < g.cost) {
-                    alert("⚠ Insufficient Gold Coins! Go to your profile wallet and tap 'Claim Bonus Coins' to get free virtual coins! 🪙");
+                    alert("⚠ Insufficient Gold Coins! Use the Coins Wallet to purchase/recharge coins. 🪙");
                     return;
                   }
                   setUser(prev => {

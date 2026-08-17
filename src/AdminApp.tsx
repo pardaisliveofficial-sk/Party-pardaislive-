@@ -3826,7 +3826,7 @@ export default function AdminApp() {
                     </div>
 
                     <p className="text-[9.5px] text-gray-400 leading-normal">
-                      Pardais Party ke sabhi viewers aur users is Official Channel Link par tap karke instant announcements, free coin giveaways, aur tournament updates join karte hain.
+                      Pardais Party ke sabhi viewers aur users is Official Channel Link par tap karke instant announcements aur tournament updates join karte hain.
                     </p>
 
                     <div className="space-y-2">
