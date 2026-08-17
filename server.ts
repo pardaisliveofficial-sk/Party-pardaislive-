@@ -4771,13 +4771,20 @@ app.post("/api/v1/pk/end", (req, res) => {
   res.json({ success: true, message: "1v1/PK session ended successfully" });
 });
 
-// Party Hub & 12-Seat Audio Party endpoints
+// Party Hub endpoints (12 or 25-seat Audio Party)
+const sanitizePartyForClient = (party: any) => {
+  if (!party) return party;
+  const safe = { ...party };
+  delete safe.password;
+  return safe;
+};
+
 app.get("/api/v1/parties", (req, res) => {
   if (!Array.isArray(dbData.parties)) {
     dbData.parties = [];
   }
   const activeParties = dbData.parties.filter((p: any) => p && p.status !== "ended");
-  res.json(activeParties);
+  res.json(activeParties.map(sanitizePartyForClient));
 });
 
 app.get("/api/v1/parties/:id", (req, res) => {
@@ -4787,19 +4794,23 @@ app.get("/api/v1/parties/:id", (req, res) => {
   }
   const party = dbData.parties.find((p: any) => p && p.id === id);
   if (party) {
-    return res.json(party);
+    return res.json(sanitizePartyForClient(party));
   }
   return res.status(404).json({ error: "Party Room not found" });
 });
 
 app.post("/api/v1/parties", (req, res) => {
-  const { title, hostUsername, hostAvatar, hostVipLevel, category, isPublic, password, language, description } = req.body;
+  const { title, hostUsername, hostAvatar, hostVipLevel, category, seatCount, isPublic, password, language, description } = req.body;
   
   if (!dbData.parties) {
     dbData.parties = [];
   }
 
   const validHost = hostUsername || "Host";
+  const resolvedSeatCount = Number(seatCount) === 25 ? 25 : 12;
+  if (isPublic === false && !String(password || "").trim()) {
+    return res.status(400).json({ error: "Private rooms require a password." });
+  }
 
   // Check if an active party already exists for this host
   const existingIdx = dbData.parties.findIndex((p: any) => p && p.hostUsername === validHost && p.status !== "ended");
@@ -4813,30 +4824,25 @@ app.post("/api/v1/parties", (req, res) => {
     vipLevel: Number(hostVipLevel || 0),
     category: category || "Music",
     participantCount: 1,
-    maxCapacity: 12,
+    maxCapacity: resolvedSeatCount,
+    seatCount: resolvedSeatCount,
     isPublic: isPublic !== false,
     password: password || "",
     language: language || "English",
-    description: description || "Welcome to our 12-seat audio lounge!",
+    description: description || `Welcome to our ${resolvedSeatCount}-seat audio lounge!`,
     status: "active",
     allGuestsMuted: existingIdx !== -1 ? Boolean(dbData.parties[existingIdx].allGuestsMuted) : false,
     moderators: existingIdx !== -1 && Array.isArray(dbData.parties[existingIdx].moderators) ? dbData.parties[existingIdx].moderators : [],
     createdAt: existingIdx !== -1 ? (dbData.parties[existingIdx].createdAt || Date.now()) : Date.now(),
     connectedViewers: [{ userId: validHost, username: validHost, avatar: hostAvatar || "", level: 1, vipLevel: Number(hostVipLevel || 0) }],
-    seats: (existingIdx !== -1 && dbData.parties[existingIdx].seats) ? dbData.parties[existingIdx].seats : [
-      { id: 1, name: validHost, avatar: hostAvatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80", vipLevel: Number(hostVipLevel || 0), isMuted: false, isLocked: false },
-      { id: 2, name: null, avatar: null, isMuted: false, isLocked: false },
-      { id: 3, name: null, avatar: null, isMuted: false, isLocked: false },
-      { id: 4, name: null, avatar: null, isMuted: false, isLocked: false },
-      { id: 5, name: null, avatar: null, isMuted: false, isLocked: false },
-      { id: 6, name: null, avatar: null, isMuted: false, isLocked: false },
-      { id: 7, name: null, avatar: null, isMuted: false, isLocked: false },
-      { id: 8, name: null, avatar: null, isMuted: false, isLocked: false },
-      { id: 9, name: null, avatar: null, isMuted: false, isLocked: false },
-      { id: 10, name: null, avatar: null, isMuted: false, isLocked: false },
-      { id: 11, name: null, avatar: null, isMuted: false, isLocked: false },
-      { id: 12, name: null, avatar: null, isMuted: false, isLocked: false }
-    ],
+    seats: Array.from({ length: resolvedSeatCount }, (_, index) => ({
+      id: index + 1,
+      name: index === 0 ? validHost : null,
+      avatar: index === 0 ? (hostAvatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80") : null,
+      vipLevel: index === 0 ? Number(hostVipLevel || 0) : 0,
+      isMuted: false,
+      isLocked: false
+    })),
     comments: [
       {
         id: `sys-${Date.now()}`,
@@ -4859,22 +4865,39 @@ app.post("/api/v1/parties", (req, res) => {
     saveDatabase();
     syncDocument("parties", id, dbData.parties[existingIdx]);
     console.log(`[PARDAIS-PARTY PARTY] Updated existing party room: ${id} by @${validHost}`);
-    return res.status(200).json(dbData.parties[existingIdx]);
+    return res.status(200).json(sanitizePartyForClient(dbData.parties[existingIdx]));
   } else {
     dbData.parties.push(newParty);
     saveDatabase();
     syncDocument("parties", id, newParty);
     console.log(`[PARDAIS-PARTY PARTY] Created new party room: ${id} by @${validHost}`);
-    return res.status(201).json(newParty);
+    return res.status(201).json(sanitizePartyForClient(newParty));
   }
 });
 
 app.post("/api/v1/parties/:id/join", (req, res) => {
   const { id } = req.params;
-  const { username, avatar, userLevel, vipLevel } = req.body;
+  const { username, avatar, userLevel, vipLevel, password } = req.body;
   const index = dbData.parties?.findIndex((p: any) => p.id === id);
   if (index !== -1 && index !== undefined) {
     const party = dbData.parties[index];
+
+    // Enforce private-room access on the backend. The password is never returned in room listings.
+    if (party.isPublic === false) {
+      if (!party.password) {
+        return res.status(403).json({
+          code: "PRIVATE_ROOM_PASSWORD_REQUIRED",
+          error: "This private room requires a password."
+        });
+      }
+      if (String(password || "") !== String(party.password)) {
+        return res.status(403).json({
+          code: "PRIVATE_ROOM_PASSWORD_REQUIRED",
+          error: "Incorrect private room password."
+        });
+      }
+    }
+
     if (!party.connectedViewers) {
       party.connectedViewers = [];
     }
@@ -4890,7 +4913,7 @@ app.post("/api/v1/parties/:id/join", (req, res) => {
     };
     saveDatabase();
     syncDocument("parties", id, party);
-    res.json(party);
+    res.json(sanitizePartyForClient(party));
   } else {
     res.status(404).json({ error: "Party Room not found" });
   }

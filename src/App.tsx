@@ -2397,6 +2397,7 @@ export default function App() {
   const [partyFormCategory, setPartyFormCategory] = useState<string>("Music");
   const [partyFormIsPublic, setPartyFormIsPublic] = useState<boolean>(true);
   const [partyFormPassword, setPartyFormPassword] = useState<string>("");
+  const [partyFormSeatCount, setPartyFormSeatCount] = useState<12 | 25>(12);
   const [partyFormLanguage, setPartyFormLanguage] = useState<string>("Urdu");
   const [partyFormDescription, setPartyFormDescription] = useState<string>("");
 
@@ -8002,9 +8003,23 @@ export default function App() {
     if (!requireAuth("create audio party rooms")) return;
     const finalRoomTitle = partyFormName.trim() || `${user.fullName || user.username || "Pardais"}'s Audio Lounge 🎙️`;
     const validHost = user.username || "Host";
+    if (!partyFormIsPublic && !partyFormPassword.trim()) {
+      alert("🔒 Please set a password for the Private Room.");
+      return;
+    }
     const tempId = `party-${Date.now()}`;
 
-    // Construct optimistic 12-seat Party Room object
+    // Construct optimistic Party Room object (12 or 25 seats)
+    const seatCapacity = partyFormSeatCount === 25 ? 25 : 12;
+    const createEmptySeats = (count: number) => Array.from({ length: count }, (_, index) => ({
+      id: index + 1,
+      name: index === 0 ? validHost : null,
+      avatar: index === 0 ? (user.avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80") : null,
+      vipLevel: index === 0 ? (user.vipLevel || 0) : 0,
+      isMuted: false,
+      isLocked: false
+    }));
+
     const optimisticParty: any = {
       id: tempId,
       title: finalRoomTitle,
@@ -8012,28 +8027,16 @@ export default function App() {
       hostAvatar: user.avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80",
       category: partyFormCategory || "Music",
       participantCount: 1,
-      maxCapacity: 12,
+      maxCapacity: seatCapacity,
+      seatCount: seatCapacity,
       isPublic: partyFormIsPublic,
       password: partyFormPassword || "",
       language: partyFormLanguage || "Urdu",
-      description: partyFormDescription || "Welcome to our 12-seat audio party lounge!",
+      description: partyFormDescription || `Welcome to our ${seatCapacity}-seat audio party lounge!`,
       status: "active",
       createdAt: Date.now(),
       connectedViewers: [{ userId: validHost, username: validHost, avatar: user.avatar || "", level: user.userLevel || user.level || 1, vipLevel: user.vipLevel || 0 }],
-      seats: [
-        { id: 1, name: validHost, avatar: user.avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80", vipLevel: user.vipLevel || 0, isMuted: false, isLocked: false },
-        { id: 2, name: null, avatar: null, isMuted: false, isLocked: false },
-        { id: 3, name: null, avatar: null, isMuted: false, isLocked: false },
-        { id: 4, name: null, avatar: null, isMuted: false, isLocked: false },
-        { id: 5, name: null, avatar: null, isMuted: false, isLocked: false },
-        { id: 6, name: null, avatar: null, isMuted: false, isLocked: false },
-        { id: 7, name: null, avatar: null, isMuted: false, isLocked: false },
-        { id: 8, name: null, avatar: null, isMuted: false, isLocked: false },
-        { id: 9, name: null, avatar: null, isMuted: false, isLocked: false },
-        { id: 10, name: null, avatar: null, isMuted: false, isLocked: false },
-        { id: 11, name: null, avatar: null, isMuted: false, isLocked: false },
-        { id: 12, name: null, avatar: null, isMuted: false, isLocked: false }
-      ],
+      seats: createEmptySeats(seatCapacity),
       comments: [
         {
           id: `sys-${Date.now()}`,
@@ -8068,7 +8071,7 @@ export default function App() {
           isPublic: partyFormIsPublic,
           password: partyFormPassword,
           language: partyFormLanguage || "Urdu",
-          description: partyFormDescription || "Welcome to our 12-seat audio party lounge!"
+          description: partyFormDescription || `Welcome to our ${seatCapacity}-seat audio party lounge!`
         })
       });
 
@@ -8097,37 +8100,57 @@ export default function App() {
     try {
       const userLvl = user.userLevel || user.level || 1;
       const vipLvl = user.vipLevel || 0;
+      const knownParty = partiesList.find((p: any) => p.id === partyId);
+      let roomPassword = "";
+
+      if (knownParty && knownParty.isPublic === false) {
+        roomPassword = window.prompt("🔒 This is a Private Room. Enter the room password:") || "";
+        if (!roomPassword) return;
+      }
+
       triggerJoinNotif(user.username, userLvl, vipLvl);
 
-      // Immediately set active party ID and navigate to party room
-      setActivePartyId(partyId);
-      setClientView("party-room");
-
-      const response = await authenticatedFetch(`/api/v1/parties/${partyId}/join`, {
+      const joinRoom = async (password: string) => authenticatedFetch(`/api/v1/parties/${partyId}/join`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ 
-          username: user.username, 
+        body: JSON.stringify({
+          username: user.username,
           avatar: user.avatar,
           userLevel: userLvl,
-          vipLevel: vipLvl
+          vipLevel: vipLvl,
+          password
         })
       });
 
-      if (response.ok) {
-        const data = await response.json();
-        if (data && !data.error) {
-          setPartiesList(prev => {
-            const exists = prev.some(p => p.id === partyId);
-            if (exists) {
-              return prev.map(p => p.id === partyId ? data : p);
-            }
-            return [...prev, data];
-          });
+      let response = await joinRoom(roomPassword);
+
+      if (response.status === 403) {
+        const errorData = await response.json().catch(() => ({}));
+        if (errorData?.code === "PRIVATE_ROOM_PASSWORD_REQUIRED") {
+          const retryPassword = window.prompt("🔒 Private Room password:") || "";
+          if (!retryPassword) return;
+          response = await joinRoom(retryPassword);
         }
+      }
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        alert(errorData?.error || "Unable to join this party room.");
+        return;
+      }
+
+      const data = await response.json();
+      if (data && !data.error) {
+        setActivePartyId(partyId);
+        setClientView("party-room");
+        setPartiesList(prev => {
+          const exists = prev.some(p => p.id === partyId);
+          return exists ? prev.map(p => p.id === partyId ? data : p) : [...prev, data];
+        });
       }
     } catch (e) {
       console.warn("Error joining party:", e);
+      alert("Unable to join the party room. Please try again.");
     }
   };
 
@@ -8788,7 +8811,7 @@ export default function App() {
                                 </div>
                                 <div className="bg-transparent text-left">
                                   <h4 className="text-[11px] font-black text-white uppercase tracking-wider drop-shadow-md leading-tight">{banner.title}</h4>
-                                  <p className="text-[8.5px] text-pink-100 font-sans mt-0.5">Participate & win big coin drops in active 12-seat room audio leagues!</p>
+                                  <p className="text-[8.5px] text-pink-100 font-sans mt-0.5">Participate & win big coin drops in active 12/25-seat room audio leagues!</p>
                                 </div>
                               </div>
                               {/* Left / Right slider controls */}
@@ -8832,7 +8855,7 @@ export default function App() {
                             <span className="text-sm bg-transparent">🎙️</span>
                             <div className="bg-transparent">
                               <p className="text-[10px] font-black uppercase text-white tracking-wider bg-transparent">Create Room</p>
-                              <p className="text-[7.5px] text-gray-400 bg-transparent font-sans">12-seat party</p>
+                              <p className="text-[7.5px] text-gray-400 bg-transparent font-sans">12 / 25-seat party</p>
                             </div>
                           </button>
 
@@ -8935,7 +8958,7 @@ export default function App() {
                                 <div className="space-y-1.5 bg-transparent">
                                   <p className="text-xs font-black text-white uppercase tracking-wider bg-transparent">No Active Party Rooms</p>
                                   <p className="text-[9px] text-gray-400 leading-relaxed max-w-[240px] mx-auto font-sans bg-transparent">
-                                    Is category mein koi active audio session nahi mila. Apna custom 12-seat room start karein!
+                                    Is category mein koi active audio session nahi mila. Apna custom 12/25-seat room start karein!
                                   </p>
                                 </div>
                                 <div className="pt-2 flex justify-center bg-transparent">
@@ -8966,9 +8989,14 @@ export default function App() {
                                       <span className="text-[7.5px] bg-pink-500/20 border border-pink-500/30 text-pink-400 font-extrabold px-1.5 py-0.5 rounded-md uppercase tracking-wider">
                                         {party.category}
                                       </span>
+                                      {!party.isPublic && (
+                                        <span className="text-[7.5px] bg-red-500/20 border border-red-400/40 text-red-300 font-extrabold px-1.5 py-0.5 rounded-md uppercase tracking-wider">
+                                          🔒 Private
+                                        </span>
+                                      )}
                                       <div className="flex items-center space-x-0.5 text-white text-[7.5px] font-bold bg-black/40 px-1 py-0.5 rounded">
                                         <Users className="w-2 h-2 text-pink-400" />
-                                        <span>{occupiedSeats}/12 Seats</span>
+                                        <span>{occupiedSeats}/{Number(party.maxCapacity || party.seatCount || 12)} Seats</span>
                                       </div>
                                     </div>
 
@@ -10144,13 +10172,14 @@ export default function App() {
 
                             {/* 🎙️ 12-SEAT LOUNGE AUDIOGRID AREA (3 COLUMNS x 4 ROWS = 12 HEXAGON SEATS) */}
                             <div className="px-3 py-2 space-y-2 bg-transparent">
-                              <div className="grid grid-cols-3 gap-x-2.5 gap-y-3 bg-black/50 backdrop-blur-md border border-amber-500/30 rounded-2xl p-2.5 sm:p-3 shadow-[0_0_30px_rgba(0,0,0,0.9)] relative overflow-hidden">
+                              <div className={`grid ${Number(party.maxCapacity || party.seatCount || 12) === 25 ? "grid-cols-5 gap-x-1.5 gap-y-2" : "grid-cols-3 gap-x-2.5 gap-y-3"} bg-black/50 backdrop-blur-md border border-amber-500/30 rounded-2xl p-2 shadow-[0_0_30px_rgba(0,0,0,0.9)] relative overflow-hidden`}>
                                 {/* Ambient decorative highlights inside grid */}
                                 <div className="absolute -top-16 -left-16 w-36 h-36 rounded-full bg-amber-500/15 blur-3xl pointer-events-none" />
                                 <div className="absolute -bottom-16 -right-16 w-36 h-36 rounded-full bg-yellow-500/15 blur-3xl pointer-events-none" />
 
                                 {(() => {
-                                  const fullSeats = Array.from({ length: 12 }, (_, i) => {
+                                  const seatCount = Number(party.maxCapacity || party.seatCount || 12) === 25 ? 25 : 12;
+                                   const fullSeats = Array.from({ length: seatCount }, (_, i) => {
                                     const sId = i + 1;
                                     const found = party.seats?.find((s: any) => s.id === sId);
                                     return found || { id: sId, name: null, avatar: null, vipLevel: 0, isMuted: false };
@@ -10178,7 +10207,9 @@ export default function App() {
                                         <div 
                                           onClick={() => handleSeatClick(seat.id, seat.name)}
                                           className={`relative cursor-pointer transition-all duration-300 hover:scale-108 active:scale-95 flex items-center justify-center ${
-                                            isHostSeat ? "w-16 h-16" : "w-13.5 h-13.5"
+                                            Number(party.maxCapacity || party.seatCount || 12) === 25
+                                               ? (isHostSeat ? "w-13 h-13" : "w-11 h-11")
+                                               : (isHostSeat ? "w-16 h-16" : "w-13.5 h-13.5")
                                           }`}
                                         >
                                           {/* Animated Golden Glow behind Hexagon */}
@@ -10215,7 +10246,7 @@ export default function App() {
                                               <div className="absolute inset-0 bg-gradient-to-br from-amber-300/15 via-transparent to-purple-900/20 pointer-events-none" />
 
                                               {isOccupied ? (
-                                                <VipAnimatedFrame vipLevel={Number(seat.vipLevel || 0)} showLevelBadge={false} frameScale={145} className="w-full h-full">
+                                                <VipAnimatedFrame vipLevel={Number(seat.vipLevel || 0)} showLevelBadge={false} frameScale={Number(party.maxCapacity || party.seatCount || 12) === 25 ? 120 : 145} className="w-full h-full">
                                                   <img 
                                                     src={seat.avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80"} 
                                                     className="w-full h-full object-cover cursor-pointer hover:scale-110 transition-transform" 
@@ -10409,7 +10440,7 @@ export default function App() {
                                   </button>
                                 </div>
                                 <p className="text-[8px] text-amber-100/90 leading-relaxed font-sans pr-4">
-                                  Welcome to Pardais Party Audio Lounge! Enjoy 12-seat real-time voice chat, send premium visual gifts, play Lucky Wheel games, and vibe together. Keep Pardais guidelines intact!
+                                  Welcome to Pardais Party Audio Lounge! Enjoy {Number(party.maxCapacity || party.seatCount || 12)}-seat real-time voice chat, send premium visual gifts, play Lucky Wheel games, and vibe together. Keep Pardais guidelines intact!
                                 </p>
                               </div>
                             )}
@@ -30467,11 +30498,32 @@ export default function App() {
               <span className="text-xl">🎙️</span>
               <div className="bg-transparent">
                 <h3 className="text-xs font-black text-white uppercase tracking-wider font-mono">Create Your Audio Lounge</h3>
-                <p className="text-[8.5px] text-pink-400 font-mono uppercase tracking-widest">Start a 12-seat Party Room</p>
+                <p className="text-[8.5px] text-pink-400 font-mono uppercase tracking-widest">Start a 12 or 25-seat Party Room</p>
               </div>
             </div>
 
             <div className="mt-4 space-y-4 bg-transparent">
+              {/* Seat capacity */}
+              <div className="space-y-2 bg-transparent">
+                <label className="text-[8.5px] font-black uppercase text-gray-300 font-mono">Party Seat Capacity</label>
+                <div className="grid grid-cols-2 gap-2">
+                  {[12, 25].map((count) => (
+                    <button
+                      key={count}
+                      type="button"
+                      onClick={() => setPartyFormSeatCount(count as 12 | 25)}
+                      className={`py-2.5 rounded-xl border text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer ${
+                        partyFormSeatCount === count
+                          ? "bg-gradient-to-r from-pink-500 to-purple-600 text-white border-pink-400 shadow-lg"
+                          : "bg-[#221a36] text-gray-400 border-white/10 hover:border-pink-400/40"
+                      }`}
+                    >
+                      {count === 12 ? "🎙️ 12 Seats" : "🎙️ 25 Seats"}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               {/* Room name */}
               <div className="space-y-1 bg-transparent">
                 <label className="text-[8.5px] font-black uppercase text-gray-300 font-mono">Room Name (Title) *</label>
