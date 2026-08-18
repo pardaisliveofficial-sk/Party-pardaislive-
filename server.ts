@@ -86,35 +86,10 @@ async function loadDatabase() {
     // This prevents an old/empty local backup from overwriting freshly
     // loaded Firestore reels during the startup race.
     if (fs.existsSync(DB_PATH)) {
-      try {
-        const raw = fs.readFileSync(DB_PATH, "utf-8");
-        if (raw && raw.trim().length > 0) {
-          const local = JSON.parse(raw);
-          if (local && typeof local === "object") {
-            Object.assign(dbDataCache, local);
-            console.log("[PARDAIS-PARTY FIREBASE] Pre-populated in-memory cache with local database backup.");
-          }
-        }
-      } catch (jsonErr) {
-        console.warn("[PARDAIS-PARTY FIREBASE] Local database file was empty or invalid JSON. Loading fallback template...");
-      }
-    }
-
-    // If cache is empty or missing vital keys, load from fallback template
-    if (!dbDataCache.users || Object.keys(dbDataCache).length === 0) {
-      const fallbackPath = path.join(process.cwd(), "sehr_live_db.json");
-      if (fs.existsSync(fallbackPath)) {
-        try {
-          const fallbackRaw = fs.readFileSync(fallbackPath, "utf-8");
-          if (fallbackRaw && fallbackRaw.trim()) {
-            const fallbackData = JSON.parse(fallbackRaw);
-            Object.assign(dbDataCache, fallbackData);
-            console.log("[PARDAIS-PARTY FIREBASE] Loaded fallback database template successfully.");
-          }
-        } catch (fbErr) {
-          console.warn("[PARDAIS-PARTY FIREBASE] Failed to load fallback database template:", fbErr);
-        }
-      }
+      const raw = fs.readFileSync(DB_PATH, "utf-8");
+      const local = JSON.parse(raw);
+      Object.assign(dbDataCache, local);
+      console.log("[PARDAIS-PARTY FIREBASE] Pre-populated in-memory cache with local database backup.");
     }
 
     // Collapse legacy duplicate user mirrors immediately. This keeps refresh/restart
@@ -1154,14 +1129,47 @@ app.post("/api/v1/auth/google-login", async (req, res) => {
 });
 
 function isCompletedEmailAccount(user: any): boolean {
-  if (!user || typeof user.email !== "string" || !user.email.trim()) return false;
-  // IMPORTANT: a password hash by itself does NOT prove that registration
-  // completed. An interrupted signup can leave a password behind before the
-  // profile/account-completion step finishes. Only an explicit registered
-  // status or registrationCompletedAt makes the email a permanently
-  // registered account.
-  return String(user.accountStatus || "").toLowerCase() === "registered"
-    || Boolean(user.registrationCompletedAt);
+  if (!user) return false;
+  const status = String(user.accountStatus || "").toLowerCase();
+  return status === "registered" || status === "active" || Boolean(user.registrationCompletedAt) || Boolean(user.passwordHash);
+}
+
+async function findUserByIdentifierDurably(identifier: string, timeoutMs = 1800): Promise<any | null> {
+  const normalized = String(identifier || "").toLowerCase().trim().replace(/^@/, "");
+  if (!normalized) return null;
+
+  // 1. Check local in-memory users cache first
+  const isEmail = normalized.includes("@");
+  let localUser = (dbData.users || []).find((u: any) => {
+    if (!u) return false;
+    if (isEmail && typeof u.email === "string" && u.email.toLowerCase().trim() === normalized) return true;
+    if (typeof u.username === "string" && u.username.toLowerCase().trim().replace(/^@/, "") === normalized) return true;
+    if (typeof u.uniqueId === "string" && u.uniqueId.toLowerCase().trim() === normalized) return true;
+    return false;
+  });
+
+  if (localUser) return localUser;
+
+  // 2. Search durable Firestore storage
+  try {
+    if (isEmail) {
+      const persisted = await Promise.race([
+        getPersistedUserForEmail(normalized),
+        new Promise<any | null>((resolve) => setTimeout(() => resolve(null), timeoutMs))
+      ]);
+      if (persisted) {
+        if (!dbData.users.some((u: any) => u && (u.uid === persisted.uid || (u.email && u.email.toLowerCase() === persisted.email.toLowerCase())))) {
+          dbData.users.push(persisted);
+          saveDatabase();
+        }
+        return persisted;
+      }
+    }
+  } catch (err) {
+    console.warn("[PARDAIS AUTH] Durable lookup note:", err);
+  }
+
+  return null;
 }
 
 function getLocalCompletedEmailUser(email: string) {
@@ -1257,7 +1265,7 @@ app.post("/api/v1/auth/email-status", async (req, res) => {
 // 2. Dispatch Email Verification OTP Code
 // Email delivery uses the Resend HTTPS API instead of SMTP. This avoids
 // Railway's outbound SMTP port restrictions and keeps the OTP logic unchanged.
-async function sendPardaisPartyOtpEmail(to: string, otp: string, purpose: "signup" | "password-reset" | "account-deletion" | "account-restore" = "signup"): Promise<{ delivered: boolean; simulated?: boolean; message?: string }> {
+async function sendPardaisPartyOtpEmail(to: string, otp: string, purpose: "signup" | "password-reset" | "account-deletion" | "account-restore" = "signup"): Promise<void> {
   const resendApiKey = process.env.RESEND_API_KEY?.trim();
   // IMPORTANT: never hard-code an unverified sender. Resend only delivers
   // production mail when the From address belongs to a verified domain.
@@ -1268,15 +1276,14 @@ async function sendPardaisPartyOtpEmail(to: string, otp: string, purpose: "signu
   const fromName = (process.env.RESEND_FROM_NAME || "Pardais Party").trim();
   const replyTo = process.env.RESEND_REPLY_TO?.trim();
 
-  console.log(`[PARDAIS PARTY EMAIL OTP] 📬 Generated code for ${to}: ${otp} (purpose: ${purpose})`);
+  console.log(`[PARDAIS PARTY EMAIL] Resend sender: ${fromName} <${fromEmail}>`);
 
   if (!resendApiKey) {
-    console.log(`[PARDAIS PARTY EMAIL] RESEND_API_KEY is not set. Instant verification code for ${to} is: ${otp}`);
-    return { delivered: false, simulated: true, message: `Verification code: ${otp}` };
+    console.warn(`[PARDAIS PARTY EMAIL] RESEND_API_KEY not configured. OTP generated for ${to}: [${otp}]`);
+    return;
   }
   if (!fromEmail.includes("@")) {
-    console.warn("[PARDAIS PARTY EMAIL] RESEND_FROM_EMAIL is invalid. Using code fallback.");
-    return { delivered: false, simulated: true };
+    throw new Error("RESEND_FROM_EMAIL is invalid.");
   }
 
   const html = `<div style="font-family: Arial, sans-serif; padding: 20px; background: #0f0f18; color: #ffffff; border-radius: 12px;">
@@ -1297,7 +1304,7 @@ async function sendPardaisPartyOtpEmail(to: string, otp: string, purpose: "signu
   </div>`;
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 4000);
+  const timeout = setTimeout(() => controller.abort(), 15000);
 
   try {
     const response = await fetch("https://api.resend.com/emails", {
@@ -1332,15 +1339,10 @@ async function sendPardaisPartyOtpEmail(to: string, otp: string, purpose: "signu
 
     if (!response.ok) {
       const resendMessage = body?.message || body?.error || body?.name || `HTTP ${response.status}`;
-      console.warn(`[PARDAIS PARTY EMAIL] Resend error ${response.status}: ${resendMessage}. Retaining code ${otp}`);
-      return { delivered: false, simulated: true };
+      throw new Error(`Resend API error ${response.status}: ${resendMessage}`);
     }
 
     console.log(`[PARDAIS PARTY EMAIL] Resend accepted OTP email for ${to} (id: ${body?.id || "unknown"})`);
-    return { delivered: true };
-  } catch (err: any) {
-    console.warn(`[PARDAIS PARTY EMAIL] Delivery timed out or network error: ${err?.message || err}. Retaining code ${otp}`);
-    return { delivered: false, simulated: true };
   } finally {
     clearTimeout(timeout);
   }
@@ -1375,7 +1377,7 @@ app.post("/api/v1/auth/send-email-otp", async (req, res) => {
   // If the durable registry has this email on another server/device, check it
   // with a short bounded lookup. A genuinely new email should never wait for
   // Firestore before the OTP flow can start.
-  const durableExistingAccount = await findCompletedEmailUserDurably(cleanEmail, 300);
+  const durableExistingAccount = await findCompletedEmailUserDurably(cleanEmail, 500);
   if (durableExistingAccount) {
     return res.status(409).json({
       success: false,
@@ -1404,24 +1406,23 @@ app.post("/api/v1/auth/send-email-otp", async (req, res) => {
   console.log(`[PARDAIS PARTY EMAIL OTP GATEWAY] Generated and durably stored OTP for ${cleanEmail}`);
 
   try {
-    const sendResult = await sendPardaisPartyOtpEmail(cleanEmail, otp);
+    await sendPardaisPartyOtpEmail(cleanEmail, otp);
     return res.json({
       success: true,
-      message: sendResult.delivered
-        ? `Verification OTP code sent to ${cleanEmail}. Check your email inbox.`
-        : `Verification code generated for ${cleanEmail}.`,
-      otp,
-      debugOtp: otp,
-      simulated: sendResult.simulated || false
+      message: `Verification OTP code sent to ${cleanEmail}. Check your email inbox.`
     });
   } catch (emailErr) {
-    console.warn("[PARDAIS PARTY EMAIL] Email handler notice:", emailErr);
-    return res.json({
-      success: true,
-      message: `Verification code generated for ${cleanEmail}.`,
-      otp,
-      debugOtp: otp,
-      simulated: true
+    // Delivery failed: release the cooldown and invalidate the hot challenge so
+    // the user can retry immediately instead of being locked out for 60 seconds.
+    otpSendLocks.delete(cleanEmail);
+    delete dbData.emailOtps[cleanEmail];
+    void deletePersistedAuthChallenge(challengeKey).catch(() => undefined);
+    saveDatabase();
+    console.error("[PARDAIS PARTY EMAIL] Resend delivery failed:", emailErr instanceof Error ? emailErr.message : emailErr);
+    return res.status(502).json({
+      success: false,
+      code: "OTP_DELIVERY_FAILED",
+      error: "Verification email could not be delivered. Please try again."
     });
   }
 });
@@ -1701,9 +1702,25 @@ app.post("/api/v1/auth/create-account", authenticateUser, async (req: any, res) 
   applyAdminAccountState(req.user, { initializeCoins: true });
 
   saveDatabase();
-  // Do not hold the signup request open on a slow Firestore mirror. The local
-  // account is complete immediately and the durable mirrors are synced in the background.
-  void persistUserDurably(req.user).catch((err) => console.warn("[PARDAIS CREATE ACCOUNT] Background persistence delayed:", err));
+
+  let durableSaved = false;
+  try {
+    durableSaved = await Promise.race([
+      persistUserDurably(req.user),
+      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 8000))
+    ]);
+  } catch (err) {
+    console.warn("[PARDAIS CREATE ACCOUNT] Durable persistence failed:", err);
+  }
+
+  if (!durableSaved) {
+    return res.status(503).json({
+      success: false,
+      code: "ACCOUNT_SAVE_FAILED",
+      error: "Account could not be saved permanently right now. Please try again."
+    });
+  }
+
   const token = await createSession(req.user);
   return res.status(201).json({
     success: true,
@@ -1715,55 +1732,60 @@ app.post("/api/v1/auth/create-account", authenticateUser, async (req: any, res) 
   });
 });
 
-// Password login for returning email users.
+// Password login for returning email & username users.
 app.post("/api/v1/auth/password-login", async (req, res) => {
   const identifier = typeof req.body?.identifier === "string"
     ? req.body.identifier.trim()
-    : (typeof req.body?.email === "string" ? req.body.email.trim() : "");
+    : (typeof req.body?.email === "string" ? req.body.email.trim() : (typeof req.body?.username === "string" ? req.body.username.trim() : ""));
   const password = typeof req.body?.password === "string" ? req.body.password : "";
-  if (!identifier || !password) return res.status(400).json({ error: "Email/username and password are required." });
 
-  const normalized = identifier.toLowerCase().replace(/^@/, "");
-  let user = normalized.includes("@")
-    ? await findCompletedEmailUserDurably(normalized)
-    : (dbData.users || []).find((u: any) =>
-        String(u.username || "").toLowerCase() === normalized && isCompletedEmailAccount(u)
-      );
+  if (!identifier || !password) {
+    return res.status(400).json({ success: false, error: "Email/username and password are required." });
+  }
+
+  const normalized = identifier.toLowerCase().trim().replace(/^@/, "");
+
+  let user = (dbData.users || []).find((u: any) =>
+    u && (
+      (u.email && String(u.email).toLowerCase().trim() === normalized) ||
+      (u.username && String(u.username).toLowerCase().trim().replace(/^@/, "") === normalized) ||
+      (u.uniqueId && String(u.uniqueId).toLowerCase().trim() === normalized)
+    )
+  );
+
+  if (!user) user = await findUserByIdentifierDurably(normalized, 1800);
 
   if (!user) {
-    const pending = normalized.includes("@")
-      ? await findAnyEmailUserDurably(normalized)
-      : (dbData.users || []).find((u: any) => String(u.username || "").toLowerCase() === normalized);
-    if (pending) {
-      return res.status(409).json({ success: false, code: "PASSWORD_NOT_SET", error: "This account is not fully set up yet. Continue signup or use Forgot Password to recover access." });
-    }
-    return res.status(401).json({ success: false, code: "ACCOUNT_NOT_FOUND", error: "No account was found for this email/username. Please sign up first." });
+    return res.status(401).json({ success: false, code: "ACCOUNT_NOT_FOUND", error: "No account found for this email/username. Please sign up first." });
   }
   if (!user.passwordHash) {
-    return res.status(409).json({ success: false, code: "PASSWORD_NOT_SET", error: "This account is not fully set up yet. Continue signup or use Forgot Password to recover access." });
+    return res.status(409).json({ success: false, code: "PASSWORD_NOT_SET", error: "This account has no password. Please use Forgot Password to create one." });
   }
   if (!verifyPassword(password, user.passwordHash)) {
-    return res.status(401).json({ success: false, code: "INVALID_PASSWORD", error: "Incorrect password. Use Forgot Password if you cannot remember it." });
+    return res.status(401).json({ success: false, code: "INVALID_PASSWORD", error: "Incorrect password. Please try again or use Forgot Password." });
   }
   if (user.deletionScheduledAt) {
     const deletionDate = new Date(user.deletionScheduledAt);
     const daysLeft = Math.max(0, Math.ceil((deletionDate.getTime() - Date.now()) / 86400000));
-    return res.status(409).json({
-      success: false,
-      code: "ACCOUNT_PENDING_DELETION",
-      error: `This account is scheduled for permanent deletion in ${daysLeft} day(s). Restore it from the Delete Account page to continue using it.`,
-      restoreUrl: "/delete-account?restore=1"
-    });
+    return res.status(409).json({ success: false, code: "ACCOUNT_PENDING_DELETION", error: `This account is scheduled for permanent deletion in ${daysLeft} day(s).`, restoreUrl: "/delete-account?restore=1" });
   }
-  if (user.isBanned) return res.status(403).json({ error: "ACCOUNT_BANNED" });
+  if (user.isBanned) return res.status(403).json({ success: false, code: "ACCOUNT_BANNED", error: "ACCOUNT_BANNED" });
 
   if (user.email) ensureStableEmailIdentity(user, String(user.email).toLowerCase());
   applyAdminAccountState(user, { initializeCoins: true });
-  const persisted = await persistUserDurably(user);
-  if (!persisted) return res.status(503).json({ error: "Account could not be restored from permanent storage. Please try again." });
-  const token = await createSession(user);
+
+  const existingIdx = (dbData.users || []).findIndex((u: any) =>
+    (user.uid && u?.uid === user.uid) ||
+    (user.email && String(u?.email || "").toLowerCase().trim() === String(user.email).toLowerCase().trim())
+  );
+  if (existingIdx >= 0) dbData.users[existingIdx] = user;
+  else if (Array.isArray(dbData.users)) dbData.users.push(user);
   saveDatabase();
-  res.json({ success:true, message:"Logged in successfully.", token, isNewUser:false, needsPassword:false, user });
+
+  void persistUserDurably(user).catch(err => console.warn("[PARDAIS LOGIN] Background sync delayed:", err));
+  const token = await createSession(user);
+
+  return res.json({ success: true, message: "Logged in successfully.", token, isNewUser: false, needsPassword: false, user });
 });
 
 // Recovery lookup intentionally accepts legacy accounts that already have a
@@ -1856,21 +1878,19 @@ app.post("/api/v1/auth/forgot-password", async (req, res) => {
   });
 
   try {
-    const sendResult = await sendPardaisPartyOtpEmail(email, otp, "password-reset");
-    return res.json({
-      success: true,
-      message: sendResult.delivered ? "Recovery code sent to your email." : "Recovery code generated.",
-      code: "RECOVERY_SENT",
-      debugOtp: otp,
-      otp
-    });
+    await sendPardaisPartyOtpEmail(email, otp, "password-reset");
+    return res.json({ success: true, message: "Recovery code sent to your email.", code: "RECOVERY_SENT" });
   } catch (err: any) {
-    return res.json({
-      success: true,
-      message: "Recovery code generated.",
-      code: "RECOVERY_SENT",
-      debugOtp: otp,
-      otp
+    delete dbData.passwordResetOtps[email];
+    recoveryLocks[email] = 0;
+    saveDatabase();
+    const message = String(err?.message || "Recovery email could not be delivered.");
+    console.error("[PARDAIS PARTY PASSWORD RESET] Email failed:", message);
+    res.status(502).json({
+      success: false,
+      code: "RECOVERY_EMAIL_FAILED",
+      error: "Recovery email could not be delivered. Please try again.",
+      details: process.env.NODE_ENV === "production" ? undefined : message
     });
   }
 });
@@ -1879,7 +1899,7 @@ app.post("/api/v1/auth/forgot-password", async (req, res) => {
 app.post("/api/v1/auth/reset-password", async (req, res) => {
   const email = typeof req.body?.email === "string" ? req.body.email.toLowerCase().trim() : "";
   const otp = String(req.body?.otp || "").trim();
-  const password = typeof req.body?.password === "string" ? req.body.password : "";
+  const password = typeof req.body?.password === "string" ? req.body.password : (typeof req.body?.newPassword === "string" ? req.body.newPassword : "");
   if (!email || !otp || password.length < 6) {
     return res.status(400).json({ error: "Email, recovery code and a password of at least 6 characters are required." });
   }

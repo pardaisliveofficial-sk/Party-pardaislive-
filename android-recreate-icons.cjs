@@ -77,18 +77,15 @@ async function execute() {
   console.log('🎨 Starting Android Resource Generation Process... 🎨');
   console.log('------------------------------------------------------------');
 
-  // IMPORTANT: Some repository PNG assets were stored with a UTF-8 replacement byte
-  // before the PNG signature, which makes them unreadable by Sharp. The source SVG is
-  // valid and is the canonical Pardais Party logo, so render the SVG directly.
-  if (!fs.existsSync(WEB_ICON_PATH)) {
-    throw new Error(`Pardais Party SVG logo missing at: ${WEB_ICON_PATH}`);
+  if (!fs.existsSync(EXACT_PNG_PATH)) {
+    throw new Error(`Exact Pardais Party logo missing at: ${EXACT_PNG_PATH}`);
   }
 
-  const rawIconSvg = fs.readFileSync(WEB_ICON_PATH, 'utf8');
-  const iconBuffer = await sharp(Buffer.from(rawIconSvg)).png().toBuffer();
+  const iconBuffer = fs.readFileSync(EXACT_PNG_PATH);
+  const rawIconSvg = fs.existsSync(WEB_ICON_PATH) ? fs.readFileSync(WEB_ICON_PATH, 'utf8') : ''; 
 
   // 1. Generate Launcher Icons (mipmap)
-  console.log('\nGenerating Android Launcher Icons (mipmap) from public/icon.svg:');
+  console.log('\nGenerating Android Launcher Icons (mipmap) from public/pardais-party-exact.png:');
   for (const config of ICON_CONFIGS) {
     const dirPath = path.join(RES_DIR, config.dir);
     if (!fs.existsSync(dirPath)) {
@@ -153,7 +150,7 @@ async function execute() {
   }
 
   console.log('\n------------------------------------------------------------');
-  console.log('🎉 All Android Resources Generated Successfully from the canonical Pardais Party SVG! 🎉');
+  console.log('🎉 All Android Resources Generated Successfully from the exact Pardais Party PNG! 🎉');
   console.log('------------------------------------------------------------');
 }
 
