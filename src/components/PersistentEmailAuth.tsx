@@ -31,7 +31,15 @@ export default function PersistentEmailAuth({ onAuthenticated, onGoogleSignIn }:
 
   const continueEmail = async () => {
     const clean = email.trim().toLowerCase();
-    if (!clean || !clean.includes("@")) { setError("Enter a valid email address."); return; }
+    if (!clean) { setError("Enter your email or username."); return; }
+    // Username/ID login goes directly to the password step. Signup still requires
+    // a real email because the new-account flow verifies ownership by OTP.
+    if (!clean.includes("@")) {
+      setError("");
+      setExistingNeedsPassword(true);
+      setStep("password");
+      return;
+    }
     setError(""); setBusy(true);
     try {
       const status = await emailStatus(clean);
@@ -166,7 +174,7 @@ export default function PersistentEmailAuth({ onAuthenticated, onGoogleSignIn }:
       </button>}
     </>}
     {step === "password" && <>
-      <input value={email} readOnly type="email" className="w-full bg-[#1e1e2d] border border-[#303040] rounded-xl px-3 py-3 text-white text-sm" />
+      <input value={email} readOnly type="text" className="w-full bg-[#1e1e2d] border border-[#303040] rounded-xl px-3 py-3 text-white text-sm" />
       <div className="relative w-full">
         <input value={password} onChange={e=>setPassword(e.target.value)} type={showPassword ? "text" : "password"} placeholder="Password" className="w-full bg-[#1e1e2d] border border-[#303040] rounded-xl px-3 py-3 pr-12 text-white text-sm" autoComplete="current-password" />
         <button type="button" onClick={()=>setShowPassword(v=>!v)} className="mt-1 inline-flex items-center gap-1 rounded-md border border-white/10 bg-white/5 px-2 py-1 text-[10px] text-gray-300 hover:bg-white/10" aria-label={showPassword ? "Hide password" : "Show password"}>{showPassword ? "🙈 Hide Password" : "👁 Show Password"}</button>

@@ -3,6 +3,7 @@ import { App as CapacitorApp } from "@capacitor/app";
 import { authenticatedFetch, resolveApiUrl, refreshSession, getAuthToken, isCapacitorOrAndroid } from "./lib/apiClient";
 import { COUNTRIES_CURRENCIES, CountryCurrency, getCoinsCostInCurrency } from "./currencyUtils";
 import { ReelsView } from "./components/ReelsView";
+import PersistentEmailAuth from "./components/PersistentEmailAuth";
 import { AgoraStream } from "./components/AgoraStream";
 import { AgoraPartyAudio } from "./components/AgoraPartyAudio";
 import { VipAnimatedFrame, VIP_FRAMES_LIST } from "./components/VipAnimatedFrame";
@@ -7529,6 +7530,32 @@ export default function App() {
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       }
     ]);
+  };
+
+  // Unified persistent email authentication (AI Studio working flow)
+  const handleAuthAuthenticated = async (payload: any) => {
+    const authToken = String(payload?.token || "").trim();
+    const authUser = payload?.user;
+    if (!authToken || !authUser) {
+      setLoginError("Authentication response was incomplete. Please try again.");
+      return;
+    }
+
+    localStorage.setItem("pardais_auth_token", authToken);
+    localStorage.setItem("pardais_is_logged_in", "true");
+    localStorage.setItem("pardais_user_profile", JSON.stringify(authUser));
+    lastSavedUserRef.current = JSON.stringify(authUser);
+    setUser(authUser);
+    setIsLoggedIn(true);
+    setShowAuthModal(false);
+    setLoginError("");
+    setLoginSuccessMsg("");
+
+    if (pendingAuthCallback) {
+      const cb = pendingAuthCallback;
+      setPendingAuthCallback(null);
+      try { cb(); } catch {}
+    }
   };
 
   // Email OTP Login Handlers
@@ -31340,148 +31367,38 @@ export default function App() {
         </div>
       )}
 
-      {/* AUTHENTICATION REQUIRED MODAL (GUEST PROMPT) */}
-      {/* ========================================= */}
+      {/* AUTHENTICATION REQUIRED MODAL — persistent Email/Password + Signup + OTP + Recovery */}
       {showAuthModal && (
         <div className="fixed inset-0 bg-black/85 z-[9999] flex items-center justify-center p-4 backdrop-blur-md animate-fade-in safe-padding-top safe-padding-bottom">
-          <div className="bg-gradient-to-b from-[#1c082b] via-[#100a1c] to-[#0a0a12] border border-[#ff007f]/50 rounded-3xl w-full max-w-[400px] p-5 shadow-[0_0_40px_rgba(255,0,127,0.3)] flex flex-col text-white space-y-4 relative animate-pop-gift max-h-[90vh] overflow-y-auto">
-            
-            {/* Close / Dismiss Button */}
+          <div className="bg-gradient-to-b from-[#1c082b] via-[#100a1c] to-[#0a0a12] border border-[#ff007f]/50 rounded-3xl w-full max-w-[400px] p-5 shadow-[0_0_40px_rgba(255,0,127,0.3)] text-white relative max-h-[90vh] overflow-y-auto">
             <button
               type="button"
-              onClick={() => {
-                setShowAuthModal(false);
-                setPendingAuthCallback(null);
-              }}
+              onClick={() => { setShowAuthModal(false); setPendingAuthCallback(null); setLoginError(""); }}
               className="absolute top-3.5 right-3.5 w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-gray-300 hover:text-white transition-all cursor-pointer z-10"
+              aria-label="Close authentication"
             >
               <X className="w-4 h-4" />
             </button>
 
-            {/* Header & Lock Badge */}
-            <div className="text-center space-y-2 pt-1">
+            <div className="text-center space-y-2 pt-1 pb-4">
               <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-[#ff007f] via-[#7b2cbf] to-[#00f5ff] p-0.5 mx-auto shadow-lg flex items-center justify-center">
                 <div className="w-full h-full bg-[#0a0a12] rounded-[14px] flex items-center justify-center">
-                  <Lock className="w-6 h-6 text-[#00f5ff] animate-pulse" />
+                  <Lock className="w-6 h-6 text-[#00f5ff]" />
                 </div>
               </div>
-              <h3 className="text-base font-black text-white tracking-wide uppercase font-mono">Log in or Register First</h3>
-              <p className="text-[11px] text-pink-200 leading-snug px-2 font-medium">
-                Please log in or create an account to <strong className="text-[#00f5ff] underline">{authModalReason}</strong>.
-              </p>
+              <h3 className="text-base font-black text-white tracking-wide uppercase font-mono">Pardais Party</h3>
+              <p className="text-[11px] text-pink-200 leading-snug px-2">Login to your account or create a new one.</p>
             </div>
 
-            {/* Login method toggle */}
-            <div className="grid grid-cols-2 gap-2 bg-[#1f2833]/40 p-1 rounded-xl border border-[#1f2833]">
-              <button
-                type="button"
-                onClick={() => { setSelectedAuthMethod("email"); setLoginError(""); setLoginSuccessMsg(""); }}
-                className={`py-2 text-xs font-bold rounded-lg transition-all ${
-                  selectedAuthMethod === "email"
-                    ? "bg-gradient-to-r from-[#7b2cbf] to-[#00f5ff] text-white shadow-md"
-                    : "text-gray-400 hover:text-white"
-                }`}
-              >
-                Email OTP
-              </button>
-              <button
-                type="button"
-                onClick={() => { setSelectedAuthMethod("google"); setLoginError(""); setLoginSuccessMsg(""); }}
-                className={`py-2 text-xs font-bold rounded-lg transition-all ${
-                  selectedAuthMethod === "google"
-                    ? "bg-gradient-to-r from-[#7b2cbf] to-[#00f5ff] text-white shadow-md"
-                    : "text-gray-400 hover:text-white"
-                }`}
-              >
-                Google Auth
-              </button>
-            </div>
+            <PersistentEmailAuth
+              onAuthenticated={handleAuthAuthenticated}
+              onGoogleSignIn={handleGoogleSignIn}
+            />
 
-            {/* Instant One-Tap Quick Account Button */}
             <button
               type="button"
-              onClick={handleQuickGuestLogin}
-              className="w-full py-2.5 px-4 bg-gradient-to-r from-[#00f5ff]/20 via-[#7b2cbf]/20 to-[#ff007f]/20 hover:from-[#00f5ff]/30 hover:to-[#ff007f]/30 border border-[#00f5ff]/40 rounded-2xl flex items-center justify-center space-x-2 text-white shadow-lg transition-all active:scale-[0.98] cursor-pointer"
-            >
-              <Zap className="w-4 h-4 text-[#00f5ff] animate-pulse" />
-              <span className="text-xs font-black tracking-wide">⚡ One-Tap Instant Registration</span>
-            </button>
-
-            {/* Error / Success Alerts */}
-            {loginError && (
-              <div className="p-2.5 bg-red-950/40 border border-red-500/50 rounded-xl text-[10px] text-red-200 flex items-start space-x-2">
-                <AlertTriangle className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" />
-                <span className="flex-1 font-medium">{loginError}</span>
-              </div>
-            )}
-            {loginSuccessMsg && (
-              <div className="p-2.5 bg-green-950/40 border border-green-500/50 rounded-xl text-[10px] text-green-200 flex items-start space-x-2">
-                <BadgeCheck className="w-4 h-4 text-green-400 flex-shrink-0 mt-0.5" />
-                <span className="flex-1 font-medium">{loginSuccessMsg}</span>
-              </div>
-            )}
-
-            {selectedAuthMethod === "email" ? (
-              <form onSubmit={isOtpSent ? handleVerifyEmailOtp : handleSendEmailOtp} className="space-y-3">
-                <div>
-                  <label className="text-[9px] uppercase tracking-wider text-gray-400 block mb-1 font-bold font-mono">Email Address</label>
-                  <input
-                    type="email"
-                    placeholder="user@example.com"
-                    value={loginEmail}
-                    onChange={(e) => {
-                      setLoginEmail(e.target.value);
-                      if (loginError) setLoginError("");
-                    }}
-                    disabled={isOtpSent}
-                    className="w-full bg-[#1e1e2d] border border-[#303040] rounded-xl px-3 py-2 text-white text-xs focus:outline-none focus:border-[#ff007f] font-mono"
-                  />
-                </div>
-
-                {isOtpSent && (
-                  <div className="animate-pop-gift bg-[#1e1e2d] p-3 rounded-xl border border-[#ff007f]/20 space-y-1">
-                    <label className="text-[9px] uppercase tracking-wider text-[#00f5ff] block font-bold font-mono">Enter 6-Digit OTP Code</label>
-                    <input
-                      type="text"
-                      placeholder="123456"
-                      value={loginOtp}
-                      onChange={(e) => {
-                        setLoginOtp(e.target.value);
-                        if (loginError) setLoginError("");
-                      }}
-                      className="w-full bg-[#12121a] border border-[#00f5ff] rounded-lg px-3 py-2 text-white text-center text-sm font-black focus:outline-none tracking-widest font-mono"
-                    />
-                  </div>
-                )}
-
-                <button
-                  type="submit"
-                  className="w-full bg-gradient-to-r from-[#ff007f] to-[#7b2cbf] text-white py-2.5 rounded-xl text-xs font-bold shadow-lg hover:opacity-95 transition-all cursor-pointer"
-                >
-                  {isOtpSent ? "Verify Code & Log In" : "Send Email OTP Code"}
-                </button>
-              </form>
-            ) : (
-              <div className="space-y-2">
-                <button
-                  type="button"
-                  onClick={handleGoogleSignIn}
-                  className="w-full h-11 bg-white text-gray-900 font-bold rounded-2xl text-xs flex items-center justify-center space-x-2 hover:bg-gray-100 active:scale-[0.98] transition-all shadow-xl border border-gray-200 cursor-pointer"
-                >
-                  <Globe className="w-5 h-5 text-indigo-600" />
-                  <span>Sign In with Google</span>
-                </button>
-              </div>
-            )}
-
-            {/* Dismiss Button */}
-            <button
-              type="button"
-              onClick={() => {
-                setShowAuthModal(false);
-                setPendingAuthCallback(null);
-              }}
-              className="w-full py-2 bg-white/5 hover:bg-white/10 text-gray-300 font-bold text-xs rounded-xl border border-white/10 transition-all cursor-pointer text-center"
+              onClick={() => { setShowAuthModal(false); setPendingAuthCallback(null); }}
+              className="w-full mt-3 py-2 bg-white/5 hover:bg-white/10 text-gray-300 font-bold text-xs rounded-xl border border-white/10 transition-all cursor-pointer text-center"
             >
               Continue Browsing as Guest 👁️
             </button>
