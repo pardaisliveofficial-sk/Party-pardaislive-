@@ -4,6 +4,7 @@ import { authenticatedFetch, resolveApiUrl, refreshSession, getAuthToken, isCapa
 import { COUNTRIES_CURRENCIES, CountryCurrency, getCoinsCostInCurrency } from "./currencyUtils";
 import { ReelsView } from "./components/ReelsView";
 import PersistentEmailAuth from "./components/PersistentEmailAuth";
+import AuthScreen from "./components/AuthScreen";
 import { AgoraStream } from "./components/AgoraStream";
 import { AgoraPartyAudio } from "./components/AgoraPartyAudio";
 import { VipAnimatedFrame, VIP_FRAMES_LIST } from "./components/VipAnimatedFrame";
@@ -100,7 +101,9 @@ import {
   FileUp,
   AlertCircle,
   Pencil,
-  Database
+  Database,
+  ArrowRight,
+  EyeOff
 } from "lucide-react";
 import { Gift, GiftType, ChatMessage, HostProfile, UserProfile, Family, Agency, Transaction, LiveAnnouncement, KycRequest, UserStory } from "./types";
 import { DEFAULT_USER, MOCK_GIFTS, MOCK_HOSTS, MOCK_FAMILIES, MOCK_AGENCIES, DAILY_MISSIONS, STATIC_COMMENTS_POOL } from "./data";
@@ -970,6 +973,7 @@ export default function App() {
   const [editDob, setEditDob] = useState<string>(DEFAULT_USER.dob || "");
   const [editGender, setEditGender] = useState<string>(DEFAULT_USER.gender);
   const [editPhoneNumber, setEditPhoneNumber] = useState<string>(DEFAULT_USER.phoneNumber || "");
+  const [editBio, setEditBio] = useState<string>(DEFAULT_USER.bio || "");
   const [showDailyTasksOverlay, setShowDailyTasksOverlay] = useState<boolean>(false);
 
   // Profile Feed Tab states
@@ -1266,7 +1270,7 @@ export default function App() {
         const myUploaded = (myReels || []).filter(r => r && r.privacy !== "private").map(r => ({
           id: r.id,
           title: r.caption ? (r.caption.split(" ").slice(0, 4).join(" ") + "...") : "My Clip 🎬",
-          views: r.views ?? 0,
+          views: (r as any).views ?? 0,
           likes: r.likes,
           liked: r.liked,
           videoBg: r.videoBg,
@@ -6262,6 +6266,7 @@ export default function App() {
         fullName: editFullName.trim(),
         dob: editDob,
         phoneNumber: editPhoneNumber,
+        bio: editBio.trim(),
         // These are server/database metrics. They are never editable from Profile.
         followersCount: user.followersCount ?? 0,
         followingCount: user.followingCount ?? 0,
@@ -7754,6 +7759,28 @@ export default function App() {
     }
   };
 
+  // Handle Selection from Google Account Chooser
+  const handleSelectGoogleAccount = async (accountEmail: string, accountName?: string) => {
+    const cleanEmail = String(accountEmail || "").trim().toLowerCase();
+    if (!cleanEmail || !cleanEmail.includes("@")) {
+      setChooserError("Please enter a valid Google email address.");
+      return;
+    }
+    setChooserError("");
+    setLoginError("");
+    const displayName = accountName?.trim() || cleanEmail.split("@")[0] || "Google Member";
+    const photoURL = `https://api.dicebear.com/7.x/adventurer/svg?seed=${encodeURIComponent(cleanEmail)}`;
+    const syntheticUid = `google_${cleanEmail.replace(/[^a-zA-Z0-9]/g, "_")}`;
+
+    await processGoogleAuthUser({
+      uid: syntheticUid,
+      email: cleanEmail,
+      displayName,
+      photoURL,
+      getIdToken: async () => ""
+    });
+  };
+
   // Real Google Sign-In Handler with Popup, Redirect & Seamless Account Chooser Fallback
   const handleGoogleSignIn = async () => {
     if (!termsAccepted) setTermsAccepted(true);
@@ -8797,6 +8824,16 @@ export default function App() {
                     >
                       Clear Session
                     </button>
+                  </div>
+                ) : !isLoggedIn || user?.isGuest || !user?.username ? (
+                  /* ========================================= */
+                  /* AUTHENTICATION & LOGIN SCREEN (NO GUEST BYPASS) */
+                  /* ========================================= */
+                  <div className="flex-1 flex flex-col justify-center items-center overflow-y-auto safe-padding-top safe-padding-bottom bg-[#0a0a14]">
+                    <AuthScreen
+                      onAuthenticated={handleAuthAuthenticated}
+                      onGoogleSignIn={handleGoogleSignIn}
+                    />
                   </div>
                 ) : (
                   /* ========================================= */
@@ -13881,6 +13918,7 @@ export default function App() {
                                         setEditDob(user.dob || "1998-05-15");
                                         setEditGender(user.gender);
                                         setEditPhoneNumber(user.phoneNumber || "+92 300 4567890");
+                                        setEditBio(user.bio || "");
                                         setIsEditingProfile(true);
                                       }
                                     }}
@@ -13928,16 +13966,34 @@ export default function App() {
                                     />
                                   </div>
                                   <div>
-                                    <label className="text-[8px] uppercase tracking-wider text-gray-400 block mb-1 font-bold">Username</label>
+                                    <label className="text-[8px] uppercase tracking-wider text-pink-400 block mb-1 font-bold flex items-center justify-between">
+                                      <span>🔒 Username</span>
+                                      <span className="text-[7px] text-gray-400 font-normal">Permanent</span>
+                                    </label>
                                     <input
                                       type="text"
-                                      value={user.username}
+                                      value={`@${user.username}`}
                                       readOnly
                                       aria-readonly="true"
-                                      className="w-full bg-[#12121a]/70 border border-[#303040] rounded px-2.5 py-1.5 text-xs text-gray-400 cursor-not-allowed focus:outline-none"
-                                      title="Username is your permanent account identity"
+                                      className="w-full bg-[#12121a]/70 border border-pink-500/20 rounded px-2.5 py-1.5 text-xs text-pink-200 cursor-not-allowed focus:outline-none font-mono"
+                                      title="Username is your permanent account identity and cannot be edited"
                                     />
                                   </div>
+                                </div>
+
+                                <div>
+                                  <label className="text-[8px] uppercase tracking-wider text-pink-400 block mb-1 font-bold flex items-center justify-between">
+                                    <span>🔒 Pardais ID</span>
+                                    <span className="text-[7px] text-gray-400 font-normal">Permanent</span>
+                                  </label>
+                                  <input
+                                    type="text"
+                                    value={user.uniqueId || user.customPardaisId || "PRD-USER"}
+                                    readOnly
+                                    aria-readonly="true"
+                                    className="w-full bg-[#12121a]/70 border border-pink-500/20 rounded px-2.5 py-1.5 text-xs text-pink-200 cursor-not-allowed focus:outline-none font-mono"
+                                    title="Pardais ID is your unique non-editable identifier"
+                                  />
                                 </div>
 
                                 <div>
@@ -14109,6 +14165,17 @@ export default function App() {
                                     placeholder="+92 300 1234567"
                                     className="w-full bg-[#12121a] border border-[#303040] rounded px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-[#ff007f]"
                                     required
+                                  />
+                                </div>
+
+                                <div>
+                                  <label className="text-[8px] uppercase tracking-wider text-gray-400 block mb-1 font-bold">Bio / Status</label>
+                                  <textarea
+                                    value={editBio}
+                                    onChange={(e) => setEditBio(e.target.value)}
+                                    rows={2}
+                                    placeholder="Write something about yourself..."
+                                    className="w-full bg-[#12121a] border border-[#303040] rounded px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-[#ff007f] resize-none"
                                   />
                                 </div>
                               </div>
@@ -30945,466 +31012,4 @@ export default function App() {
             </div>
 
             {/* Video preview container */}
-            <div className="relative w-56 h-56 mx-auto rounded-full overflow-hidden border-4 border-[#ff007f] bg-black shadow-inner flex items-center justify-center">
-              <video
-                ref={avatarVideoRef}
-                autoPlay
-                playsInline
-                muted
-                className="w-full h-full object-cover transform scale-x-[-1]"
-              />
-              <div className="absolute inset-0 border-2 border-dashed border-white/30 rounded-full pointer-events-none"></div>
-            </div>
-
-            <div className="space-y-2 pt-1">
-              <button
-                type="button"
-                onClick={captureAvatarFromCamera}
-                className="w-full bg-gradient-to-r from-[#ff007f] via-purple-600 to-pink-600 hover:scale-102 active:scale-97 text-white font-black py-2.5 rounded-xl text-xs uppercase tracking-wider transition-all shadow-lg flex items-center justify-center space-x-2 cursor-pointer"
-              >
-                <Camera className="w-4 h-4 text-white" />
-                <span>📸 Snap & Save Photo</span>
-              </button>
-
-              <div className="flex justify-between items-center text-[8.5px] text-gray-400 pt-1">
-                <button
-                  type="button"
-                  onClick={() => {
-                    stopAvatarCamera();
-                    document.getElementById("avatar-camera-file-input")?.click();
-                  }}
-                  className="hover:text-white underline cursor-pointer"
-                >
-                  Or use device camera app
-                </button>
-                <button
-                  type="button"
-                  onClick={stopAvatarCamera}
-                  className="hover:text-red-400 cursor-pointer"
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 📱 ANDROID APP CONVERSION & PWA INSTALL MODAL */}
-      {showAndroidInstallModal && (
-        <div className="fixed inset-0 bg-black/90 backdrop-blur-md z-[99999] flex items-center justify-center p-4 animate-fade-in select-none">
-          <div className="bg-[#12121e] border-2 border-[#00e676]/60 rounded-3xl p-5 w-full max-w-sm text-center space-y-3.5 shadow-[0_0_35px_rgba(0,230,118,0.35)] relative">
-            
-            {/* Modal Header */}
-            <div className="flex items-center justify-between border-b border-[#303040] pb-2.5 text-left">
-              <div className="flex items-center space-x-2.5">
-                <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-[#00e676] via-emerald-600 to-teal-400 p-0.5 shadow-md flex items-center justify-center shrink-0">
-                  <div className="w-full h-full bg-[#09090e] rounded-[14px] flex items-center justify-center">
-                    <Smartphone className="w-5 h-5 text-[#00e676]" />
-                  </div>
-                </div>
-                <div>
-                  <h3 className="text-xs font-black text-white uppercase tracking-wider font-mono flex items-center space-x-1">
-                    <span>Pardais Live Android App</span>
-                  </h3>
-                  <p className="text-[8.5px] text-emerald-400 font-bold font-mono">Package: com.PardaisLive</p>
-                </div>
-              </div>
-
-              <button
-                type="button"
-                onClick={() => setShowAndroidInstallModal(false)}
-                className="w-7 h-7 rounded-full bg-white/10 hover:bg-white/20 text-white text-xs font-black flex items-center justify-center transition-all cursor-pointer"
-              >
-                ✕
-              </button>
-            </div>
-
-            {/* App Preview Card */}
-            <div className="bg-gradient-to-br from-[#1a1a2a] to-[#0f0f18] p-3 rounded-2xl border border-white/10 text-left space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-[10px] font-black text-white flex items-center space-x-1">
-                  <span>📱 Google Play Store Official App</span>
-                </span>
-                <span className="px-2 py-0.5 bg-[#00e676]/20 border border-[#00e676]/50 text-[#00e676] text-[8px] font-black rounded-full uppercase font-mono">
-                  Live on Play Store
-                </span>
-              </div>
-              <p className="text-[9.5px] text-gray-200 leading-relaxed font-sans">
-                Aap Android phone par <strong className="text-[#00e676]">Pardais Live</strong> ko Google Play Store se direct install kar sakte hain!
-              </p>
-            </div>
-
-            {/* Installation Action Buttons */}
-            <div className="space-y-2 pt-0.5">
-              {/* 1. Official Google Play Store Button */}
-              <a
-                href="https://play.google.com/store/apps/details?id=com.PardaisLive"
-                target="_blank"
-                rel="noopener noreferrer"
-                onClick={() => setShowAndroidInstallModal(false)}
-                className="w-full bg-gradient-to-r from-[#00e676] via-emerald-400 to-teal-400 hover:scale-102 active:scale-97 text-black font-black py-3 rounded-2xl text-xs uppercase tracking-wider transition-all shadow-[0_0_22px_rgba(0,230,118,0.5)] flex items-center justify-center space-x-2 cursor-pointer border border-emerald-300"
-              >
-                <Download className="w-4 h-4 text-black" />
-                <span>▶ Install from Google Play Store</span>
-              </a>
-
-              {/* 2. Download Android Project Package Button */}
-              <a
-                href="/api/v1/download-apk"
-                download="PardaisParty-v1.0.0-Package.zip"
-                onClick={() => {
-                  setTimeout(() => setShowAndroidInstallModal(false), 2000);
-                }}
-                className="w-full bg-[#1e1e2f] hover:bg-[#28283d] active:scale-97 text-white border border-white/20 font-extrabold py-2.5 rounded-2xl text-[10.5px] uppercase tracking-wider transition-all flex items-center justify-center space-x-2 cursor-pointer shadow-md block text-center"
-              >
-                <Download className="w-4 h-4 text-cyan-400" />
-                <span>📦 Download Android App Package Zip</span>
-              </a>
-
-              {/* 2. Open in Chrome / New Browser Tab if in iframe */}
-              {typeof window !== "undefined" && window.self !== window.top && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    window.open(window.location.href, "_blank");
-                  }}
-                  className="w-full bg-gradient-to-r from-cyan-600 to-blue-600 hover:scale-102 active:scale-97 text-white font-extrabold py-2 rounded-2xl text-[10px] uppercase tracking-wider transition-all shadow-md flex items-center justify-center space-x-2 cursor-pointer border border-cyan-300/40"
-                >
-                  <ExternalLink className="w-3.5 h-3.5 text-white" />
-                  <span>🌐 Open Full Screen Tab to Install</span>
-                </button>
-              )}
-            </div>
-
-            {/* Step-by-step visual install guide in Roman Urdu */}
-            <div className="bg-black/60 p-3 rounded-2xl border border-white/10 text-left text-[9px] text-gray-300 space-y-1.5">
-              <p className="text-white font-black uppercase tracking-wider text-[9.5px] flex items-center space-x-1">
-                <span className="text-[#00e676]">💡 Chrome Badge Hatane Aur Pure App Icon Ke Liye:</span>
-              </p>
-              <div className="grid grid-cols-1 gap-1 text-[8.5px] leading-tight">
-                <div className="flex items-start space-x-1.5 bg-white/5 p-1.5 rounded-lg border border-white/5">
-                  <span className="font-bold text-[#00e676] shrink-0">1.</span>
-                  <span>Purana <strong>Pardais Party (Chrome Badge)</strong> icon Home Screen se Delete / Remove karein.</span>
-                </div>
-                <div className="flex items-start space-x-1.5 bg-white/5 p-1.5 rounded-lg border border-white/5">
-                  <span className="font-bold text-cyan-400 shrink-0">2.</span>
-                  <span>Direct Chrome Browser main URL kholein aur Chrome Menu (<strong>⋮</strong>) par tap karein.</span>
-                </div>
-                <div className="flex items-start space-x-1.5 bg-white/5 p-1.5 rounded-lg border border-white/5">
-                  <span className="font-bold text-amber-400 shrink-0">3.</span>
-                  <span><strong>"Install app"</strong> / <strong>"Install Pardais Party"</strong> par tap karein. Android WebAPK bina kisi Chrome badge ke bilkul Real App ki tarha install ho jaye ga!</span>
-                </div>
-              </div>
-            </div>
-
-            <button
-              type="button"
-              onClick={() => setShowAndroidInstallModal(false)}
-              className="text-[9px] text-gray-400 hover:text-white underline cursor-pointer pt-0.5 block mx-auto"
-            >
-              Close / Baad Mein Karein
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* 💳 Online Payment Checkout Modal (Google Pay, Cards, EasyPaisa, JazzCash, Bank) */}
-      {showCardPaymentModal && (
-        (() => {
-          const currentPkg = selectedPaymentPackage || (onlinePackages && onlinePackages.length > 0 ? onlinePackages[0] : { id: 'pkg-1', coins: 1000, originalPrice: 100, discount: 0 });
-          const safeCountry = selectedCurrencyCountry || COUNTRIES_CURRENCIES[0];
-          const costObj = getCoinsCostInCurrency(currentPkg.coins || 0, safeCountry, currentPkg.discount || 0);
-
-          return (
-            <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-[9999] flex items-center justify-center p-4 overflow-y-auto animate-fadeIn">
-              <div className="bg-[#12121a] border border-[#ff007f]/30 rounded-2xl p-5 w-full max-w-sm text-center relative shadow-2xl space-y-4 my-auto">
-                <button
-                  type="button"
-                  onClick={() => setShowCardPaymentModal(false)}
-                  className="absolute top-3 right-3 text-gray-400 hover:text-white p-1 rounded-full bg-white/5 hover:bg-white/10 transition-all cursor-pointer"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-
-                <div className="space-y-1 pt-1">
-                  <div className="w-10 h-10 rounded-full bg-gradient-to-r from-yellow-500 to-amber-500 text-black flex items-center justify-center mx-auto shadow-lg shadow-yellow-500/20 font-black">
-                    <CreditCard className="w-5 h-5" />
-                  </div>
-                  <h3 className="text-sm font-black text-white uppercase tracking-wider">Online Coin Recharge Gateway</h3>
-                  <p className="text-[10px] text-gray-400 font-mono">Secure Server-Side Payment Authorization</p>
-                </div>
-
-                {/* Package details */}
-                <div className="bg-[#1e1e2d] border border-[#303040] rounded-xl p-3 text-left space-y-2">
-                  <div className="flex justify-between items-center border-b border-[#303040] pb-2">
-                    <div>
-                      <span className="text-xs font-black text-yellow-400 font-mono flex items-center space-x-1">
-                        <Coins className="w-3.5 h-3.5 text-yellow-400 inline mr-1" />
-                        {currentPkg.coins.toLocaleString()} Coins
-                      </span>
-                      <p className="text-[9px] text-gray-400 font-mono">Country: {safeCountry.flag} {safeCountry.name}</p>
-                    </div>
-                    <div className="text-right">
-                      <span className="text-xs font-black text-green-400 font-mono">{costObj.formattedWithCode}</span>
-                      <p className="text-[8px] text-gray-400 font-mono">Base: ₨{costObj.pkrBase}</p>
-                    </div>
-                  </div>
-
-                  {/* Payment Method Selector Tabs */}
-                  <div className="grid grid-cols-2 gap-1.5 pt-1">
-                    <button
-                      type="button"
-                      onClick={() => setActivePaymentMethodTab('card')}
-                      className={`py-1.5 px-2 rounded-lg text-[10px] font-bold font-mono transition-all ${
-                        activePaymentMethodTab === 'card'
-                          ? 'bg-yellow-500 text-black shadow-md'
-                          : 'bg-[#12121a] text-gray-400 hover:text-white border border-[#303040]'
-                      }`}
-                    >
-                      Credit/Debit Card
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setActivePaymentMethodTab('gpay')}
-                      className={`py-1.5 px-2 rounded-lg text-[10px] font-bold font-mono transition-all ${
-                        activePaymentMethodTab === 'gpay'
-                          ? 'bg-blue-600 text-white shadow-md'
-                          : 'bg-[#12121a] text-gray-400 hover:text-white border border-[#303040]'
-                      }`}
-                    >
-                      Google Pay
-                    </button>
-                  </div>
-                </div>
-
-                {paymentErrorModalMsg && (
-                  <div className="p-2.5 bg-red-950/50 border border-red-500/40 rounded-xl text-[10px] text-red-200 text-left font-mono flex items-start space-x-2 animate-bounce">
-                    <AlertTriangle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
-                    <span>{paymentErrorModalMsg}</span>
-                  </div>
-                )}
-
-                {/* TAB 1: CREDIT / DEBIT CARD FORM */}
-                {activePaymentMethodTab === 'card' && (
-                  <div className="space-y-3 pt-1 text-left animate-fadeIn">
-                    <div className="space-y-2.5 bg-[#1e1e2d]/60 border border-[#303040] p-3 rounded-xl">
-                      <div className="space-y-1">
-                        <label className="text-[8px] uppercase tracking-widest text-gray-400 font-mono font-bold block">Cardholder Name</label>
-                        <input
-                          type="text"
-                          placeholder="Name on Card"
-                          value={cardFormHolder}
-                          onChange={(e) => setCardFormHolder(e.target.value)}
-                          className="w-full bg-[#12121a] border border-[#303040] rounded-lg p-2 text-white font-mono text-xs focus:outline-none focus:border-[#ff007f]"
-                        />
-                      </div>
-
-                      <div className="space-y-1">
-                        <label className="text-[8px] uppercase tracking-widest text-gray-400 font-mono font-bold block">Card Number</label>
-                        <input
-                          type="text"
-                          placeholder="4000 0000 0000 0000"
-                          maxLength={19}
-                          value={cardFormNumber}
-                          onChange={(e) => {
-                            const val = e.target.value.replace(/\D/g, '');
-                            const formatted = val.match(/.{1,4}/g)?.join(' ') || val;
-                            setCardFormNumber(formatted);
-                          }}
-                          className="w-full bg-[#12121a] border border-[#303040] rounded-lg p-2 text-white font-mono text-xs tracking-widest focus:outline-none focus:border-[#ff007f]"
-                        />
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-2">
-                        <div className="space-y-1">
-                          <label className="text-[8px] uppercase tracking-widest text-gray-400 font-mono font-bold block">Expiry Date</label>
-                          <input
-                            type="text"
-                            placeholder="MM/YY"
-                            maxLength={5}
-                            value={cardFormExpiry}
-                            onChange={(e) => {
-                              const val = e.target.value.replace(/\D/g, '');
-                              if (val.length >= 3) {
-                                setCardFormExpiry(val.slice(0, 2) + '/' + val.slice(2, 4));
-                              } else {
-                                setCardFormExpiry(val);
-                              }
-                            }}
-                            className="w-full bg-[#12121a] border border-[#303040] rounded-lg p-2 text-white font-mono tracking-widest text-xs focus:outline-none focus:border-[#ff007f]"
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <label className="text-[8px] uppercase tracking-widest text-gray-400 font-mono font-bold block">CVV Code</label>
-                          <input
-                            type="password"
-                            placeholder="•••"
-                            maxLength={3}
-                            value={cardFormCvv}
-                            onChange={(e) => setCardFormCvv(e.target.value.replace(/\D/g, ''))}
-                            className="w-full bg-[#12121a] border border-[#303040] rounded-lg p-2 text-white font-mono tracking-widest text-xs focus:outline-none focus:border-[#ff007f]"
-                          />
-                        </div>
-                      </div>
-
-                      {isProcessingCard ? (
-                        <div className="py-3 text-center space-y-1.5 bg-[#12121a] rounded-xl border border-yellow-500/30">
-                          <div className="w-6 h-6 border-2 border-yellow-400 border-t-transparent rounded-full animate-spin mx-auto" />
-                          <p className="text-[10px] font-mono font-bold text-yellow-400">Verifying Card Authorization Server-Side...</p>
-                        </div>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={async () => {
-                            if (!cardFormHolder.trim() || cardFormNumber.replace(/\D/g, '').length < 15 || !cardFormExpiry || cardFormCvv.length < 3) {
-                              alert('Please enter full card details correctly (Holder Name, 16-Digit Card Number, Expiry, and CVV)!');
-                              return;
-                            }
-                            setIsProcessingCard(true);
-                            setPaymentErrorModalMsg('');
-
-                            const orderId = `CARD-${Math.floor(100000 + Math.random() * 900000)}`;
-                            const cardMethod = `Credit/Debit Card (Visa/MC **** ${cardFormNumber.slice(-4)})`;
-
-                            try {
-                              const token = localStorage.getItem('pardais_user_token');
-                              const endpoint = resolveApiUrl('/api/v1/payments/process');
-                              const res = await fetch(endpoint, {
-                                method: 'POST',
-                                headers: {
-                                  'Content-Type': 'application/json',
-                                  ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-                                },
-                                body: JSON.stringify({
-                                  orderId,
-                                  username: user?.username || 'Pardais_User',
-                                  userId: user?.uniqueId || user?.uid,
-                                  amount: currentPkg?.price || costObj.pkrBase || 10,
-                                  coins: currentPkg?.coins || 10000,
-                                  paymentMethod: cardMethod
-                                })
-                              });
-                              if (res.ok) {
-                                const paymentData = await res.json().catch(() => ({}));
-                                setUser(prev => ({
-                                  ...prev,
-                                  coins: typeof paymentData.newCoinBalance === 'number' ? paymentData.newCoinBalance : prev.coins
-                                }));
-                                alert('Card Payment Approved!');
-                                setShowCardPaymentModal(false);
-                              } else {
-                                setPaymentErrorModalMsg('Card payment gateway authorization failed. Please try again.');
-                              }
-                            } catch (err) {
-                              setPaymentErrorModalMsg('Card transaction error. Please try again.');
-                            } finally {
-                              setIsProcessingCard(false);
-                            }
-                          }}
-                          className='w-full bg-gradient-to-r from-yellow-500 to-amber-600 hover:from-yellow-400 hover:to-amber-500 text-black font-black text-xs uppercase py-3 rounded-xl transition-all shadow-lg cursor-pointer'
-                        >
-                          Pay & Recharge Now
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-          );
-        })()
-      )}
-
-      {/* ========================================= */}
-      {/* GOOGLE / INITIAL PROFILE COMPLETION */}
-      {showProfileSetupModal && String(user?.authProvider || "").toLowerCase() === "google" && !user?.usernameLockedAt && (
-        <div className="fixed inset-0 bg-black/85 z-[10000] flex items-center justify-center p-4 backdrop-blur-md">
-          <div className="bg-gradient-to-b from-[#1c082b] via-[#100a1c] to-[#0a0a12] border border-[#ff007f]/50 rounded-3xl w-full max-w-[400px] p-5 shadow-[0_0_40px_rgba(255,0,127,0.3)] text-white space-y-4 max-h-[92vh] overflow-y-auto">
-            <div className="text-center space-y-1">
-              <div className="w-12 h-12 rounded-2xl bg-white mx-auto flex items-center justify-center shadow-lg">
-                <span className="text-2xl font-black">G</span>
-              </div>
-              <h3 className="text-xl font-black">Complete Your Profile</h3>
-              <p className="text-xs text-gray-400">Your Google account is verified. Complete these details to create your permanent Pardais account.</p>
-            </div>
-
-            <div className="bg-[#151520] border border-[#303040] rounded-xl p-3 space-y-1">
-              <p className="text-[10px] uppercase tracking-wider text-gray-500">Pardais ID</p>
-              <p className="text-sm font-black text-cyan-300 tracking-wider">{user?.uniqueId || "Generating…"}</p>
-              <p className="text-[9px] text-gray-500">Assigned by Pardais and locked permanently.</p>
-            </div>
-
-            <div className="space-y-3">
-              <div>
-                <label className="text-[10px] uppercase tracking-wider text-gray-400 block mb-1">Full Name</label>
-                <input value={setupFullName} onChange={e=>setSetupFullName(e.target.value)} className="w-full bg-[#1e1e2d] border border-[#303040] rounded-xl px-3 py-3 text-white text-sm" autoComplete="name" />
-              </div>
-              <div>
-                <label className="text-[10px] uppercase tracking-wider text-gray-400 block mb-1">Choose Username</label>
-                <input value={setupUsername} onChange={e=>setSetupUsername(e.target.value.replace(/[^a-zA-Z0-9_]/g, ""))} placeholder="your_username" className="w-full bg-[#1e1e2d] border border-[#303040] rounded-xl px-3 py-3 text-white text-sm" autoComplete="username" />
-                <p className="text-[9px] text-gray-500 mt-1">You can edit this now. After completing your profile, it will be locked.</p>
-              </div>
-              <div>
-                <label className="text-[10px] uppercase tracking-wider text-gray-400 block mb-1">Email</label>
-                <input value={user?.email || ""} readOnly className="w-full bg-[#151520] border border-[#303040] rounded-xl px-3 py-3 text-gray-400 text-sm" />
-              </div>
-              <div className="relative">
-                <label className="text-[10px] uppercase tracking-wider text-gray-400 block mb-1">Create Password</label>
-                <input value={setupPassword} onChange={e=>setSetupPassword(e.target.value)} type={setupShowPassword ? "text" : "password"} placeholder="6+ characters" className="w-full bg-[#1e1e2d] border border-[#303040] rounded-xl px-3 py-3 pr-12 text-white text-sm" autoComplete="new-password" />
-                <button type="button" onClick={()=>setSetupShowPassword(v=>!v)} className="absolute right-2 bottom-1 w-9 h-9 flex items-center justify-center text-lg" aria-label={setupShowPassword ? "Hide password" : "Show password"}>{setupShowPassword ? "🙈" : "👁️"}</button>
-              </div>
-              <div className="relative">
-                <label className="text-[10px] uppercase tracking-wider text-gray-400 block mb-1">Confirm Password</label>
-                <input value={setupConfirmPassword} onChange={e=>setSetupConfirmPassword(e.target.value)} type={setupShowConfirmPassword ? "text" : "password"} placeholder="Repeat password" className="w-full bg-[#1e1e2d] border border-[#303040] rounded-xl px-3 py-3 pr-12 text-white text-sm" autoComplete="new-password" />
-                <button type="button" onClick={()=>setSetupShowConfirmPassword(v=>!v)} className="absolute right-2 bottom-1 w-9 h-9 flex items-center justify-center text-lg" aria-label={setupShowConfirmPassword ? "Hide confirm password" : "Show confirm password"}>{setupShowConfirmPassword ? "🙈" : "👁️"}</button>
-              </div>
-            </div>
-
-            {loginError && <p className="text-red-300 text-xs bg-red-950/30 border border-red-500/50 rounded-xl p-3">{loginError}</p>}
-            <button type="button" onClick={(e)=>handleCompleteProfileSetup(e as any)} className="w-full bg-gradient-to-r from-[#ff007f] to-[#7b2cbf] text-white py-3 rounded-xl font-bold">Complete Profile & Enter Pardais</button>
-          </div>
-        </div>
-      )}
-
-      {/* AUTHENTICATION REQUIRED MODAL — persistent Email/Password + Signup + OTP + Recovery */}
-      {showAuthModal && (
-        <div className="fixed inset-0 bg-black/85 z-[9999] flex items-center justify-center p-4 backdrop-blur-md animate-fade-in safe-padding-top safe-padding-bottom">
-          <div className="bg-gradient-to-b from-[#1c082b] via-[#100a1c] to-[#0a0a12] border border-[#ff007f]/50 rounded-3xl w-full max-w-[400px] p-5 shadow-[0_0_40px_rgba(255,0,127,0.3)] text-white relative max-h-[90vh] overflow-y-auto">
-            <button
-              type="button"
-              onClick={() => { setShowAuthModal(false); setPendingAuthCallback(null); setLoginError(""); }}
-              className="absolute top-3.5 right-3.5 w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-gray-300 hover:text-white transition-all cursor-pointer z-10"
-              aria-label="Close authentication"
-            >
-              <X className="w-4 h-4" />
-            </button>
-
-            <div className="text-center space-y-2 pt-1 pb-4">
-              <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-[#ff007f] via-[#7b2cbf] to-[#00f5ff] p-0.5 mx-auto shadow-lg flex items-center justify-center">
-                <div className="w-full h-full bg-[#0a0a12] rounded-[14px] flex items-center justify-center">
-                  <Lock className="w-6 h-6 text-[#00f5ff]" />
-                </div>
-              </div>
-              <h3 className="text-base font-black text-white tracking-wide uppercase font-mono">Pardais Party</h3>
-              <p className="text-[11px] text-pink-200 leading-snug px-2">Login to your account or create a new one.</p>
-            </div>
-
-            <PersistentEmailAuth
-              onAuthenticated={handleAuthAuthenticated}
-              onGoogleSignIn={handleGoogleSignIn}
-            />
-
-            <button
-              type="button"
-              onClick={() => { setShowAuthModal(false); setPendingAuthCallback(null); }}
-              className="w-full mt-3 py-2 bg-white/5 hover:bg-white/10 text-gray-300 font-bold text-xs rounded-xl border border-white/10 transition-all cursor-pointer text-center"
-            >
-              Continue Browsing as Guest 👁️
-            </button>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
+            <div class

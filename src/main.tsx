@@ -6,15 +6,23 @@ import './index.css';
 
 // Intercept and handle Firestore quota/resource-exhausted errors cleanly to prevent developer log pollution
 if (typeof window !== "undefined") {
-  // Register ServiceWorker for Android PWA / WebAPK 1-Click Installation
-  if ('serviceWorker' in navigator) {
-    window.addEventListener('load', () => {
-      navigator.serviceWorker.register('/sw.js').then((reg) => {
-        console.log('[Pardais Party PWA] ServiceWorker registered successfully:', reg.scope);
-      }).catch((err) => {
-        console.warn('[Pardais Party PWA] ServiceWorker registration note:', err);
+  // Register ServiceWorker for Android PWA / WebAPK 1-Click Installation (only when allowed and top-level)
+  try {
+    if ('serviceWorker' in navigator && window.self === window.top) {
+      window.addEventListener('load', () => {
+        try {
+          navigator.serviceWorker.register('/sw.js').then((reg) => {
+            console.log('[Pardais Party PWA] ServiceWorker registered successfully:', reg.scope);
+          }).catch((err) => {
+            console.warn('[Pardais Party PWA] ServiceWorker registration note:', err);
+          });
+        } catch (swErr) {
+          console.warn('[Pardais Party PWA] ServiceWorker registration skipped:', swErr);
+        }
       });
-    });
+    }
+  } catch (e) {
+    // Ignore iframe / security restrictions
   }
 
   const originalConsoleError = console.error;
@@ -135,6 +143,7 @@ if (typeof window !== "undefined") {
   window.onerror = function (message, source, lineno, colno, error) {
     const msg = String(message || error?.message || error?.stack || "").toLowerCase();
     if (
+      msg.includes("script error") ||
       msg.includes("circular structure") ||
       msg.includes("has no supported sources") ||
       (msg.includes("firestore") && (msg.includes("resource_exhausted") || msg.includes("quota") || msg.includes("resource-exhausted") || msg.includes("code: 8") || msg.includes("code=resource-exhausted"))) ||
@@ -149,7 +158,7 @@ if (typeof window !== "undefined") {
       msg.includes("apresponse")
     ) {
       originalConsoleWarn.apply(console, [
-        "[Pardais Party - Media/RTC] Handled window error for transient stream/RTC:",
+        "[Pardais Party - Notice] Handled window error gracefully:",
         msg
       ]);
       return true; // prevent error firing

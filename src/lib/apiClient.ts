@@ -48,16 +48,20 @@ export const resolveApiUrl = (path: string): string => {
 
   // In Android APK / Capacitor environment, route to central production API base
   if (isCapacitorOrAndroid()) {
-    return `${PRODUCTION_API_BASE}${cleanPath}`;
+    const envApiUrl = (import.meta as any).env?.VITE_API_URL;
+    const base = typeof envApiUrl === "string" && envApiUrl.trim()
+      ? envApiUrl.trim().replace(/\/+$/, "")
+      : PRODUCTION_API_BASE;
+    return `${base}${cleanPath}`;
   }
 
-  // Pardais Party uses one centralized production API on both Web and Android.
-  // Never fall back to the current web origin for /api routes.
+  // In Web environment, prioritize VITE_API_URL if explicitly provided, else use relative /api routes on the same host
   const envApiUrl = (import.meta as any).env?.VITE_API_URL;
-  const base = typeof envApiUrl === "string" && envApiUrl.trim()
-    ? envApiUrl.trim().replace(/\/+$/, "")
-    : PRODUCTION_API_BASE;
-  return `${base}${cleanPath}`;
+  if (typeof envApiUrl === "string" && envApiUrl.trim()) {
+    const base = envApiUrl.trim().replace(/\/+$/, "");
+    return `${base}${cleanPath}`;
+  }
+  return cleanPath;
 };
 
 // Global fetch interceptor to guarantee relative API requests resolve to production API base on Android APK
