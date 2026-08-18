@@ -31012,4 +31012,47 @@ export default function App() {
             </div>
 
             {/* Video preview container */}
-            <div class
+            <div className="relative w-full aspect-square rounded-2xl overflow-hidden bg-black border border-white/10">
+              <video
+                ref={avatarVideoRef}
+                autoPlay
+                playsInline
+                muted
+                className="w-full h-full object-cover scale-x-[-1]"
+              />
+              {!avatarCameraStream && (
+                <div className="absolute inset-0 flex items-center justify-center bg-black/70">
+                  <span className="text-[10px] text-gray-400 font-mono">Camera preview unavailable</span>
+                </div>
+              )}
+            </div>
+
+            <div className="flex gap-2 pt-1">
+              <button
+                type="button"
+                onClick={captureAvatarFromCamera}
+                disabled={!avatarCameraStream}
+                className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-[#ff007f] to-purple-600 text-white text-[9px] font-black uppercase tracking-widest shadow-lg disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+              >
+                📸 Snap Photo
+              </button>
+              <button
+                type="button"
+                onClick={stopAvatarCamera}
+                className="px-4 py-2.5 rounded-xl bg-white/10 border border-white/10 text-gray-200 text-[9px] font-bold uppercase tracking-wider hover:bg-white/15 cursor-pointer"
+              >
+                Cancel
+              </button>
+            </div>
+
+            <p className="text-[8px] text-gray-500 font-sans">
+              Your camera preview stays on this screen until you take the photo or close the camera.
+            </p>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+export default App;
