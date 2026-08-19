@@ -211,7 +211,7 @@ async function authenticateUser(req: any, res: any, next: any) {
   let session = dbData.sessions?.[token];
 
   // New signed sessions survive backend restarts/replicas without depending on
-  // Firestore being available for the authentication check.
+  // Firestore being available for the authentication check (server-side Admin SDK is preferred on Railway).
   if (!session && token.startsWith("pardais_v2.")) {
     session = decodeSessionToken(token);
     if (session) dbData.sessions[token] = session;
