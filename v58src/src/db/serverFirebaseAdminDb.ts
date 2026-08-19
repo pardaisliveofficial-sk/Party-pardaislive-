@@ -13,6 +13,7 @@ function initRailwayAdminFirestore(force = false) {
   try {
     const projectId = process.env.FIREBASE_PROJECT_ID || "pardais-party-production";
     const rawJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON || process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON;
+    const rawBase64 = process.env.FIREBASE_SERVICE_ACCOUNT_BASE64?.trim();
     const clientEmail = process.env.FIREBASE_CLIENT_EMAIL?.trim();
     const privateKey = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, "\n");
     let adminApp: any;
@@ -21,6 +22,12 @@ function initRailwayAdminFirestore(force = false) {
       adminApp = getAdminApps()[0];
     } else if (rawJson) {
       const serviceAccount = JSON.parse(rawJson);
+      adminApp = initializeAdminApp({
+        credential: cert(serviceAccount),
+        projectId: serviceAccount.project_id || projectId
+      });
+    } else if (rawBase64) {
+      const serviceAccount = JSON.parse(Buffer.from(rawBase64, "base64").toString("utf8"));
       adminApp = initializeAdminApp({
         credential: cert(serviceAccount),
         projectId: serviceAccount.project_id || projectId
@@ -40,7 +47,7 @@ function initRailwayAdminFirestore(force = false) {
   } catch (err: any) {
     adminDb = null;
     console.error("[PARDAIS-PARTY FIREBASE] Firebase Admin unavailable:", err?.message || err);
-    console.error("[PARDAIS-PARTY FIREBASE] Expected FIREBASE_SERVICE_ACCOUNT_JSON or FIREBASE_CLIENT_EMAIL + FIREBASE_PRIVATE_KEY in Railway Variables.");
+    console.error("[PARDAIS-PARTY FIREBASE] Configure FIREBASE_SERVICE_ACCOUNT_JSON (or BASE64) or FIREBASE_CLIENT_EMAIL + FIREBASE_PRIVATE_KEY in Railway Variables.");
     return null;
   }
 }
@@ -91,24 +98,31 @@ export async function getPersistedUserForSession(session: any): Promise<any | nu
   const db = getAdminDb();
   if (!session || !db) return null;
   const candidates: any[] = [];
-  try {
-    if (session.uid) {
-      const snap = await db.collection("users").doc(`uid_${session.uid}`).get();
-      if (snap.exists) candidates.push(snap.data());
+
+  const readUser = async (docId: string, label: string) => {
+    try {
+      const snap = await db.collection("users").doc(String(docId)).get();
+      return snap.exists ? snap.data() : null;
+    } catch (err) {
+      handleAdminError(err, label);
+      return null;
     }
-    if (session.email) {
-      const emailKey = String(session.email).toLowerCase().trim().replace(/[^a-zA-Z0-9]/g, "_");
-      const snap = await db.collection("users").doc(`email_${emailKey}`).get();
-      if (snap.exists) candidates.push(snap.data());
-    }
-    if (session.username) {
-      const snap = await db.collection("users").doc(String(session.username)).get();
-      if (snap.exists) candidates.push(snap.data());
-    }
-  } catch (err) {
-    handleAdminError(err, "auth user/session restore lookup");
-    return null;
+  };
+
+  if (session.uid) {
+    const user = await readUser(`uid_${session.uid}`, "auth user/session UID lookup");
+    if (user) candidates.push(user);
   }
+  if (session.email) {
+    const emailKey = String(session.email).toLowerCase().trim().replace(/[^a-zA-Z0-9]/g, "_");
+    const user = await readUser(`email_${emailKey}`, "auth user/session email lookup");
+    if (user) candidates.push(user);
+  }
+  if (session.username) {
+    const user = await readUser(String(session.username), "auth user/session username lookup");
+    if (user) candidates.push(user);
+  }
+
   return candidates.find((u: any) => session.uid && u?.uid === session.uid)
     || candidates.find((u: any) => session.email && String(u?.email || "").toLowerCase().trim() === String(session.email).toLowerCase().trim())
     || candidates.find((u: any) => session.username && u?.username === session.username)

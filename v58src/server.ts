@@ -246,9 +246,31 @@ async function authenticateUser(req: any, res: any, next: any) {
     user = dbData.users?.find((u: any) => u?.username === session.username);
   }
 
-  // If the user cache is also cold, hydrate the canonical Firestore user docs.
+  // If the user cache is cold (common after a Railway restart), restore the
+  // canonical account from the server-side Admin Firestore. Keep this lookup
+  // bounded and try the email-keyed account as a second path so one missing
+  // legacy document cannot prevent a valid account from being restored.
   if (!user) {
-    user = await getPersistedUserForSession(session);
+    try {
+      user = await Promise.race([
+        getPersistedUserForSession(session),
+        new Promise<any | null>((resolve) => setTimeout(() => resolve(null), 5000))
+      ]);
+    } catch {
+      user = null;
+    }
+
+    if (!user && session.email) {
+      try {
+        user = await Promise.race([
+          getPersistedUserForEmail(String(session.email)),
+          new Promise<any | null>((resolve) => setTimeout(() => resolve(null), 5000))
+        ]);
+      } catch {
+        user = null;
+      }
+    }
+
     if (user) {
       const existingIdx = dbData.users?.findIndex((u: any) =>
         (session.uid && u?.uid === session.uid) ||
@@ -1202,6 +1224,19 @@ async function findCompletedEmailUserDurably(email: string, timeoutMs = 1500) {
   try {
     // A locked email registry entry is the durable proof that this email has
     // already been registered, even if an old app version lost its password.
+    const registry = await Promise.race([
+      getPersistedEmailRegistry(cleanEmail),
+      new Promise<any | null>((resolve) => setTimeout(() => resolve(null), timeoutMs))
+    ]);
+    if (registry?.uid) {
+      const persisted = await Promise.race([
+        getPersistedUserForEmail(cleanEmail),
+        new Promise<any | null>((resolve) => setTimeout(() => resolve(null), timeoutMs))
+      ]);
+      if (persisted) return persisted;
+      return { email: cleanEmail, uid: registry.uid, username: registry.username || "", accountStatus: "registered", passwordHash: "" };
+    }
+
     const persisted = await Promise.race([
       getPersistedUserForEmail(cleanEmail),
       new Promise<any | null>((resolve) => setTimeout(() => resolve(null), timeoutMs))
@@ -1442,7 +1477,7 @@ app.post("/api/v1/auth/send-login-email-otp", async (req, res) => {
     });
   }
 
-  const user = getLocalCompletedEmailUser(email) || await findCompletedEmailUserDurably(email, 8000);
+  const user = getLocalCompletedEmailUser(email) || await findCompletedEmailUserDurably(email, 1200);
   if (!user) {
     return res.status(404).json({
       success: false,
@@ -1806,7 +1841,7 @@ app.post("/api/v1/auth/verify-login-email-otp", async (req, res) => {
     return res.status(401).json({ success: false, error: "Invalid login code. Please check your email and try again." });
   }
 
-  const user = getLocalCompletedEmailUser(email) || await findCompletedEmailUserDurably(email, 8000);
+  const user = getLocalCompletedEmailUser(email) || await findCompletedEmailUserDurably(email, 3000);
   if (!user) {
     return res.status(404).json({
       success: false,
@@ -1891,7 +1926,7 @@ app.post("/api/v1/auth/recover-login-email-session", async (req, res) => {
     return res.status(401).json({ success: false, error: "Invalid or expired login code." });
   }
 
-  const user = getLocalCompletedEmailUser(email) || await findCompletedEmailUserDurably(email, 8000);
+  const user = getLocalCompletedEmailUser(email) || await findCompletedEmailUserDurably(email, 3000);
   if (!user) return res.status(404).json({ success: false, code: "ACCOUNT_NOT_FOUND", error: "This email is not registered." });
   if (user.isBanned) return res.status(403).json({ success: false, code: "ACCOUNT_BANNED", error: "ACCOUNT_BANNED" });
 
