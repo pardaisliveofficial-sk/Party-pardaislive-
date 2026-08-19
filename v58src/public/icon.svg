@@ -1,0 +1,159 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <!-- Dark Party Stage Background -->
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#030008"/>
+      <stop offset="50%" stop-color="#0d041e"/>
+      <stop offset="100%" stop-color="#020005"/>
+    </linearGradient>
+
+    <!-- Neon P Outline Gradient (Magenta -> Purple -> Electric Blue) -->
+    <linearGradient id="pBorderGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ff00a0"/>
+      <stop offset="35%" stop-color="#d900ff"/>
+      <stop offset="70%" stop-color="#6a00ff"/>
+      <stop offset="100%" stop-color="#00d2ff"/>
+    </linearGradient>
+
+    <!-- Neon Swoop Gradient -->
+    <linearGradient id="swoopGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00d2ff"/>
+      <stop offset="50%" stop-color="#e000ff"/>
+      <stop offset="100%" stop-color="#ff007f"/>
+    </linearGradient>
+
+    <!-- Party Text Gradient -->
+    <linearGradient id="partyTextGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#ff00a0"/>
+      <stop offset="50%" stop-color="#bf00ff"/>
+      <stop offset="100%" stop-color="#00f2fe"/>
+    </linearGradient>
+
+    <!-- Stage Spotlight 1 (Pink) -->
+    <linearGradient id="spotPink" x1="0%" y1="0%" x2="50%" y2="100%">
+      <stop offset="0%" stop-color="#ff0099" stop-opacity="0.8"/>
+      <stop offset="100%" stop-color="#ff0099" stop-opacity="0"/>
+    </linearGradient>
+
+    <!-- Stage Spotlight 2 (Cyan) -->
+    <linearGradient id="spotCyan" x1="100%" y1="0%" x2="50%" y2="100%">
+      <stop offset="0%" stop-color="#00f2fe" stop-opacity="0.8"/>
+      <stop offset="100%" stop-color="#00f2fe" stop-opacity="0"/>
+    </linearGradient>
+
+    <!-- Neon Glow Filter -->
+    <filter id="neonGlow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="8" result="blur" />
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <filter id="softGlow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="16" />
+    </filter>
+  </defs>
+
+  <!-- Pitch Black Canvas -->
+  <rect width="512" height="512" fill="url(#bgGrad)"/>
+
+  <!-- Ambient Ambient Glow Orbs -->
+  <circle cx="160" cy="180" r="140" fill="#ff007f" opacity="0.2" filter="url(#softGlow)"/>
+  <circle cx="340" cy="200" r="150" fill="#00d2ff" opacity="0.2" filter="url(#softGlow)"/>
+
+  <!-- MAIN EMBLEM LETTER 'P' STAGE FRAME -->
+  <!-- Outer Glow Outline -->
+  <path d="M 140 65 L 340 65 C 410 65, 410 240, 320 240 L 225 240 C 180 290, 145 330, 215 350 L 210 365 C 135 345, 170 280, 215 240 L 140 240 Z" 
+        fill="none" stroke="url(#pBorderGrad)" stroke-width="12" filter="url(#neonGlow)"/>
+
+  <!-- Filled P Body (Stage Arena Inside) -->
+  <path d="M 145 70 L 335 70 C 400 70, 400 235, 315 235 L 215 235 L 145 235 Z" 
+        fill="#060212"/>
+
+  <!-- Stage Lights & Spotlights Beam inside 'P' -->
+  <polygon points="170,70 250,220 200,220" fill="url(#spotPink)"/>
+  <polygon points="310,70 240,220 280,220" fill="url(#spotCyan)"/>
+  <polygon points="240,70 220,220 270,220" fill="#ffffff" opacity="0.15"/>
+
+  <!-- Spotlight Lamp Fixtures at top of P -->
+  <circle cx="170" cy="74" r="5" fill="#ff00a0"/>
+  <circle cx="205" cy="74" r="5" fill="#e000ff"/>
+  <circle cx="240" cy="74" r="5" fill="#ffffff"/>
+  <circle cx="275" cy="74" r="5" fill="#00f2fe"/>
+  <circle cx="310" cy="74" r="5" fill="#00d2ff"/>
+
+  <!-- CROWD SILHOUETTE (Bottom of P inner arena) -->
+  <path d="M 145 235 
+           Q 155 210, 165 235 
+           Q 175 200, 185 235 
+           Q 195 215, 205 235 
+           Q 215 205, 225 235 
+           Q 235 220, 245 235 
+           Q 255 195, 265 235 
+           Q 275 210, 285 235 
+           Q 295 200, 305 235 
+           Q 315 220, 325 235 
+           L 325 235 L 145 235 Z" fill="#020008"/>
+
+  <!-- Crowd Raised Hands -->
+  <path d="M 160 215 L 163 205 L 166 215 Z 
+           M 180 205 L 184 195 L 188 205 Z 
+           M 290 208 L 293 198 L 297 208 Z 
+           M 310 212 L 313 200 L 317 212 Z" stroke="#0d041e" stroke-width="3"/>
+
+  <!-- SINGER / PERFORMER SILHOUETTE IN CENTER -->
+  <!-- Body & Pose with microphone -->
+  <path d="M 235 235 C 230 205, 232 185, 242 165 C 240 162, 235 158, 238 150 C 242 142, 252 142, 255 150 C 258 158, 253 163, 250 166 C 260 180, 268 200, 262 235 Z" fill="#03010a"/>
+  <!-- Raised Arm with Microphone -->
+  <path d="M 252 168 L 275 152 L 282 148" stroke="#03010a" stroke-width="6" stroke-linecap="round"/>
+  <!-- Microphone head with glow -->
+  <circle cx="284" cy="146" r="4" fill="#00f2fe" filter="url(#neonGlow)"/>
+
+  <!-- DYNAMIC NEON SWOOP BAR (The Curved Bottom Stem of P) -->
+  <path d="M 140 235 C 135 320, 180 370, 275 300 C 330 260, 370 200, 340 180" 
+        fill="none" stroke="url(#swoopGrad)" stroke-width="14" stroke-linecap="round" filter="url(#neonGlow)"/>
+
+  <!-- PARTY POPPER & CONFETTI BURST (Top Right of P) -->
+  <g transform="translate(345, 100) rotate(-25)">
+    <!-- Popper Cone -->
+    <polygon points="0,30 20,0 35,20" fill="url(#partyTextGrad)"/>
+    <polygon points="3,27 18,3 30,18" fill="#ffffff" opacity="0.3"/>
+    
+    <!-- Confetti ribbons & streamers bursting out -->
+    <path d="M 25 -5 Q 35 -25, 50 -15 T 70 -35" fill="none" stroke="#ff007f" stroke-width="4" stroke-linecap="round"/>
+    <path d="M 30 -10 Q 50 -35, 65 -20 T 85 -45" fill="none" stroke="#00f2fe" stroke-width="3" stroke-linecap="round"/>
+    <path d="M 15 -10 Q 25 -40, 40 -45" fill="none" stroke="#ffea00" stroke-width="3"/>
+
+    <!-- Stars & Dots -->
+    <polygon points="50,-30 53,-22 62,-22 55,-17 58,-9 50,-14 42,-9 45,-17 38,-22 47,-22" fill="#ffea00"/>
+    <polygon points="75,-15 77,-10 82,-10 78,-7 80,-2 75,-5 70,-2 72,-7 68,-10 73,-10" fill="#00f2fe"/>
+    <circle cx="35" cy="-35" r="4" fill="#ff00a0"/>
+    <circle cx="65" cy="-40" r="5" fill="#e000ff"/>
+    <circle cx="20" cy="-25" r="3" fill="#00f2fe"/>
+  </g>
+
+  <!-- TEXT SECTION BELOW: PARDAIS PARTY -->
+  <!-- "PARDAIS" Main White Bold Text -->
+  <text x="256" y="440" 
+        font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" 
+        font-weight="900" 
+        font-size="44" 
+        fill="#ffffff" 
+        text-anchor="middle" 
+        letter-spacing="5">PARDAIS</text>
+
+  <!-- Horizontal Line Accents beside PARTY -->
+  <line x1="85" y1="472" x2="155" y2="472" stroke="url(#partyTextGrad)" stroke-width="4" stroke-linecap="round"/>
+  <line x1="357" y1="472" x2="427" y2="472" stroke="url(#partyTextGrad)" stroke-width="4" stroke-linecap="round"/>
+
+  <!-- "PARTY" Subtitle Text -->
+  <text x="256" y="480" 
+        font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" 
+        font-weight="900" 
+        font-size="28" 
+        fill="url(#partyTextGrad)" 
+        text-anchor="middle" 
+        letter-spacing="8" 
+        filter="url(#neonGlow)">PARTY</text>
+</svg>

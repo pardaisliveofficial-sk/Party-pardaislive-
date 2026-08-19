@@ -1,0 +1,11 @@
+RESEND FIX V2
+
+The backend now FORCES this verified sender:
+noreply@mail.pardaisparty.soulverseapps.com
+
+It no longer allows an old RESEND_FROM_EMAIL Railway variable to override the verified sender.
+
+After deploying, Railway logs should show:
+[PARDAIS PARTY EMAIL] Resend sender: Pardais Party <noreply@mail.pardaisparty.soulverseapps.com>
+
+The previous 403 was Resend test-mode behavior caused by an unverified sender/domain.
