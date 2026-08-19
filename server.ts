@@ -19,11 +19,12 @@ import {
   writeMetadata,
   hydrateReelsFromFirestore,
   clearAllHostsInFirestore,
-  getPersistedUserForSession,
+  // User/session restoration on Railway must use the server-side Admin SDK.
 } from "./src/db/firebaseDb";
 import {
   getPersistedSession,
   getPersistedUserForEmail,
+  getPersistedUserForSession,
   getPersistedEmailRegistry,
   persistEmailRegistry,
   persistAuthChallenge,
@@ -245,9 +246,31 @@ async function authenticateUser(req: any, res: any, next: any) {
     user = dbData.users?.find((u: any) => u?.username === session.username);
   }
 
-  // If the user cache is also cold, hydrate the canonical Firestore user docs.
+  // If the user cache is cold after a Railway restart, restore the canonical
+  // account from server-side Admin Firestore. Try the session identity first,
+  // then the locked email registry/account mirror. Never let a slow Firestore
+  // read hang the authenticated request indefinitely.
   if (!user) {
-    user = await getPersistedUserForSession(session);
+    try {
+      user = await Promise.race([
+        getPersistedUserForSession(session),
+        new Promise<any | null>((resolve) => setTimeout(() => resolve(null), 7000))
+      ]);
+    } catch {
+      user = null;
+    }
+
+    if (!user && session.email) {
+      try {
+        user = await Promise.race([
+          getPersistedUserForEmail(String(session.email)),
+          new Promise<any | null>((resolve) => setTimeout(() => resolve(null), 5000))
+        ]);
+      } catch {
+        user = null;
+      }
+    }
+
     if (user) {
       const existingIdx = dbData.users?.findIndex((u: any) =>
         (session.uid && u?.uid === session.uid) ||
