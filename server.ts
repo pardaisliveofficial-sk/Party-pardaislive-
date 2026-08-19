@@ -1305,7 +1305,7 @@ async function sendPardaisPartyOtpEmail(to: string, otp: string, purpose: "signu
   </div>`;
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 15000);
+  const timeout = setTimeout(() => controller.abort(), 30000);
 
   try {
     const response = await fetch("https://api.resend.com/emails", {

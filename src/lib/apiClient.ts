@@ -260,7 +260,7 @@ export async function emailStatus(email: string) {
 
 export async function sendEmailOtp(email: string) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 25000);
+  const timeout = setTimeout(() => controller.abort(), 60000);
   try {
     const res = await fetch(resolveApiUrl("/api/v1/auth/send-email-otp"), {
       method: "POST",
@@ -272,7 +272,7 @@ export async function sendEmailOtp(email: string) {
     if (!res.ok) return { success: false, error: data?.error || `Verification request failed (HTTP ${res.status}).`, code: data?.code };
     return data;
   } catch (err: any) {
-    if (err?.name === "AbortError") return { success: false, error: "Verification request timed out. Please try again." };
+    if (err?.name === "AbortError") return { success: false, error: "Verification email request timed out. The code may still arrive; please check your inbox and try again if needed." };
     return { success: false, error: "Could not reach the verification service. Please try again." };
   } finally {
     clearTimeout(timeout);
