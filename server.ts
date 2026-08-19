@@ -186,7 +186,247 @@ function ensureDatabaseSchema() {
 }
 
 // Perform initial load asynchronously
-loadDatabase();
+const databaseReady = loadDatabase();
+
+
+// ------------------------------------------------------------------
+// FRESH END-TO-END EMAIL AUTH FLOW (v2)
+// This flow is deliberately isolated from the legacy auth handlers above.
+// It uses the same production user/session records, but has one linear path:
+// request OTP -> verify OTP -> complete profile for signup, or
+// request OTP -> verify OTP for login.
+// ------------------------------------------------------------------
+const freshAuthReady = async () => {
+  try {
+    await Promise.race([
+      databaseReady,
+      new Promise<void>((resolve) => setTimeout(resolve, 12000))
+    ]);
+  } catch {}
+};
+
+const freshAuthEmailKey = (email: string) =>
+  String(email || '').toLowerCase().trim().replace(/[^a-zA-Z0-9]/g, '_');
+
+const freshAuthCleanEmail = (value: any) =>
+  typeof value === 'string' ? value.trim().toLowerCase() : '';
+
+const freshAuthOtpKey = (kind: 'signup' | 'login', email: string) =>
+  `fresh_${kind}_${freshAuthEmailKey(email)}`;
+
+const freshAuthFindCompletedUser = async (email: string) => {
+  const local = getLocalCompletedEmailUser(email);
+  if (local) return local;
+  try {
+    return await Promise.race([
+      getPersistedUserForEmail(email),
+      new Promise<any | null>((resolve) => setTimeout(() => resolve(null), 5000))
+    ]);
+  } catch {
+    return null;
+  }
+};
+
+const freshAuthGetChallenge = async (key: string) => {
+  const hot = dbData.emailOtps?.[key];
+  if (hot) return hot;
+  try {
+    return await Promise.race([
+      getPersistedAuthChallenge(key),
+      new Promise<any | null>((resolve) => setTimeout(() => resolve(null), 5000))
+    ]);
+  } catch {
+    return null;
+  }
+};
+
+const freshAuthSaveChallenge = async (key: string, challenge: any) => {
+  if (!dbData.emailOtps) dbData.emailOtps = {};
+  dbData.emailOtps[key] = challenge;
+  saveDatabase();
+  const durable = await Promise.race([
+    persistAuthChallenge(key, challenge),
+    new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 8000))
+  ]).catch(() => false);
+  return Boolean(durable);
+};
+
+const freshAuthDeleteChallenge = (key: string) => {
+  if (dbData.emailOtps) delete dbData.emailOtps[key];
+  void deletePersistedAuthChallenge(key).catch(() => undefined);
+  try { saveDatabase(); } catch {}
+};
+
+const freshAuthNewUser = (email: string) => ({
+  uid: 'email_' + freshAuthEmailKey(email),
+  email,
+  username: usernameFromEmail(email),
+  uniqueId: stablePardaisId(email),
+  fullName: '',
+  avatar: '',
+  coverPhoto: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=800&q=80',
+  bio: 'Pardais Party Member 🇵🇰',
+  gender: 'Male',
+  country: 'Pakistan',
+  language: 'Urdu / Hinglish',
+  coins: 0, diamonds: 0, vipLevel: 0, userLevel: 1, hostLevel: 1, wealthLevel: 1, xp: 0,
+  familyId: '', agencyId: '', isVerified: true, isBanned: false,
+  twoFactorEnabled: false, dob: '', phoneNumber: '', kycStatus: 'none',
+  followersCount: 0, followingCount: 0, totalLikesCount: 0,
+  selectedFrameId: '', vipSuspended: false, passwordHash: '', authProvider: 'email',
+  accountStatus: 'pending_profile', profileCompleted: false
+});
+
+const freshAuthSendOtp = async (email: string, kind: 'signup' | 'login') => {
+  const otp = String(Math.floor(100000 + Math.random() * 900000));
+  const key = freshAuthOtpKey(kind, email);
+  const challenge = {
+    otp,
+    email,
+    type: kind,
+    expiresAt: Date.now() + 10 * 60 * 1000,
+    createdAt: new Date().toISOString()
+  };
+  const persisted = await freshAuthSaveChallenge(key, challenge);
+  if (!persisted) {
+    freshAuthDeleteChallenge(key);
+    throw new Error('Authentication database is not connected. Configure the production Firebase Admin credentials in Railway.');
+  }
+  try {
+    await sendPardaisPartyOtpEmail(email, otp, kind === 'login' ? 'login' : 'signup');
+  } catch (err) {
+    freshAuthDeleteChallenge(key);
+    throw err;
+  }
+  return key;
+};
+
+app.get('/api/v2/auth/health', async (_req, res) => {
+  await freshAuthReady();
+  const hasResend = Boolean(process.env.RESEND_API_KEY?.trim());
+  const hasFirebase = Boolean(
+    process.env.FIREBASE_SERVICE_ACCOUNT_JSON?.trim() ||
+    process.env.FIREBASE_SERVICE_ACCOUNT_BASE64?.trim() ||
+    (process.env.FIREBASE_CLIENT_EMAIL?.trim() && process.env.FIREBASE_PRIVATE_KEY)
+  );
+  res.json({ success: true, authFlow: 'v2', emailDeliveryConfigured: hasResend, durableAuthConfigured: hasFirebase });
+});
+
+app.post('/api/v2/auth/signup/request', async (req, res) => {
+  await freshAuthReady();
+  const email = freshAuthCleanEmail(req.body?.email);
+  if (!email || !email.includes('@')) return res.status(400).json({ success: false, error: 'Enter a valid email address.' });
+  const existing = await freshAuthFindCompletedUser(email);
+  if (existing) return res.status(409).json({ success: false, code: 'EMAIL_ALREADY_REGISTERED', error: 'This email is already registered. Please use Log In.' });
+  try {
+    await freshAuthSendOtp(email, 'signup');
+    res.json({ success: true, message: `Verification code sent to ${email}.` });
+  } catch (err: any) {
+    console.error('[FRESH AUTH] signup OTP failed:', err?.message || err);
+    res.status(503).json({ success: false, code: 'OTP_DELIVERY_FAILED', error: err?.message || 'Verification email could not be sent.' });
+  }
+});
+
+app.post('/api/v2/auth/signup/verify', async (req, res) => {
+  await freshAuthReady();
+  const email = freshAuthCleanEmail(req.body?.email);
+  const otp = String(req.body?.otp || '').replace(/\D/g, '');
+  if (!email || otp.length !== 6) return res.status(400).json({ success: false, error: 'Email and 6-digit code are required.' });
+  const key = freshAuthOtpKey('signup', email);
+  const challenge = await freshAuthGetChallenge(key);
+  if (!challenge || Number(challenge.expiresAt || 0) < Date.now() || String(challenge.otp) !== otp) {
+    return res.status(401).json({ success: false, error: 'Invalid or expired verification code.' });
+  }
+  const existing = await freshAuthFindCompletedUser(email);
+  if (existing) {
+    freshAuthDeleteChallenge(key);
+    return res.status(409).json({ success: false, code: 'EMAIL_ALREADY_REGISTERED', error: 'This email is already registered. Please use Log In.' });
+  }
+  let user = (dbData.users || []).find((u: any) => String(u?.email || '').toLowerCase().trim() === email);
+  if (!user) {
+    user = freshAuthNewUser(email);
+    dbData.users.push(user);
+  } else {
+    user = { ...user, ...freshAuthNewUser(email), ...user, email, uid: user.uid || ('email_' + freshAuthEmailKey(email)), uniqueId: user.uniqueId || stablePardaisId(email), isVerified: true, accountStatus: 'pending_profile', profileCompleted: false };
+    const idx = dbData.users.findIndex((u: any) => String(u?.email || '').toLowerCase().trim() === email);
+    if (idx >= 0) dbData.users[idx] = user;
+  }
+  ensureStableEmailIdentity(user, email);
+  user.isVerified = true;
+  user.accountStatus = 'pending_profile';
+  user.profileCompleted = false;
+  const durable = await persistUserDurably(user);
+  if (!durable) return res.status(503).json({ success: false, code: 'AUTH_DATABASE_UNAVAILABLE', error: 'Account storage is not connected. Please try again.' });
+  freshAuthDeleteChallenge(key);
+  const token = await createSession(user);
+  res.json({ success: true, token, user, isNewUser: true, needsProfile: true });
+});
+
+app.post('/api/v2/auth/signup/complete', authenticateUser, async (req: any, res) => {
+  const fullName = String(req.body?.fullName || '').trim();
+  const username = String(req.body?.username || '').trim().replace(/^@/, '').replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 30);
+  const dob = String(req.body?.dob || '').trim();
+  if (!fullName) return res.status(400).json({ success: false, error: 'Enter your full name.' });
+  if (username.length < 3) return res.status(400).json({ success: false, error: 'Username must contain at least 3 characters.' });
+  if (!dob) return res.status(400).json({ success: false, error: 'Select your date of birth.' });
+  const taken = (dbData.users || []).some((u: any) => u !== req.user && String(u?.username || '').toLowerCase() === username.toLowerCase() && isCompletedEmailAccount(u));
+  if (taken) return res.status(409).json({ success: false, code: 'USERNAME_TAKEN', error: 'This username is already taken.' });
+  req.user.fullName = fullName;
+  req.user.username = username;
+  req.user.dob = dob;
+  req.user.isVerified = true;
+  req.user.accountStatus = 'registered';
+  req.user.profileCompleted = true;
+  req.user.registrationCompletedAt = new Date().toISOString();
+  req.user.profileUpdatedAt = req.user.registrationCompletedAt;
+  ensureStableEmailIdentity(req.user, req.user.email || '');
+  applyAdminAccountState(req.user, { initializeCoins: true });
+  const durable = await persistUserDurably(req.user);
+  if (!durable) return res.status(503).json({ success: false, code: 'AUTH_DATABASE_UNAVAILABLE', error: 'Account could not be saved to production storage. Please try again.' });
+  const idx = dbData.users.findIndex((u: any) => u?.uid === req.user.uid);
+  if (idx >= 0) dbData.users[idx] = req.user;
+  else dbData.users.push(req.user);
+  saveDatabase();
+  res.json({ success: true, token: req.token, user: req.user, message: 'Pardais account created successfully.' });
+});
+
+app.post('/api/v2/auth/login/request', async (req, res) => {
+  await freshAuthReady();
+  const email = freshAuthCleanEmail(req.body?.email);
+  if (!email || !email.includes('@')) return res.status(400).json({ success: false, error: 'Enter a valid registered email address.' });
+  const user = await freshAuthFindCompletedUser(email);
+  if (!user) return res.status(404).json({ success: false, code: 'ACCOUNT_NOT_FOUND', error: 'This email is not registered. Please use Sign Up first.' });
+  if (user.deletionScheduledAt) return res.status(409).json({ success: false, error: 'This account is scheduled for deletion.' });
+  if (user.isBanned) return res.status(403).json({ success: false, error: 'ACCOUNT_BANNED' });
+  try {
+    await freshAuthSendOtp(email, 'login');
+    res.json({ success: true, message: `Login code sent to ${email}.` });
+  } catch (err: any) {
+    console.error('[FRESH AUTH] login OTP failed:', err?.message || err);
+    res.status(503).json({ success: false, code: 'OTP_DELIVERY_FAILED', error: err?.message || 'Login email could not be sent.' });
+  }
+});
+
+app.post('/api/v2/auth/login/verify', async (req, res) => {
+  await freshAuthReady();
+  const email = freshAuthCleanEmail(req.body?.email);
+  const otp = String(req.body?.otp || '').replace(/\D/g, '');
+  if (!email || otp.length !== 6) return res.status(400).json({ success: false, error: 'Email and 6-digit code are required.' });
+  const key = freshAuthOtpKey('login', email);
+  const challenge = await freshAuthGetChallenge(key);
+  if (!challenge || Number(challenge.expiresAt || 0) < Date.now() || String(challenge.otp) !== otp) return res.status(401).json({ success: false, error: 'Invalid or expired login code.' });
+  const user = await freshAuthFindCompletedUser(email);
+  if (!user) return res.status(404).json({ success: false, code: 'ACCOUNT_NOT_FOUND', error: 'This email is not registered. Please use Sign Up first.' });
+  if (user.isBanned) return res.status(403).json({ success: false, error: 'ACCOUNT_BANNED' });
+  ensureStableEmailIdentity(user, email);
+  applyAdminAccountState(user, { initializeCoins: true });
+  const idx = dbData.users.findIndex((u: any) => u?.uid === user.uid || String(u?.email || '').toLowerCase().trim() === email);
+  if (idx >= 0) dbData.users[idx] = { ...dbData.users[idx], ...user };
+  else dbData.users.push(user);
+  freshAuthDeleteChallenge(key);
+  const token = await createSession(user);
+  res.json({ success: true, token, user, isNewUser: false, message: 'Logged in successfully.' });
+});
 
 // ------------------------------------------------------------------
 // SECURE USER AUTHENTICATION & AUTHORIZATION MIDDLEWARE

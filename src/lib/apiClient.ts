@@ -239,6 +239,52 @@ export const authenticatedFetch = async (
 // ------------------------------------------------------------------
 // Pardais Party persistent email authentication helpers
 // ------------------------------------------------------------------
+
+async function freshAuthRequest(path: string, body: any, timeoutMs = 30000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(resolveApiUrl(path), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: controller.signal
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { success: false, error: data?.error || `Authentication request failed (HTTP ${res.status}).`, code: data?.code };
+    return data;
+  } catch (err: any) {
+    if (err?.name === 'AbortError') return { success: false, error: 'Authentication service timed out. Please try again.', code: 'AUTH_TIMEOUT' };
+    return { success: false, error: 'Could not connect to the production authentication service.', code: 'AUTH_NETWORK_ERROR' };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export const freshSignupRequest = (email: string) => freshAuthRequest('/api/v2/auth/signup/request', { email: email.trim().toLowerCase() }, 30000);
+export const freshSignupVerify = (email: string, otp: string) => freshAuthRequest('/api/v2/auth/signup/verify', { email: email.trim().toLowerCase(), otp: otp.trim() }, 30000);
+export const freshSignupComplete = (token: string, fullName: string, username: string, dob: string) => freshAuthRequestWithToken('/api/v2/auth/signup/complete', token, { fullName, username, dob }, 30000);
+export const freshLoginRequest = (email: string) => freshAuthRequest('/api/v2/auth/login/request', { email: email.trim().toLowerCase() }, 30000);
+export const freshLoginVerify = (email: string, otp: string) => freshAuthRequest('/api/v2/auth/login/verify', { email: email.trim().toLowerCase(), otp: otp.trim() }, 30000);
+
+async function freshAuthRequestWithToken(path: string, token: string, body: any, timeoutMs = 30000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(resolveApiUrl(path), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+      body: JSON.stringify(body), signal: controller.signal
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { success: false, error: data?.error || `Authentication request failed (HTTP ${res.status}).`, code: data?.code };
+    return data;
+  } catch (err: any) {
+    if (err?.name === 'AbortError') return { success: false, error: 'Account setup timed out. Please try again.', code: 'AUTH_TIMEOUT' };
+    return { success: false, error: 'Could not connect to the production authentication service.', code: 'AUTH_NETWORK_ERROR' };
+  } finally { clearTimeout(timer); }
+}
+
 export async function emailStatus(email: string) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 9000);
