@@ -77,27 +77,12 @@ async function execute() {
   console.log('🎨 Starting Android Resource Generation Process... 🎨');
   console.log('------------------------------------------------------------');
 
-  const rawIconSvg = fs.existsSync(WEB_ICON_PATH) ? fs.readFileSync(WEB_ICON_PATH, 'utf8') : '';
-  if (!fs.existsSync(EXACT_PNG_PATH) && !rawIconSvg) {
-    throw new Error(`Pardais Party logo source missing. Expected ${EXACT_PNG_PATH} or ${WEB_ICON_PATH}`);
+  if (!fs.existsSync(EXACT_PNG_PATH)) {
+    throw new Error(`Exact Pardais Party logo missing at: ${EXACT_PNG_PATH}`);
   }
 
-  // Prefer the exact PNG, but fall back to the canonical SVG if the PNG was
-  // corrupted during a text-based transfer. This prevents Sharp from failing
-  // the Android build on an invalid PNG and keeps the logo deterministic.
-  let iconBuffer;
-  if (fs.existsSync(EXACT_PNG_PATH)) {
-    try {
-      iconBuffer = fs.readFileSync(EXACT_PNG_PATH);
-      await sharp(iconBuffer).metadata();
-    } catch (pngError) {
-      console.warn('⚠️ Exact PNG is invalid; falling back to public/icon.svg:', pngError.message);
-      if (!rawIconSvg) throw pngError;
-      iconBuffer = Buffer.from(rawIconSvg, 'utf8');
-    }
-  } else {
-    iconBuffer = Buffer.from(rawIconSvg, 'utf8');
-  }
+  const iconBuffer = fs.readFileSync(EXACT_PNG_PATH);
+  const rawIconSvg = fs.existsSync(WEB_ICON_PATH) ? fs.readFileSync(WEB_ICON_PATH, 'utf8') : ''; 
 
   // 1. Generate Launcher Icons (mipmap)
   console.log('\nGenerating Android Launcher Icons (mipmap) from public/pardais-party-exact.png:');

@@ -48,16 +48,11 @@ export const resolveApiUrl = (path: string): string => {
 
   // In Android APK / Capacitor environment, route to central production API base
   if (isCapacitorOrAndroid()) {
-    const envApiUrl = (import.meta as any).env?.VITE_API_URL;
-    const base = typeof envApiUrl === "string" && envApiUrl.trim()
-      ? envApiUrl.trim().replace(/\/+$/, "")
-      : PRODUCTION_API_BASE;
-    return `${base}${cleanPath}`;
+    return `${PRODUCTION_API_BASE}${cleanPath}`;
   }
 
-  // Production web must always use the real Pardais API. Falling back to a
-  // relative /api route can accidentally send auth requests to the frontend
-  // host/Cloudflare edge, which returns 405 or an empty response.
+  // Pardais Party uses one centralized production API on both Web and Android.
+  // Never fall back to the current web origin for /api routes.
   const envApiUrl = (import.meta as any).env?.VITE_API_URL;
   const base = typeof envApiUrl === "string" && envApiUrl.trim()
     ? envApiUrl.trim().replace(/\/+$/, "")
@@ -305,28 +300,23 @@ export async function verifyEmailOtp(email: string, otp: string) {
   }
 }
 
-export async function emailPasswordLogin(email: string, password: string) {
+export async function emailPasswordLogin(identifier: string, password: string) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 20000);
+  const timeout = setTimeout(() => controller.abort(), 12000);
   try {
+    const clean = String(identifier || "").trim();
     const res = await fetch(resolveApiUrl("/api/v1/auth/password-login"), {
       method: "POST",
-      headers: { "Content-Type": "application/json", "Accept": "application/json" },
-      body: JSON.stringify({ identifier: email.trim(), email: email.trim(), password }),
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ identifier: clean, email: clean, username: clean, password }),
       signal: controller.signal
     });
-    const raw = await res.text().catch(() => "");
-    let data: any = {};
-    try { data = raw ? JSON.parse(raw) : {}; } catch {
-      data = { success: false, error: `Login service returned an invalid response (HTTP ${res.status}).` };
-    }
-    if (!res.ok) {
-      return { success: false, ...data, error: data?.error || `Login request failed (HTTP ${res.status}).`, code: data?.code };
-    }
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { success: false, error: data?.error || `Login failed (HTTP ${res.status}).`, code: data?.code };
     return data;
   } catch (err: any) {
-    if (err?.name === "AbortError") return { success: false, error: "Login request timed out. Please try again.", code: "LOGIN_TIMEOUT" };
-    return { success: false, error: "Could not reach the login service. Please try again.", code: "NETWORK_ERROR" };
+    if (err?.name === "AbortError") return { success: false, error: "Login service timed out. Please try again.", code: "LOGIN_TIMEOUT" };
+    return { success: false, error: "Could not reach the login service. Please try again.", code: "LOGIN_NETWORK_ERROR" };
   } finally {
     clearTimeout(timeout);
   }
