@@ -216,7 +216,16 @@
     if(code.length!==6){setMsg("Enter the 6-digit code from your email.");return;}
     btn.disabled=true; const old=btn.textContent; btn.textContent="Verifying…";
     try{
-      const d=await post("/api/v1/auth/verify-login-email-otp",{email:loginEmail,otp:code},null,30000);
+      let d;
+      try {
+        d=await post("/api/v1/auth/verify-login-email-otp",{email:loginEmail,otp:code},null,20000);
+      } catch (verifyErr) {
+        try {
+          const recovery=await post("/api/v1/auth/recover-login-email-session",{email:loginEmail,otp:code},null,10000);
+          if(recovery?.success) d=recovery;
+          else throw verifyErr;
+        } catch { throw verifyErr; }
+      }
       if(!d?.success||!d?.token||!d?.user) throw new Error(d?.error||"Invalid or expired login code.");
       finish(d);
     }catch(e){setMsg(e.message||"Login verification failed.");}
@@ -264,7 +273,16 @@
     if(code.length!==6){setMsg("Enter the 6-digit verification code.");return;}
     btn.disabled=true; const old=btn.textContent; btn.textContent="Verifying…";
     try{
-      const d=await post("/api/v1/auth/verify-email-otp",{email:signupEmail,otp:code},null,30000);
+      let d;
+      try {
+        d=await post("/api/v1/auth/verify-email-otp",{email:signupEmail,otp:code},null,20000);
+      } catch (verifyErr) {
+        try {
+          const recovery=await post("/api/v1/auth/recover-email-session",{email:signupEmail,otp:code},null,10000);
+          if(recovery?.success) d=recovery;
+          else throw verifyErr;
+        } catch { throw verifyErr; }
+      }
       if(!d?.success||!d?.token) throw new Error(d?.error||"Verification failed.");
       saveToken(d.token);
       document.getElementById("pardais-signup-otp").style.display="none";
