@@ -1,6 +1,6 @@
 {
-  "name": "Pardais Party",
-  "description": "Premium Live Party Streaming & Nightclub Social Entertainment Platform featuring video streams, voice party rooms, real-time PK battles, dynamic gift engines, level rewards, family agency panels, and full AI moderation/translation.",
-  "requestFramePermissions": ["camera", "microphone", "geolocation", "notifications"],
+  "name": "",
+  "description": "",
+  "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

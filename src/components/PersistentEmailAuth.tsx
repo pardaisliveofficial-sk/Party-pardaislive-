@@ -114,27 +114,19 @@ export default function PersistentEmailAuth({ onAuthenticated, onGoogleSignIn }:
       // half-created account and can also reject the verified session.
       // The backend's create-account route performs the complete transition
       // (password + profile + registration state) in one operation.
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 15000);
-      let response: Response;
-      try {
-        response = await fetch(resolveApiUrl("/api/v1/auth/create-account"), {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${verifiedToken}`
-          },
-          body: JSON.stringify({
-            fullName: name.trim(),
-            username: username.trim().replace(/^@/, ""),
-            password,
-            verificationToken: verifiedToken
-          }),
-          signal: controller.signal
-        });
-      } finally {
-        clearTimeout(timeout);
-      }
+      const response = await fetch(resolveApiUrl("/api/v1/auth/create-account"), {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${verifiedToken}`
+        },
+        body: JSON.stringify({
+          fullName: name.trim(),
+          username: username.trim().replace(/^@/, ""),
+          password,
+          verificationToken: verifiedToken
+        })
+      });
       const data = await response.json().catch(() => ({}));
       if (!response.ok || !data?.success) {
         throw new Error(data?.error || "Could not create account.");
