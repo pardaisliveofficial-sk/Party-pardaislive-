@@ -30732,14 +30732,27 @@ export default function App() {
               <div className="h-px flex-1 bg-white/10" />
             </div>
 
-            <button
-              type="button"
-              onClick={handleGoogleSignIn}
-              className="w-full h-11 bg-white text-gray-900 font-bold rounded-2xl text-xs flex items-center justify-center space-x-2 hover:bg-gray-100 active:scale-[0.98] transition-all shadow-xl border border-gray-200 cursor-pointer"
-            >
-              <Globe className="w-5 h-5 text-indigo-600" />
-              <span>Sign In with Google</span>
-            </button>
+            <div className="space-y-2">
+              <button
+                type="button"
+                onClick={() => {}}
+                className="w-full h-11 bg-white text-gray-900 font-bold rounded-2xl text-xs flex items-center justify-center gap-2 hover:bg-gray-100 active:scale-[0.98] transition-all shadow-xl border border-gray-200"
+              >
+                <span className="inline-flex items-center justify-center w-6 h-6 rounded-full border border-gray-200 font-black text-sm text-blue-600">G</span>
+                <span>Continue with Google</span>
+                <span className="text-[9px] uppercase tracking-widest text-gray-400">Coming soon</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {}}
+                className="w-full h-11 bg-white text-gray-900 font-bold rounded-2xl text-xs flex items-center justify-center gap-2 hover:bg-gray-100 active:scale-[0.98] transition-all shadow-xl border border-gray-200"
+              >
+                <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-black text-white font-bold text-sm"></span>
+                <span>Continue with Apple</span>
+                <span className="text-[9px] uppercase tracking-widest text-gray-400">Coming soon</span>
+              </button>
+            </div>
 
             {/* Dismiss Button */}
             <p className="text-center text-[10px] text-gray-500">Email accounts are permanent. The same email can only have one Pardais ID.</p>
