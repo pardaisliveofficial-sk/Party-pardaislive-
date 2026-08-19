@@ -8,13 +8,13 @@
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="Pardais Party" />
-    <link rel="manifest" href="/manifest.json?v=9" />
-    <link rel="icon" type="image/png" href="/pardais-party-exact.png?v=9" />
-    <link rel="icon" type="image/png" sizes="192x192" href="/pardais-party-exact.png?v=9" />
-    <link rel="icon" type="image/png" sizes="32x32" href="/pardais-party-exact.png?v=9" />
-    <link rel="icon" type="image/png" sizes="16x16" href="/pardais-party-exact.png?v=9" />
-    <link rel="shortcut icon" href="/pardais-party-exact.png?v=9" />
-    <link rel="apple-touch-icon" href="/pardais-party-exact.png?v=9" />
+    <link rel="manifest" href="/manifest.json?v=10" />
+    <link rel="icon" type="image/png" href="/pardais-party-exact.png?v=10" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/pardais-party-exact.png?v=10" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/pardais-party-exact.png?v=10" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/pardais-party-exact.png?v=10" />
+    <link rel="shortcut icon" href="/pardais-party-exact.png?v=10" />
+    <link rel="apple-touch-icon" href="/pardais-party-exact.png?v=10" />
     <link rel="canonical" href="https://pardaisparty.soulverseapps.com/" />
     <title>Pardais Party — Where Every Party Comes Alive</title>
   <style>
@@ -22,7 +22,7 @@
 </style>
 </head>
   <body style="margin:0;background:#000;color:#fff" class="bg-[#09090e] text-white overflow-x-hidden antialiased select-none">
-    <div id="pardais-boot-splash" aria-hidden="true"><img src="/pardais-party-exact.png?v=9" alt="Pardais Party"></div>
+    <div id="pardais-boot-splash" aria-hidden="true"><img src="/pardais-party-exact.png?v=10" alt="Pardais Party"></div>
     <div id="root"></div>
     <script>
       if ('serviceWorker' in navigator) {
@@ -198,7 +198,7 @@
     if(!email||!email.includes("@")){setMsg("Enter your registered email address.");return;}
     btn.disabled=true; const old=btn.textContent; btn.textContent="Sending…";
     try{
-      const d=await post("/api/v1/auth/send-login-email-otp",{email},null,30000);
+      const d=await post("/api/v2/auth/login/request",{email},null,30000);
       if(!d?.success) throw new Error(d?.error||"Could not send login code.");
       loginEmail=email;
       document.getElementById("pardais-login-email-step").style.display="none";
@@ -216,16 +216,7 @@
     if(code.length!==6){setMsg("Enter the 6-digit code from your email.");return;}
     btn.disabled=true; const old=btn.textContent; btn.textContent="Verifying…";
     try{
-      let d;
-      try {
-        d=await post("/api/v1/auth/verify-login-email-otp",{email:loginEmail,otp:code},null,20000);
-      } catch (verifyErr) {
-        try {
-          const recovery=await post("/api/v1/auth/recover-login-email-session",{email:loginEmail,otp:code},null,10000);
-          if(recovery?.success) d=recovery;
-          else throw verifyErr;
-        } catch { throw verifyErr; }
-      }
+      const d=await post("/api/v2/auth/login/verify",{email:loginEmail,otp:code},null,30000);
       if(!d?.success||!d?.token||!d?.user) throw new Error(d?.error||"Invalid or expired login code.");
       finish(d);
     }catch(e){setMsg(e.message||"Login verification failed.");}
@@ -235,7 +226,7 @@
   document.getElementById("pardais-login-otp").addEventListener("keydown",e=>{if(e.key==="Enter")verifyLoginCode()});
   document.getElementById("pardais-login-resend").onclick=async()=>{
     try{
-      const d=await post("/api/v1/auth/send-login-email-otp",{email:loginEmail},null,30000);
+      const d=await post("/api/v2/auth/login/request",{email:loginEmail},null,30000);
       if(!d?.success) throw new Error(d?.error||"Could not resend login code.");
       document.getElementById("pardais-login-otp").value="";
       setMsg("New login code sent to your email.");
@@ -250,13 +241,14 @@
     if(!email||!email.includes("@")){setMsg("Enter a valid email address.");return;}
     btn.disabled=true; const old=btn.textContent; btn.textContent="Checking…";
     try{
-      const st=await post("/api/v1/auth/email-status",{email},null,10000);
-      if(st?.registered){
-        setMsg("This account is already registered. Please use Log In.");
-        return;
+      const sent=await post("/api/v2/auth/signup/request",{email},null,30000);
+      if(!sent?.success) {
+        if(sent?.code === "EMAIL_ALREADY_REGISTERED") {
+          setMsg("This account is already registered. Please use Log In.");
+          return;
+        }
+        throw new Error(sent?.error||"Could not send verification code.");
       }
-      const sent=await post("/api/v1/auth/send-email-otp",{email},null,30000);
-      if(!sent?.success) throw new Error(sent?.error||"Could not send verification code.");
       signupEmail=email;
       document.getElementById("pardais-signup-email").style.display="none";
       document.getElementById("pardais-signup-otp").style.display="block";
@@ -273,16 +265,7 @@
     if(code.length!==6){setMsg("Enter the 6-digit verification code.");return;}
     btn.disabled=true; const old=btn.textContent; btn.textContent="Verifying…";
     try{
-      let d;
-      try {
-        d=await post("/api/v1/auth/verify-email-otp",{email:signupEmail,otp:code},null,20000);
-      } catch (verifyErr) {
-        try {
-          const recovery=await post("/api/v1/auth/recover-email-session",{email:signupEmail,otp:code},null,10000);
-          if(recovery?.success) d=recovery;
-          else throw verifyErr;
-        } catch { throw verifyErr; }
-      }
+      const d=await post("/api/v2/auth/signup/verify",{email:signupEmail,otp:code},null,30000);
       if(!d?.success||!d?.token) throw new Error(d?.error||"Verification failed.");
       saveToken(d.token);
       document.getElementById("pardais-signup-otp").style.display="none";
@@ -298,7 +281,7 @@
   document.getElementById("pardais-signup-otp-input").addEventListener("keydown",e=>{if(e.key==="Enter")verifySignupCode()});
   document.getElementById("pardais-signup-resend").onclick=async()=>{
     try{
-      const d=await post("/api/v1/auth/send-email-otp",{email:signupEmail},null,30000);
+      const d=await post("/api/v2/auth/signup/request",{email:signupEmail},null,30000);
       if(!d?.success) throw new Error(d?.error||"Could not resend verification code.");
       document.getElementById("pardais-signup-otp-input").value="";
       setMsg("New verification code sent.");
@@ -317,7 +300,7 @@
     if(!t){setMsg("Your verification session expired. Please verify your email again.");return;}
     const btn=document.getElementById("pardais-save-profile"); btn.disabled=true;
     try{
-      const d=await post("/api/v1/auth/create-account",{fullName:name,username,dob},t,30000);
+      const d=await post("/api/v2/auth/signup/complete",{fullName:name,username,dob},t,30000);
       if(!d?.success||!d?.token||!d?.user) throw new Error(d?.error||"Could not create account.");
       finish(d);
     }catch(e){setMsg(e.message||"Could not create account.");}
