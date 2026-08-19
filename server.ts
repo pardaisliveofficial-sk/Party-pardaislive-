@@ -16,20 +16,22 @@ import {
   checkAndSeedDatabase,
   startFirestoreSynchronization,
   dbDataCache,
-  syncDocument,
-  deleteDocument,
   writeMetadata,
   hydrateReelsFromFirestore,
   clearAllHostsInFirestore,
-  getPersistedSession,
   getPersistedUserForSession,
+} from "./src/db/firebaseDb";
+import {
+  getPersistedSession,
   getPersistedUserForEmail,
   getPersistedEmailRegistry,
   persistEmailRegistry,
   persistAuthChallenge,
   getPersistedAuthChallenge,
-  deletePersistedAuthChallenge
-} from "./src/db/firebaseDb";
+  deletePersistedAuthChallenge,
+  syncDocument,
+  deleteDocument
+} from "./src/db/serverFirebaseAdminDb";
 
 dotenv.config();
 

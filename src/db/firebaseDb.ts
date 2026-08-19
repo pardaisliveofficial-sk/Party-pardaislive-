@@ -1,6 +1,4 @@
 import { initializeApp, getApps, getApp } from "firebase/app";
-import { initializeApp as initializeAdminApp, getApps as getAdminApps, cert, applicationDefault } from "firebase-admin/app";
-import { getFirestore as getAdminFirestore } from "firebase-admin/firestore";
 import { getAuth } from "firebase/auth";
 import { 
   initializeFirestore, 
@@ -17,51 +15,6 @@ import {
 } from "firebase/firestore";
 import { resolveApiUrl } from "../lib/apiClient";
 import appletConfig from "../../firebase-applet-config.json";
-
-// ------------------------------------------------------------------
-// RAILWAY SERVER-SIDE FIRESTORE ACCESS
-// ------------------------------------------------------------------
-// Preview can use the Firebase Client SDK, but a long-running Railway
-// Node process can enter the Firestore client's "offline" state.
-// Server-side authentication/account persistence therefore prefers the
-// Firebase Admin SDK. firebase-admin is already in package.json.
-let adminDb: any = null;
-
-function initRailwayAdminFirestore() {
-  try {
-    const projectId = process.env.FIREBASE_PROJECT_ID || "pardais-party-production";
-    const rawJson =
-      process.env.FIREBASE_SERVICE_ACCOUNT_JSON ||
-      process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON;
-
-    let adminApp: any;
-    if (getAdminApps().length > 0) {
-      adminApp = getAdminApps()[0];
-    } else if (rawJson) {
-      const serviceAccount = JSON.parse(rawJson);
-      adminApp = initializeAdminApp({
-        credential: cert(serviceAccount),
-        projectId: serviceAccount.project_id || projectId
-      });
-    } else {
-      // Standard Google Application Default Credentials, including
-      // GOOGLE_APPLICATION_CREDENTIALS when Railway supplies it.
-      adminApp = initializeAdminApp({
-        credential: applicationDefault(),
-        projectId
-      });
-    }
-
-    adminDb = getAdminFirestore(adminApp);
-    console.log("[PARDAIS-PARTY FIREBASE] Railway Firebase Admin Firestore initialized.");
-  } catch (err: any) {
-    adminDb = null;
-    console.error("[PARDAIS-PARTY FIREBASE] Firebase Admin unavailable on Railway:", err?.message || err);
-    console.error("[PARDAIS-PARTY FIREBASE] Set FIREBASE_SERVICE_ACCOUNT_JSON in Railway Variables.");
-  }
-}
-
-initRailwayAdminFirestore();
 
 // Initialize Firebase using Client SDK
 let firebaseConfig = {
@@ -224,10 +177,6 @@ export const dbDataCache: any = {
 export async function getPersistedSession(token: string): Promise<any | null> {
   if (!token) return null;
   try {
-    if (adminDb) {
-      const snap = await adminDb.collection("sessions").doc(String(token)).get();
-      return snap.exists ? snap.data() : null;
-    }
     const snap = await getDoc(doc(db, "sessions", token));
     return snap.exists ? snap.data() : null;
   } catch (err) {
@@ -239,10 +188,6 @@ export async function getPersistedSession(token: string): Promise<any | null> {
 export async function persistAuthChallenge(key: string, data: any): Promise<boolean> {
   if (!key) return false;
   try {
-    if (adminDb) {
-      await adminDb.collection("authChallenges").doc(String(key)).set(sanitizeForFirestore(data), { merge: true });
-      return true;
-    }
     await setDoc(doc(db, "authChallenges", String(key)), sanitizeForFirestore(data), { merge: true });
     return true;
   } catch (err) {
@@ -254,10 +199,6 @@ export async function persistAuthChallenge(key: string, data: any): Promise<bool
 export async function getPersistedAuthChallenge(key: string): Promise<any | null> {
   if (!key) return null;
   try {
-    if (adminDb) {
-      const snap = await adminDb.collection("authChallenges").doc(String(key)).get();
-      return snap.exists ? snap.data() : null;
-    }
     const snap = await getDoc(doc(db, "authChallenges", String(key)));
     return snap.exists() ? snap.data() : null;
   } catch (err) {
@@ -269,10 +210,6 @@ export async function getPersistedAuthChallenge(key: string): Promise<any | null
 export async function deletePersistedAuthChallenge(key: string): Promise<void> {
   if (!key) return;
   try {
-    if (adminDb) {
-      await adminDb.collection("authChallenges").doc(String(key)).delete();
-      return;
-    }
     await deleteDoc(doc(db, "authChallenges", String(key)));
   } catch (err) {
     handleQuotaError(err, `delete auth challenge ${key}`);
@@ -284,19 +221,6 @@ export async function getPersistedUserForEmail(email: string): Promise<any | nul
   if (!cleanEmail) return null;
   const emailKey = cleanEmail.replace(/[^a-zA-Z0-9]/g, "_");
   try {
-    if (adminDb) {
-      const registrySnap = await adminDb.collection("emailRegistry").doc(emailKey).get();
-      if (registrySnap.exists) {
-        const registry = registrySnap.data() || {};
-        if (registry.uid) {
-          const uidSnap = await adminDb.collection("users").doc(`uid_${registry.uid}`).get();
-          if (uidSnap.exists) return uidSnap.data();
-        }
-      }
-      const emailSnap = await adminDb.collection("users").doc(`email_${emailKey}`).get();
-      return emailSnap.exists ? emailSnap.data() : null;
-    }
-
     const registrySnap = await getDoc(doc(db, "emailRegistry", emailKey));
     if (registrySnap.exists()) {
       const registry = registrySnap.data();
@@ -318,10 +242,6 @@ export async function getPersistedEmailRegistry(email: string): Promise<any | nu
   if (!cleanEmail) return null;
   const emailKey = cleanEmail.replace(/[^a-zA-Z0-9]/g, "_");
   try {
-    if (adminDb) {
-      const snap = await adminDb.collection("emailRegistry").doc(emailKey).get();
-      return snap.exists ? snap.data() : null;
-    }
     const snap = await getDoc(doc(db, "emailRegistry", emailKey));
     return snap.exists ? snap.data() : null;
   } catch (err) {
@@ -335,29 +255,6 @@ export async function persistEmailRegistry(email: string, user: any): Promise<bo
   if (!cleanEmail || !user?.uid) return false;
   const emailKey = cleanEmail.replace(/[^a-zA-Z0-9]/g, "_");
   try {
-    if (adminDb) {
-      const registryRef = adminDb.collection("emailRegistry").doc(emailKey);
-      await adminDb.runTransaction(async (tx: any) => {
-        const existing = await tx.get(registryRef);
-        if (existing.exists) {
-          const current = existing.data() || {};
-          if (String(current.uid || "") !== String(user.uid)) {
-            throw new Error("EMAIL_ALREADY_REGISTERED");
-          }
-        } else {
-          tx.set(registryRef, sanitizeForFirestore({
-            uid: user.uid,
-            email: cleanEmail,
-            username: user.username || "",
-            uniqueId: user.uniqueId || "",
-            registeredAt: user.registrationCompletedAt || user.registeredAt || new Date().toISOString(),
-            locked: true
-          }), { merge: true });
-        }
-      });
-      return true;
-    }
-
     const registryRef = doc(db, "emailRegistry", emailKey);
     await runTransaction(db, async (tx) => {
       const existing = await tx.get(registryRef);
@@ -702,11 +599,7 @@ export async function syncDocument(collectionName: string, docId: string, data: 
   if (isFirestoreQuotaExhausted) return false;
   try {
     if (!docId) return false;
-    if (adminDb) {
-      await adminDb.collection(collectionName).doc(String(docId)).set(sanitizeForFirestore(data), { merge: true });
-    } else {
-      await setDoc(doc(db, collectionName, String(docId)), sanitizeForFirestore(data), { merge: true });
-    }
+    await setDoc(doc(db, collectionName, String(docId)), sanitizeForFirestore(data), { merge: true });
     console.log(`[PARDAIS-PARTY FIREBASE] Synced document to Firestore: ${collectionName}/${docId}`);
     return true;
   } catch (err) {
@@ -719,11 +612,7 @@ export async function deleteDocument(collectionName: string, docId: string) {
   if (isFirestoreQuotaExhausted) return;
   try {
     if (!docId) return;
-    if (adminDb) {
-      await adminDb.collection(collectionName).doc(String(docId)).delete();
-    } else {
-      await deleteDoc(doc(db, collectionName, String(docId)));
-    }
+    await deleteDoc(doc(db, collectionName, String(docId)));
     console.log(`[PARDAIS-PARTY FIREBASE] Deleted document from Firestore: ${collectionName}/${docId}`);
   } catch (err) {
     handleQuotaError(err, `deleteDocument ${collectionName}/${docId}`);
