@@ -3,80 +3,106 @@ import { getFirestore as getAdminFirestore } from "firebase-admin/firestore";
 import { sanitizeForFirestore } from "./firebaseDb";
 
 let adminDb: any = null;
+let adminInitAttempted = false;
 
-function initRailwayAdminFirestore() {
+function initRailwayAdminFirestore(force = false) {
+  if (adminDb && !force) return adminDb;
+  if (adminInitAttempted && !force) return adminDb;
+  adminInitAttempted = true;
+
   try {
     const projectId = process.env.FIREBASE_PROJECT_ID || "pardais-party-production";
     const rawJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON || process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON;
+    const clientEmail = process.env.FIREBASE_CLIENT_EMAIL?.trim();
+    const privateKey = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, "\n");
     let adminApp: any;
+
     if (getAdminApps().length > 0) {
       adminApp = getAdminApps()[0];
     } else if (rawJson) {
       const serviceAccount = JSON.parse(rawJson);
-      adminApp = initializeAdminApp({ credential: cert(serviceAccount), projectId: serviceAccount.project_id || projectId });
+      adminApp = initializeAdminApp({
+        credential: cert(serviceAccount),
+        projectId: serviceAccount.project_id || projectId
+      });
+    } else if (clientEmail && privateKey) {
+      adminApp = initializeAdminApp({
+        credential: cert({ projectId, clientEmail, privateKey }),
+        projectId
+      });
     } else {
       adminApp = initializeAdminApp({ credential: applicationDefault(), projectId });
     }
+
     adminDb = getAdminFirestore(adminApp);
     console.log("[PARDAIS-PARTY FIREBASE] Railway Firebase Admin Firestore initialized.");
+    return adminDb;
   } catch (err: any) {
     adminDb = null;
-    console.error("[PARDAIS-PARTY FIREBASE] Firebase Admin unavailable on Railway:", err?.message || err);
-    console.error("[PARDAIS-PARTY FIREBASE] Set FIREBASE_SERVICE_ACCOUNT_JSON in Railway Variables.");
+    console.error("[PARDAIS-PARTY FIREBASE] Firebase Admin unavailable:", err?.message || err);
+    console.error("[PARDAIS-PARTY FIREBASE] Expected FIREBASE_SERVICE_ACCOUNT_JSON or FIREBASE_CLIENT_EMAIL + FIREBASE_PRIVATE_KEY in Railway Variables.");
+    return null;
   }
 }
 
-initRailwayAdminFirestore();
+function getAdminDb() {
+  return adminDb || initRailwayAdminFirestore();
+}
 
 function handleAdminError(err: any, operation: string) {
   console.error(`[PARDAIS-PARTY FIREBASE] Admin Firestore error during ${operation}:`, err?.message || err);
 }
 
 export async function getPersistedSession(token: string): Promise<any | null> {
-  if (!token || !adminDb) return null;
+  const db = getAdminDb();
+  if (!token || !db) return null;
   try {
-    const snap = await adminDb.collection("sessions").doc(String(token)).get();
+    const snap = await db.collection("sessions").doc(String(token)).get();
     return snap.exists ? snap.data() : null;
   } catch (err) { handleAdminError(err, "auth session lookup"); return null; }
 }
 
 export async function persistAuthChallenge(key: string, data: any): Promise<boolean> {
-  if (!key || !adminDb) return false;
+  const db = getAdminDb();
+  if (!key || !db) return false;
   try {
-    await adminDb.collection("authChallenges").doc(String(key)).set(sanitizeForFirestore(data), { merge: true });
+    await db.collection("authChallenges").doc(String(key)).set(sanitizeForFirestore(data), { merge: true });
     return true;
   } catch (err) { handleAdminError(err, `persist auth challenge ${key}`); return false; }
 }
 
 export async function getPersistedAuthChallenge(key: string): Promise<any | null> {
-  if (!key || !adminDb) return null;
+  const db = getAdminDb();
+  if (!key || !db) return null;
   try {
-    const snap = await adminDb.collection("authChallenges").doc(String(key)).get();
+    const snap = await db.collection("authChallenges").doc(String(key)).get();
     return snap.exists ? snap.data() : null;
   } catch (err) { handleAdminError(err, `get auth challenge ${key}`); return null; }
 }
 
 export async function deletePersistedAuthChallenge(key: string): Promise<void> {
-  if (!key || !adminDb) return;
-  try { await adminDb.collection("authChallenges").doc(String(key)).delete(); }
+  const db = getAdminDb();
+  if (!key || !db) return;
+  try { await db.collection("authChallenges").doc(String(key)).delete(); }
   catch (err) { handleAdminError(err, `delete auth challenge ${key}`); }
 }
 
 export async function getPersistedUserForSession(session: any): Promise<any | null> {
-  if (!session || !adminDb) return null;
+  const db = getAdminDb();
+  if (!session || !db) return null;
   const candidates: any[] = [];
   try {
     if (session.uid) {
-      const snap = await adminDb.collection("users").doc(`uid_${session.uid}`).get();
+      const snap = await db.collection("users").doc(`uid_${session.uid}`).get();
       if (snap.exists) candidates.push(snap.data());
     }
     if (session.email) {
       const emailKey = String(session.email).toLowerCase().trim().replace(/[^a-zA-Z0-9]/g, "_");
-      const snap = await adminDb.collection("users").doc(`email_${emailKey}`).get();
+      const snap = await db.collection("users").doc(`email_${emailKey}`).get();
       if (snap.exists) candidates.push(snap.data());
     }
     if (session.username) {
-      const snap = await adminDb.collection("users").doc(String(session.username)).get();
+      const snap = await db.collection("users").doc(String(session.username)).get();
       if (snap.exists) candidates.push(snap.data());
     }
   } catch (err) {
@@ -90,40 +116,43 @@ export async function getPersistedUserForSession(session: any): Promise<any | nu
 }
 
 export async function getPersistedUserForEmail(email: string): Promise<any | null> {
+  const db = getAdminDb();
   const cleanEmail = String(email || "").toLowerCase().trim();
-  if (!cleanEmail || !adminDb) return null;
+  if (!cleanEmail || !db) return null;
   const emailKey = cleanEmail.replace(/[^a-zA-Z0-9]/g, "_");
   try {
-    const registrySnap = await adminDb.collection("emailRegistry").doc(emailKey).get();
+    const registrySnap = await db.collection("emailRegistry").doc(emailKey).get();
     if (registrySnap.exists) {
       const registry = registrySnap.data() || {};
       if (registry.uid) {
-        const uidSnap = await adminDb.collection("users").doc(`uid_${registry.uid}`).get();
+        const uidSnap = await db.collection("users").doc(`uid_${registry.uid}`).get();
         if (uidSnap.exists) return uidSnap.data();
       }
     }
-    const emailSnap = await adminDb.collection("users").doc(`email_${emailKey}`).get();
+    const emailSnap = await db.collection("users").doc(`email_${emailKey}`).get();
     return emailSnap.exists ? emailSnap.data() : null;
   } catch (err) { handleAdminError(err, "auth email account lookup"); return null; }
 }
 
 export async function getPersistedEmailRegistry(email: string): Promise<any | null> {
+  const db = getAdminDb();
   const cleanEmail = String(email || "").toLowerCase().trim();
-  if (!cleanEmail || !adminDb) return null;
+  if (!cleanEmail || !db) return null;
   const emailKey = cleanEmail.replace(/[^a-zA-Z0-9]/g, "_");
   try {
-    const snap = await adminDb.collection("emailRegistry").doc(emailKey).get();
+    const snap = await db.collection("emailRegistry").doc(emailKey).get();
     return snap.exists ? snap.data() : null;
   } catch (err) { handleAdminError(err, `get email registry ${emailKey}`); return null; }
 }
 
 export async function persistEmailRegistry(email: string, user: any): Promise<boolean> {
+  const db = getAdminDb();
   const cleanEmail = String(email || "").toLowerCase().trim();
-  if (!cleanEmail || !user?.uid || !adminDb) return false;
+  if (!cleanEmail || !user?.uid || !db) return false;
   const emailKey = cleanEmail.replace(/[^a-zA-Z0-9]/g, "_");
   try {
-    const registryRef = adminDb.collection("emailRegistry").doc(emailKey);
-    await adminDb.runTransaction(async (tx: any) => {
+    const registryRef = db.collection("emailRegistry").doc(emailKey);
+    await db.runTransaction(async (tx: any) => {
       const existing = await tx.get(registryRef);
       if (existing.exists) {
         const current = existing.data() || {};
@@ -140,15 +169,17 @@ export async function persistEmailRegistry(email: string, user: any): Promise<bo
 }
 
 export async function syncDocument(collectionName: string, docId: string, data: any): Promise<boolean> {
-  if (!docId || !adminDb) return false;
+  const db = getAdminDb();
+  if (!docId || !db) return false;
   try {
-    await adminDb.collection(collectionName).doc(String(docId)).set(sanitizeForFirestore(data), { merge: true });
+    await db.collection(collectionName).doc(String(docId)).set(sanitizeForFirestore(data), { merge: true });
     return true;
   } catch (err) { handleAdminError(err, `syncDocument ${collectionName}/${docId}`); return false; }
 }
 
 export async function deleteDocument(collectionName: string, docId: string): Promise<void> {
-  if (!docId || !adminDb) return;
-  try { await adminDb.collection(collectionName).doc(String(docId)).delete(); }
+  const db = getAdminDb();
+  if (!docId || !db) return;
+  try { await db.collection(collectionName).doc(String(docId)).delete(); }
   catch (err) { handleAdminError(err, `deleteDocument ${collectionName}/${docId}`); }
 }
