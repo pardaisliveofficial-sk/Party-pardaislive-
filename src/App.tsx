@@ -3,7 +3,6 @@ import { App as CapacitorApp } from "@capacitor/app";
 import { authenticatedFetch, resolveApiUrl, refreshSession, getAuthToken, isCapacitorOrAndroid } from "./lib/apiClient";
 import { COUNTRIES_CURRENCIES, CountryCurrency, getCoinsCostInCurrency } from "./currencyUtils";
 import { ReelsView } from "./components/ReelsView";
-import PersistentEmailAuth from "./components/PersistentEmailAuth";
 import AuthScreen from "./components/AuthScreen";
 import { AgoraStream } from "./components/AgoraStream";
 import { AgoraPartyAudio } from "./components/AgoraPartyAudio";
@@ -31507,7 +31506,7 @@ export default function App() {
               <p className="text-[11px] text-pink-200 leading-snug px-2">Login to your account or create a new one.</p>
             </div>
 
-            <PersistentEmailAuth
+            <AuthScreen
               onAuthenticated={handleAuthAuthenticated}
               onGoogleSignIn={handleGoogleSignIn}
             />
