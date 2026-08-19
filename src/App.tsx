@@ -31509,6 +31509,7 @@ export default function App() {
             <AuthScreen
               onAuthenticated={handleAuthAuthenticated}
               onGoogleSignIn={handleGoogleSignIn}
+              initialMode="login"
             />
 
             <button

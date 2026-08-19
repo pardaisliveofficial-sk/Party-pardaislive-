@@ -55,13 +55,14 @@ export const resolveApiUrl = (path: string): string => {
     return `${base}${cleanPath}`;
   }
 
-  // In Web environment, prioritize VITE_API_URL if explicitly provided, else use relative /api routes on the same host
+  // Production web must always use the real Pardais API. Falling back to a
+  // relative /api route can accidentally send auth requests to the frontend
+  // host/Cloudflare edge, which returns 405 or an empty response.
   const envApiUrl = (import.meta as any).env?.VITE_API_URL;
-  if (typeof envApiUrl === "string" && envApiUrl.trim()) {
-    const base = envApiUrl.trim().replace(/\/+$/, "");
-    return `${base}${cleanPath}`;
-  }
-  return cleanPath;
+  const base = typeof envApiUrl === "string" && envApiUrl.trim()
+    ? envApiUrl.trim().replace(/\/+$/, "")
+    : PRODUCTION_API_BASE;
+  return `${base}${cleanPath}`;
 };
 
 // Global fetch interceptor to guarantee relative API requests resolve to production API base on Android APK
@@ -305,12 +306,30 @@ export async function verifyEmailOtp(email: string, otp: string) {
 }
 
 export async function emailPasswordLogin(email: string, password: string) {
-  const res = await fetch(resolveApiUrl("/api/v1/auth/password-login"), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, password })
-  });
-  return res.json();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 20000);
+  try {
+    const res = await fetch(resolveApiUrl("/api/v1/auth/password-login"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Accept": "application/json" },
+      body: JSON.stringify({ identifier: email.trim(), email: email.trim(), password }),
+      signal: controller.signal
+    });
+    const raw = await res.text().catch(() => "");
+    let data: any = {};
+    try { data = raw ? JSON.parse(raw) : {}; } catch {
+      data = { success: false, error: `Login service returned an invalid response (HTTP ${res.status}).` };
+    }
+    if (!res.ok) {
+      return { success: false, ...data, error: data?.error || `Login request failed (HTTP ${res.status}).`, code: data?.code };
+    }
+    return data;
+  } catch (err: any) {
+    if (err?.name === "AbortError") return { success: false, error: "Login request timed out. Please try again.", code: "LOGIN_TIMEOUT" };
+    return { success: false, error: "Could not reach the login service. Please try again.", code: "NETWORK_ERROR" };
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 export async function createEmailPassword(token: string, password: string) {
