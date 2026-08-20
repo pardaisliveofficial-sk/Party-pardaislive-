@@ -48,11 +48,16 @@ export const resolveApiUrl = (path: string): string => {
 
   // In Android APK / Capacitor environment, route to central production API base
   if (isCapacitorOrAndroid()) {
-    return `${PRODUCTION_API_BASE}${cleanPath}`;
+    const envApiUrl = (import.meta as any).env?.VITE_API_URL;
+    const base = typeof envApiUrl === "string" && envApiUrl.trim()
+      ? envApiUrl.trim().replace(/\/+$/, "")
+      : PRODUCTION_API_BASE;
+    return `${base}${cleanPath}`;
   }
 
-  // Pardais Party uses one centralized production API on both Web and Android.
-  // Never fall back to the current web origin for /api routes.
+  // Production web must always use the real Pardais API. Falling back to a
+  // relative /api route can accidentally send auth requests to the frontend
+  // host/Cloudflare edge, which returns 405 or an empty response.
   const envApiUrl = (import.meta as any).env?.VITE_API_URL;
   const base = typeof envApiUrl === "string" && envApiUrl.trim()
     ? envApiUrl.trim().replace(/\/+$/, "")
@@ -239,52 +244,6 @@ export const authenticatedFetch = async (
 // ------------------------------------------------------------------
 // Pardais Party persistent email authentication helpers
 // ------------------------------------------------------------------
-
-async function freshAuthRequest(path: string, body: any, timeoutMs = 30000) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const res = await fetch(resolveApiUrl(path), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-      signal: controller.signal
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) return { success: false, error: data?.error || `Authentication request failed (HTTP ${res.status}).`, code: data?.code };
-    return data;
-  } catch (err: any) {
-    if (err?.name === 'AbortError') return { success: false, error: 'Authentication service timed out. Please try again.', code: 'AUTH_TIMEOUT' };
-    return { success: false, error: 'Could not connect to the production authentication service.', code: 'AUTH_NETWORK_ERROR' };
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-export const freshSignupRequest = (email: string) => freshAuthRequest('/api/v2/auth/signup/request', { email: email.trim().toLowerCase() }, 30000);
-export const freshSignupVerify = (email: string, otp: string) => freshAuthRequest('/api/v2/auth/signup/verify', { email: email.trim().toLowerCase(), otp: otp.trim() }, 30000);
-export const freshSignupComplete = (token: string, fullName: string, username: string, dob: string) => freshAuthRequestWithToken('/api/v2/auth/signup/complete', token, { fullName, username, dob }, 30000);
-export const freshLoginRequest = (email: string) => freshAuthRequest('/api/v2/auth/login/request', { email: email.trim().toLowerCase() }, 30000);
-export const freshLoginVerify = (email: string, otp: string) => freshAuthRequest('/api/v2/auth/login/verify', { email: email.trim().toLowerCase(), otp: otp.trim() }, 30000);
-
-async function freshAuthRequestWithToken(path: string, token: string, body: any, timeoutMs = 30000) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const res = await fetch(resolveApiUrl(path), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-      body: JSON.stringify(body), signal: controller.signal
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) return { success: false, error: data?.error || `Authentication request failed (HTTP ${res.status}).`, code: data?.code };
-    return data;
-  } catch (err: any) {
-    if (err?.name === 'AbortError') return { success: false, error: 'Account setup timed out. Please try again.', code: 'AUTH_TIMEOUT' };
-    return { success: false, error: 'Could not connect to the production authentication service.', code: 'AUTH_NETWORK_ERROR' };
-  } finally { clearTimeout(timer); }
-}
-
 export async function emailStatus(email: string) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 9000);
@@ -306,7 +265,7 @@ export async function emailStatus(email: string) {
 
 export async function sendEmailOtp(email: string) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 60000);
+  const timeout = setTimeout(() => controller.abort(), 25000);
   try {
     const res = await fetch(resolveApiUrl("/api/v1/auth/send-email-otp"), {
       method: "POST",
@@ -316,49 +275,21 @@ export async function sendEmailOtp(email: string) {
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) return { success: false, error: data?.error || `Verification request failed (HTTP ${res.status}).`, code: data?.code };
+    if (!data?.success || data?.delivered !== true) {
+      return { success: false, error: data?.error || "Verification email could not be delivered. Please try again later.", code: data?.code || "EMAIL_DELIVERY_FAILED" };
+    }
     return data;
   } catch (err: any) {
-    if (err?.name === "AbortError") return { success: false, error: "Verification email request timed out. The code may still arrive; please check your inbox and try again if needed." };
+    if (err?.name === "AbortError") return { success: false, error: "Verification request timed out. Please try again." };
     return { success: false, error: "Could not reach the verification service. Please try again." };
   } finally {
     clearTimeout(timeout);
   }
 }
 
-
-export async function sendLoginEmailOtp(email: string) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 30000);
-  try {
-    const res = await fetch(resolveApiUrl("/api/v1/auth/send-login-email-otp"), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email: email.trim().toLowerCase() }),
-      signal: controller.signal
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      return {
-        success: false,
-        error: data?.error || `Login code request failed (HTTP ${res.status}).`,
-        code: data?.code
-      };
-    }
-    return data;
-  } catch (err: any) {
-    if (err?.name === "AbortError") {
-      return { success: false, error: "Login code request timed out. Please try again.", code: "LOGIN_OTP_TIMEOUT" };
-    }
-    return { success: false, error: "Could not reach the login service. Please try again.", code: "LOGIN_OTP_NETWORK_ERROR" };
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-
 export async function verifyEmailOtp(email: string, otp: string) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 45000);
+  const timeout = setTimeout(() => controller.abort(), 25000);
   try {
     const res = await fetch(resolveApiUrl("/api/v1/auth/verify-email-otp"), {
       method: "POST",
@@ -370,79 +301,35 @@ export async function verifyEmailOtp(email: string, otp: string) {
     if (!res.ok) return { success: false, error: data?.error || `Verification failed (HTTP ${res.status}).`, code: data?.code };
     return data;
   } catch (err: any) {
-    if (err?.name === "AbortError") {
-      try {
-        const recovery = await fetch(resolveApiUrl("/api/v1/auth/recover-email-session"), {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email: email.trim().toLowerCase(), otp: otp.trim() }),
-          signal: AbortSignal.timeout(15000)
-        });
-        const recovered = await recovery.json().catch(() => ({}));
-        if (recovery.ok && recovered?.success) return recovered;
-      } catch {}
-      return { success: false, error: "Verification is taking too long. Please try again.", code: "VERIFY_TIMEOUT" };
-    }
+    if (err?.name === "AbortError") return { success: false, error: "Verification is taking too long. Please try again.", code: "VERIFY_TIMEOUT" };
     return { success: false, error: "Could not reach the verification service. Please try again.", code: "NETWORK_ERROR" };
   } finally {
     clearTimeout(timeout);
   }
 }
 
-export async function verifyLoginEmailOtp(email: string, otp: string) {
+export async function emailPasswordLogin(email: string, password: string) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 45000);
+  const timeout = setTimeout(() => controller.abort(), 20000);
   try {
-    const res = await fetch(resolveApiUrl("/api/v1/auth/verify-login-email-otp"), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email: email.trim().toLowerCase(), otp: otp.trim() }),
-      signal: controller.signal
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      return { success: false, error: data?.error || `Login verification failed (HTTP ${res.status}).`, code: data?.code };
-    }
-    return data;
-  } catch (err: any) {
-    if (err?.name === "AbortError") {
-      // The server may have completed verification while the response was delayed.
-      // Ask the recovery endpoint once using the same OTP.
-      try {
-        const recovery = await fetch(resolveApiUrl("/api/v1/auth/recover-login-email-session"), {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email: email.trim().toLowerCase(), otp: otp.trim() }),
-          signal: AbortSignal.timeout(15000)
-        });
-        const recovered = await recovery.json().catch(() => ({}));
-        if (recovery.ok && recovered?.success) return recovered;
-      } catch {}
-      return { success: false, error: "Login verification is taking too long. Please try again.", code: "VERIFY_LOGIN_TIMEOUT" };
-    }
-    return { success: false, error: "Could not reach the login verification service. Please try again.", code: "VERIFY_LOGIN_NETWORK_ERROR" };
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-export async function emailPasswordLogin(identifier: string, password: string) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 12000);
-  try {
-    const clean = String(identifier || "").trim();
     const res = await fetch(resolveApiUrl("/api/v1/auth/password-login"), {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ identifier: clean, email: clean, username: clean, password }),
+      headers: { "Content-Type": "application/json", "Accept": "application/json" },
+      body: JSON.stringify({ identifier: email.trim(), email: email.trim(), password }),
       signal: controller.signal
     });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) return { success: false, error: data?.error || `Login failed (HTTP ${res.status}).`, code: data?.code };
+    const raw = await res.text().catch(() => "");
+    let data: any = {};
+    try { data = raw ? JSON.parse(raw) : {}; } catch {
+      data = { success: false, error: `Login service returned an invalid response (HTTP ${res.status}).` };
+    }
+    if (!res.ok) {
+      return { success: false, ...data, error: data?.error || `Login request failed (HTTP ${res.status}).`, code: data?.code };
+    }
     return data;
   } catch (err: any) {
-    if (err?.name === "AbortError") return { success: false, error: "Login service timed out. Please try again.", code: "LOGIN_TIMEOUT" };
-    return { success: false, error: "Could not reach the login service. Please try again.", code: "LOGIN_NETWORK_ERROR" };
+    if (err?.name === "AbortError") return { success: false, error: "Login request timed out. Please try again.", code: "LOGIN_TIMEOUT" };
+    return { success: false, error: "Could not reach the login service. Please try again.", code: "NETWORK_ERROR" };
   } finally {
     clearTimeout(timeout);
   }
@@ -460,44 +347,6 @@ export async function createEmailPassword(token: string, password: string) {
   return res.json();
 }
 
-
-export async function completeEmailProfile(token: string, fullName: string, username: string, dob: string) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 30000);
-  try {
-    const res = await fetch(resolveApiUrl("/api/v1/auth/create-account"), {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${token}`
-      },
-      body: JSON.stringify({
-        fullName: fullName.trim(),
-        username: username.trim().replace(/^@/, ""),
-        dob: dob.trim(),
-        verificationToken: token
-      }),
-      signal: controller.signal
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      return {
-        success: false,
-        error: data?.error || `Account creation failed (HTTP ${res.status}).`,
-        code: data?.code
-      };
-    }
-    return data;
-  } catch (err: any) {
-    if (err?.name === "AbortError") {
-      return { success: false, error: "Account setup timed out. Please try again.", code: "PROFILE_TIMEOUT" };
-    }
-    return { success: false, error: "Could not reach the account service. Please try again.", code: "PROFILE_NETWORK_ERROR" };
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
 export async function requestPasswordReset(email: string) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 20000);
@@ -510,6 +359,9 @@ export async function requestPasswordReset(email: string) {
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) return { success: false, error: data?.error || `Recovery request failed (HTTP ${res.status}).`, code: data?.code };
+    if (!data?.success || data?.delivered !== true) {
+      return { success: false, error: data?.error || "Recovery email could not be delivered. Please try again later.", code: data?.code || "EMAIL_DELIVERY_FAILED" };
+    }
     return data;
   } catch (err: any) {
     if (err?.name === "AbortError") return { success: false, error: "Recovery service timed out. Please try again.", code: "RECOVERY_TIMEOUT" };

@@ -164,13 +164,7 @@ export default function AuthScreen({
         throw new Error(sent?.error || "Could not send verification code. Please check your email.");
       }
 
-      const receivedCode = String(sent?.debugOtp || sent?.otp || "").trim();
-      if (receivedCode && receivedCode.length === 6) {
-        setSignupOtp(receivedCode);
-        setSuccessMsg(`Verification code generated: ${receivedCode}. Tap "Verify Code & Continue" to proceed.`);
-      } else {
-        setSuccessMsg(`Verification code sent to ${cleanEmail}. Please enter the 6-digit code below.`);
-      }
+      setSuccessMsg(`Verification code sent to ${cleanEmail}. Please check your email inbox and enter the 6-digit code below.`);
       setResendCooldown(60);
       setSignupStep("otp");
     } catch (err: any) {
@@ -308,13 +302,7 @@ export default function AuthScreen({
         throw new Error(result?.error || "No registered account found with this email.");
       }
 
-      const receivedCode = String(result?.debugOtp || result?.otp || "").trim();
-      if (receivedCode && receivedCode.length === 6) {
-        setForgotOtp(receivedCode);
-        setSuccessMsg(`Recovery code generated: ${receivedCode}. Set your new password below.`);
-      } else {
-        setSuccessMsg(`Recovery code sent to ${cleanEmail}. Check your inbox or spam folder.`);
-      }
+      setSuccessMsg(`Recovery code sent to ${cleanEmail}. Please check your email inbox and enter the 6-digit code below.`);
       setResendCooldown(60);
       setForgotStep("otp_password");
     } catch (err: any) {

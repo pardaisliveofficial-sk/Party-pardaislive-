@@ -3,7 +3,7 @@ import { App as CapacitorApp } from "@capacitor/app";
 import { authenticatedFetch, resolveApiUrl, refreshSession, getAuthToken, isCapacitorOrAndroid } from "./lib/apiClient";
 import { COUNTRIES_CURRENCIES, CountryCurrency, getCoinsCostInCurrency } from "./currencyUtils";
 import { ReelsView } from "./components/ReelsView";
-import PersistentEmailAuth from "./components/PersistentEmailAuth";
+import AuthScreen from "./components/AuthScreen";
 import { AgoraStream } from "./components/AgoraStream";
 import { AgoraPartyAudio } from "./components/AgoraPartyAudio";
 import { VipAnimatedFrame, VIP_FRAMES_LIST } from "./components/VipAnimatedFrame";
@@ -100,7 +100,9 @@ import {
   FileUp,
   AlertCircle,
   Pencil,
-  Database
+  Database,
+  ArrowRight,
+  EyeOff
 } from "lucide-react";
 import { Gift, GiftType, ChatMessage, HostProfile, UserProfile, Family, Agency, Transaction, LiveAnnouncement, KycRequest, UserStory } from "./types";
 import { DEFAULT_USER, MOCK_GIFTS, MOCK_HOSTS, MOCK_FAMILIES, MOCK_AGENCIES, DAILY_MISSIONS, STATIC_COMMENTS_POOL } from "./data";
@@ -669,6 +671,7 @@ export default function App() {
   const [loginEmail, setLoginEmail] = useState<string>("");
   const [loginOtp, setLoginOtp] = useState<string>("");
   const [isOtpSent, setIsOtpSent] = useState<boolean>(false);
+  const [emailOtpChallengeToken, setEmailOtpChallengeToken] = useState<string>("");
   const [selectedAuthMethod, setSelectedAuthMethod] = useState<"email" | "google">("email");
   const [showProfileSetupModal, setShowProfileSetupModal] = useState<boolean>(false);
   const [setupFullName, setSetupFullName] = useState<string>("");
@@ -970,6 +973,7 @@ export default function App() {
   const [editDob, setEditDob] = useState<string>(DEFAULT_USER.dob || "");
   const [editGender, setEditGender] = useState<string>(DEFAULT_USER.gender);
   const [editPhoneNumber, setEditPhoneNumber] = useState<string>(DEFAULT_USER.phoneNumber || "");
+  const [editBio, setEditBio] = useState<string>(DEFAULT_USER.bio || "");
   const [showDailyTasksOverlay, setShowDailyTasksOverlay] = useState<boolean>(false);
 
   // Profile Feed Tab states
@@ -1266,7 +1270,7 @@ export default function App() {
         const myUploaded = (myReels || []).filter(r => r && r.privacy !== "private").map(r => ({
           id: r.id,
           title: r.caption ? (r.caption.split(" ").slice(0, 4).join(" ") + "...") : "My Clip 🎬",
-          views: r.views ?? 0,
+          views: (r as any).views ?? 0,
           likes: r.likes,
           liked: r.liked,
           videoBg: r.videoBg,
@@ -6262,6 +6266,7 @@ export default function App() {
         fullName: editFullName.trim(),
         dob: editDob,
         phoneNumber: editPhoneNumber,
+        bio: editBio.trim(),
         // These are server/database metrics. They are never editable from Profile.
         followersCount: user.followersCount ?? 0,
         followingCount: user.followingCount ?? 0,
@@ -7576,6 +7581,7 @@ export default function App() {
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok || !data.success) throw new Error(data.error || "Verification email could not be sent. Please try again.");
+      setEmailOtpChallengeToken(String(data.challengeToken || ""));
       setIsOtpSent(true);
       setLoginSuccessMsg(data.message || `Verification code sent to ${cleanEmail}`);
     } catch (err: any) {
@@ -7600,14 +7606,14 @@ export default function App() {
       try {
         const response = await fetch(resolveApiUrl("/api/v1/auth/verify-email-otp"), {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email: cleanEmail, otp: cleanOtp })
+          body: JSON.stringify({ email: cleanEmail, otp: cleanOtp, challengeToken: emailOtpChallengeToken || undefined })
         });
         data = await response.json().catch(() => ({}));
         if (!response.ok || !data.success || !data.token) throw new Error(data.error || "Verification failed.");
       } catch (firstError) {
         const recovery = await fetch(resolveApiUrl("/api/v1/auth/recover-email-session"), {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email: cleanEmail, otp: cleanOtp })
+          body: JSON.stringify({ email: cleanEmail, otp: cleanOtp, challengeToken: emailOtpChallengeToken || undefined })
         });
         data = await recovery.json().catch(() => ({}));
         if (!recovery.ok || !data.success || !data.token) throw firstError;
@@ -7752,6 +7758,28 @@ export default function App() {
       setSetupShowConfirmPassword(false);
       setShowProfileSetupModal(true);
     }
+  };
+
+  // Handle Selection from Google Account Chooser
+  const handleSelectGoogleAccount = async (accountEmail: string, accountName?: string) => {
+    const cleanEmail = String(accountEmail || "").trim().toLowerCase();
+    if (!cleanEmail || !cleanEmail.includes("@")) {
+      setChooserError("Please enter a valid Google email address.");
+      return;
+    }
+    setChooserError("");
+    setLoginError("");
+    const displayName = accountName?.trim() || cleanEmail.split("@")[0] || "Google Member";
+    const photoURL = `https://api.dicebear.com/7.x/adventurer/svg?seed=${encodeURIComponent(cleanEmail)}`;
+    const syntheticUid = `google_${cleanEmail.replace(/[^a-zA-Z0-9]/g, "_")}`;
+
+    await processGoogleAuthUser({
+      uid: syntheticUid,
+      email: cleanEmail,
+      displayName,
+      photoURL,
+      getIdToken: async () => ""
+    });
   };
 
   // Real Google Sign-In Handler with Popup, Redirect & Seamless Account Chooser Fallback
@@ -7933,6 +7961,41 @@ export default function App() {
     setUser(updatedUser);
     localStorage.setItem("pardais_user_profile", JSON.stringify(updatedUser));
     setShowProfileSetupModal(false);
+  };
+
+  // Account deletion: soft-delete for 30 days, then backend permanently removes the account.
+  const handleDeleteAccount = async () => {
+    if (!user?.email || user?.isGuest) {
+      alert("Please log in to a registered account before deleting it.");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      "Delete your Pardais Party account?\n\nYour account will be scheduled for permanent deletion after 30 days. You can restore it during those 30 days. After 30 days, the account and associated user data will be permanently deleted.\n\nPress OK to continue."
+    );
+    if (!confirmed) return;
+
+    try {
+      const response = await authenticatedFetch("/api/v1/auth/request-account-deletion", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" }
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data?.success) {
+        throw new Error(data?.error || "Account deletion request failed. Please try again.");
+      }
+
+      const days = Number(data?.daysLeft || 30);
+      alert(
+        `Account deletion scheduled for ${days} days.\n\nYou can recover the account during this period from:\n${window.location.origin}/delete-account\n\nAfter the 30-day recovery period, permanent deletion will occur.`
+      );
+
+      // The backend invalidates the active session when deletion is requested.
+      await handleLogout();
+      setShowSettingsDrawer(false);
+    } catch (err: any) {
+      alert(err?.message || "Account deletion request failed. Please try again.");
+    }
   };
 
   // Universal Logout
@@ -8797,6 +8860,16 @@ export default function App() {
                     >
                       Clear Session
                     </button>
+                  </div>
+                ) : !isLoggedIn || user?.isGuest || !user?.username ? (
+                  /* ========================================= */
+                  /* AUTHENTICATION & LOGIN SCREEN (NO GUEST BYPASS) */
+                  /* ========================================= */
+                  <div className="flex-1 flex flex-col justify-center items-center overflow-y-auto safe-padding-top safe-padding-bottom bg-[#0a0a14]">
+                    <AuthScreen
+                      onAuthenticated={handleAuthAuthenticated}
+                      onGoogleSignIn={handleGoogleSignIn}
+                    />
                   </div>
                 ) : (
                   /* ========================================= */
@@ -13881,6 +13954,7 @@ export default function App() {
                                         setEditDob(user.dob || "1998-05-15");
                                         setEditGender(user.gender);
                                         setEditPhoneNumber(user.phoneNumber || "+92 300 4567890");
+                                        setEditBio(user.bio || "");
                                         setIsEditingProfile(true);
                                       }
                                     }}
@@ -13928,16 +14002,34 @@ export default function App() {
                                     />
                                   </div>
                                   <div>
-                                    <label className="text-[8px] uppercase tracking-wider text-gray-400 block mb-1 font-bold">Username</label>
+                                    <label className="text-[8px] uppercase tracking-wider text-pink-400 block mb-1 font-bold flex items-center justify-between">
+                                      <span>🔒 Username</span>
+                                      <span className="text-[7px] text-gray-400 font-normal">Permanent</span>
+                                    </label>
                                     <input
                                       type="text"
-                                      value={user.username}
+                                      value={`@${user.username}`}
                                       readOnly
                                       aria-readonly="true"
-                                      className="w-full bg-[#12121a]/70 border border-[#303040] rounded px-2.5 py-1.5 text-xs text-gray-400 cursor-not-allowed focus:outline-none"
-                                      title="Username is your permanent account identity"
+                                      className="w-full bg-[#12121a]/70 border border-pink-500/20 rounded px-2.5 py-1.5 text-xs text-pink-200 cursor-not-allowed focus:outline-none font-mono"
+                                      title="Username is your permanent account identity and cannot be edited"
                                     />
                                   </div>
+                                </div>
+
+                                <div>
+                                  <label className="text-[8px] uppercase tracking-wider text-pink-400 block mb-1 font-bold flex items-center justify-between">
+                                    <span>🔒 Pardais ID</span>
+                                    <span className="text-[7px] text-gray-400 font-normal">Permanent</span>
+                                  </label>
+                                  <input
+                                    type="text"
+                                    value={user.uniqueId || user.customPardaisId || "PRD-USER"}
+                                    readOnly
+                                    aria-readonly="true"
+                                    className="w-full bg-[#12121a]/70 border border-pink-500/20 rounded px-2.5 py-1.5 text-xs text-pink-200 cursor-not-allowed focus:outline-none font-mono"
+                                    title="Pardais ID is your unique non-editable identifier"
+                                  />
                                 </div>
 
                                 <div>
@@ -14109,6 +14201,17 @@ export default function App() {
                                     placeholder="+92 300 1234567"
                                     className="w-full bg-[#12121a] border border-[#303040] rounded px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-[#ff007f]"
                                     required
+                                  />
+                                </div>
+
+                                <div>
+                                  <label className="text-[8px] uppercase tracking-wider text-gray-400 block mb-1 font-bold">Bio / Status</label>
+                                  <textarea
+                                    value={editBio}
+                                    onChange={(e) => setEditBio(e.target.value)}
+                                    rows={2}
+                                    placeholder="Write something about yourself..."
+                                    className="w-full bg-[#12121a] border border-[#303040] rounded px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-[#ff007f] resize-none"
                                   />
                                 </div>
                               </div>
@@ -26603,6 +26706,21 @@ export default function App() {
                             </div>
                           </div>
 
+                          {/* Account deletion: 30-day recoverable soft delete */}
+                          <div className="pt-1">
+                            <button
+                              type="button"
+                              onClick={handleDeleteAccount}
+                              className="w-full bg-red-950/40 hover:bg-red-700/80 border border-red-500/50 hover:border-red-400 text-red-300 hover:text-white py-1.5 rounded-xl text-[10px] font-black transition-all flex items-center justify-center space-x-1"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                              <span>Delete Account (30-Day Recovery)</span>
+                            </button>
+                            <p className="text-[8px] text-gray-500 text-center mt-1 px-2">
+                              Your account can be restored for 30 days. After that it is permanently deleted.
+                            </p>
+                          </div>
+
                           {/* Quick Logout option */}
                           <div className="pt-1">
                             <button
@@ -31390,9 +31508,10 @@ export default function App() {
               <p className="text-[11px] text-pink-200 leading-snug px-2">Login to your account or create a new one.</p>
             </div>
 
-            <PersistentEmailAuth
+            <AuthScreen
               onAuthenticated={handleAuthAuthenticated}
               onGoogleSignIn={handleGoogleSignIn}
+              initialMode="login"
             />
 
             <button

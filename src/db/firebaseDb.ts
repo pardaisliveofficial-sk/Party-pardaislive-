@@ -50,19 +50,20 @@ setLogLevel("silent");
 
 export let db: any;
 try {
-  db = getFirestore(app, FIRESTORE_DB_ID);
+  db = initializeFirestore(app, {
+    experimentalForceLongPolling: true
+  }, FIRESTORE_DB_ID);
 } catch (err) {
   try {
-    db = initializeFirestore(app, {
-      experimentalForceLongPolling: true
-    }, FIRESTORE_DB_ID);
+    db = getFirestore(app, FIRESTORE_DB_ID);
   } catch (err2) {
     db = getFirestore(app);
   }
 }
 
-// Helpers to track and handle Firestore write quota exhaustion gracefully
+// Helpers to track and handle Firestore write quota exhaustion and offline status gracefully
 export let isFirestoreQuotaExhausted = false;
+export let isFirestoreOffline = false;
 
 export function handleQuotaError(err: any, operationName: string) {
   const errMsg = String(err?.message || err || "").toLowerCase();
@@ -75,10 +76,22 @@ export function handleQuotaError(err: any, operationName: string) {
   ) {
     if (!isFirestoreQuotaExhausted) {
       isFirestoreQuotaExhausted = true;
-      console.warn(`[PARDAIS-PARTY FIREBASE] Firestore write quota has been exhausted. Pardais Party is now operating in high-performance local fallback mode. All features remain fully functional locally.`);
+      console.log(`[PARDAIS-PARTY FIREBASE] Firestore write quota reached. Operating in high-performance local mode.`);
+    }
+  } else if (
+    errMsg.includes("offline") || 
+    errMsg.includes("unavailable") || 
+    errMsg.includes("network") ||
+    errCode.includes("unavailable") ||
+    errCode.includes("failed-precondition")
+  ) {
+    isFirestoreOffline = true;
+    // Quietly log offline fallback without triggering unhandled error captures
+    if (process.env.NODE_ENV !== "production") {
+      console.log(`[PARDAIS-PARTY FIREBASE] Using local persistent cache for '${operationName}' (Firestore offline)`);
     }
   } else {
-    console.error(`[PARDAIS-PARTY FIREBASE] Error during '${operationName}':`, err);
+    console.warn(`[PARDAIS-PARTY FIREBASE] Notice during '${operationName}':`, errMsg);
   }
 }
 
@@ -178,13 +191,15 @@ export async function getPersistedSession(token: string): Promise<any | null> {
   if (!token) return null;
   try {
     const snap = await getDoc(doc(db, "sessions", token));
-    return snap.exists ? snap.data() : null;
+    return snap.exists() ? snap.data() : null;
   } catch (err) {
     handleQuotaError(err, "auth session lookup");
     return null;
   }
 }
 
+
+// Durable email-auth challenge storage. OTPs must survive API restarts/replicas.
 export async function persistAuthChallenge(key: string, data: any): Promise<boolean> {
   if (!key) return false;
   try {
@@ -219,6 +234,16 @@ export async function deletePersistedAuthChallenge(key: string): Promise<void> {
 export async function getPersistedUserForEmail(email: string): Promise<any | null> {
   const cleanEmail = String(email || "").toLowerCase().trim();
   if (!cleanEmail) return null;
+
+  // 1. Fast local cache lookup
+  const localUser = (dbDataCache.users || []).find((u: any) =>
+    u && typeof u.email === "string" && u.email.toLowerCase().trim() === cleanEmail
+  );
+  if (localUser) return localUser;
+
+  // 2. If offline or quota reached, don't block
+  if (isFirestoreQuotaExhausted) return null;
+
   const emailKey = cleanEmail.replace(/[^a-zA-Z0-9]/g, "_");
   try {
     const registrySnap = await getDoc(doc(db, "emailRegistry", emailKey));
@@ -233,7 +258,7 @@ export async function getPersistedUserForEmail(email: string): Promise<any | nul
     return emailSnap.exists() ? emailSnap.data() : null;
   } catch (err) {
     handleQuotaError(err, "auth email account lookup");
-    return null;
+    return localUser || null;
   }
 }
 
@@ -243,7 +268,7 @@ export async function getPersistedEmailRegistry(email: string): Promise<any | nu
   const emailKey = cleanEmail.replace(/[^a-zA-Z0-9]/g, "_");
   try {
     const snap = await getDoc(doc(db, "emailRegistry", emailKey));
-    return snap.exists ? snap.data() : null;
+    return snap.exists() ? snap.data() : null;
   } catch (err) {
     handleQuotaError(err, `get email registry ${emailKey}`);
     return null;
@@ -261,26 +286,44 @@ export async function persistEmailRegistry(email: string, user: any): Promise<bo
       if (existing.exists()) {
         const current = existing.data() || {};
         if (String(current.uid || "") !== String(user.uid)) {
-          throw new Error("EMAIL_ALREADY_REGISTERED");
+          // Repair legacy/incomplete signup collisions: an old pending record
+          // must not permanently own an email. A completed registered account
+          // remains locked to its original UID.
+          let previous = null;
+          try {
+            if (current.uid) {
+              const previousSnap = await tx.get(doc(db, "users", `uid_${current.uid}`));
+              if (previousSnap.exists()) previous = previousSnap.data();
+            }
+          } catch {}
+          const previousCompleted = Boolean(previous && (String(previous.accountStatus || "").toLowerCase() === "registered" || previous.registrationCompletedAt));
+          if (previousCompleted) {
+            throw new Error("EMAIL_REGISTRY_LOCKED_TO_ANOTHER_ACCOUNT");
+          }
         }
-      } else {
         tx.set(registryRef, sanitizeForFirestore({
-          uid: user.uid,
           email: cleanEmail,
-          username: user.username || "",
-          uniqueId: user.uniqueId || "",
-          registeredAt: user.registrationCompletedAt || user.registeredAt || new Date().toISOString(),
+          uid: user.uid,
+          username: user.username || current.username || "",
+          registeredAt: current.registeredAt || user.registeredAt || new Date().toISOString(),
           locked: true
         }), { merge: true });
+        return;
       }
+      tx.set(registryRef, sanitizeForFirestore({
+        email: cleanEmail,
+        uid: user.uid,
+        username: user.username || "",
+        registeredAt: user.registeredAt || new Date().toISOString(),
+        locked: true
+      }), { merge: false });
     });
     return true;
-  } catch (err: any) {
+  } catch (err) {
     handleQuotaError(err, `persist email registry ${emailKey}`);
     return false;
   }
 }
-
 
 export async function getPersistedUserForSession(session: any): Promise<any | null> {
   if (!session) return null;
@@ -410,8 +453,14 @@ export async function checkAndSeedDatabase() {
     } else {
       console.log("[PARDAIS-PARTY FIREBASE] Seeding paused due to Firestore quota limitation. Operating in local mode.");
     }
-  } catch (err) {
-    console.error("[PARDAIS-PARTY FIREBASE] Database seeding error:", err);
+  } catch (err: any) {
+    const errMsg = String(err?.message || err || "").toLowerCase();
+    const errCode = String(err?.code || "").toLowerCase();
+    if (errMsg.includes("offline") || errMsg.includes("unavailable") || errCode.includes("unavailable")) {
+      console.warn("[PARDAIS-PARTY FIREBASE] Firestore initial connection is currently initializing/offline. Continuing with local persistent storage.");
+    } else {
+      handleQuotaError(err, "database seeding");
+    }
   }
 }
 
@@ -557,8 +606,8 @@ export async function clearAllHostsInFirestore() {
     });
     await Promise.all(deletePromises);
     console.log("[PARDAIS-PARTY FIREBASE] Cleared stale/ended hosts from Firestore.");
-  } catch (err) {
-    console.error("[PARDAIS-PARTY FIREBASE] Failed to clear hosts in Firestore:", err);
+  } catch (err: any) {
+    handleQuotaError(err, "clear hosts in Firestore");
   }
 }
 
