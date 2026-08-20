@@ -1,6 +1,1 @@
-{
-  "name": "",
-  "description": "",
-  "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
-}
+{"name":"Pardais Party V75 - Permanent Session & DP Fix","description":"Refresh-safe persistent authentication and user-selected avatar persistence","requestFramePermissions":[],"majorCapabilities":["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]}

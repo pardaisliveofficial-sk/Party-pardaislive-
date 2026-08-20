@@ -644,7 +644,15 @@ const ReelVideoPlayer: React.FC<ReelVideoPlayerProps> = ({
 export default function App() {
   // Authentication State
   const [isLoggedIn, setIsLoggedIn] = useState<boolean>(() => {
-    return localStorage.getItem("pardais_is_logged_in") === "true" && !!localStorage.getItem("pardais_auth_token");
+    // A browser/WebView refresh must NEVER be treated as a manual logout.
+    // The durable account profile is the local source of truth for restoring
+    // the UI while the backend session token is silently refreshed in the
+    // restoreSession effect below. Only the explicit Logout action clears the
+    // durable login flag/profile.
+    const loggedFlag = localStorage.getItem("pardais_is_logged_in") === "true";
+    const token = localStorage.getItem("pardais_auth_token");
+    const savedProfile = localStorage.getItem("pardais_user_profile");
+    return loggedFlag && (!!token || !!savedProfile);
   });
   const [showSplash, setShowSplash] = useState<boolean>(true);
   const [splashProgress, setSplashProgress] = useState<number>(0);
@@ -934,9 +942,22 @@ export default function App() {
             const backendAvatarTime = Date.parse(String(data.user.avatarUpdatedAt || data.user.profileUpdatedAt || "")) || 0;
             const localAvatarTime = Date.parse(String(localProfile?.avatarUpdatedAt || localProfile?.profileUpdatedAt || "")) || 0;
             const localCustomAvatar = Boolean(localProfile?.avatar && localProfile.avatarSource === "user-upload");
-            const useLocalAvatar = Boolean(localProfile?.avatar && localCustomAvatar && localAvatarTime > backendAvatarTime);
-            const preservedAvatar = useLocalAvatar ? localProfile!.avatar : (data.user.avatar || localProfile?.avatar || "");
-            const preservedAvatarUpdatedAt = useLocalAvatar ? localProfile!.avatarUpdatedAt : (data.user.avatarUpdatedAt || localProfile?.avatarUpdatedAt);
+            const backendCustomAvatar = Boolean(data.user.avatar && data.user.avatarSource === "user-upload");
+            // A user-selected DP is permanent until the user selects another one.
+            // Never replace it with the platform/default avatar during refresh or
+            // session restoration. A backend user-upload may replace it only when
+            // the server explicitly has a newer user-selected photo.
+            const useBackendAvatar = Boolean(
+              backendCustomAvatar &&
+              (!localCustomAvatar || backendAvatarTime > localAvatarTime)
+            );
+            const useLocalAvatar = Boolean(localProfile?.avatar && localCustomAvatar && !useBackendAvatar);
+            const preservedAvatar = useBackendAvatar
+              ? data.user.avatar
+              : (useLocalAvatar ? localProfile!.avatar : (data.user.avatar || localProfile?.avatar || ""));
+            const preservedAvatarUpdatedAt = useBackendAvatar
+              ? data.user.avatarUpdatedAt
+              : (useLocalAvatar ? localProfile!.avatarUpdatedAt : (data.user.avatarUpdatedAt || localProfile?.avatarUpdatedAt));
             const mergedUser: UserProfile = {
               ...data.user,
               // Backend is authoritative for account identity. Never reuse a previous
@@ -947,7 +968,7 @@ export default function App() {
               avatar: preservedAvatar,
               avatarUrl: useLocalAvatar ? localProfile!.avatarUrl || preservedAvatar : (data.user.avatarUrl || preservedAvatar),
               avatarUpdatedAt: preservedAvatarUpdatedAt,
-              avatarSource: (useLocalAvatar ? localProfile!.avatarSource : data.user.avatarSource) || (preservedAvatar ? "user-upload" : "default"),
+              avatarSource: (useBackendAvatar ? "user-upload" : (useLocalAvatar ? localProfile!.avatarSource : data.user.avatarSource)) || (preservedAvatar ? "user-upload" : "default"),
               profileUpdatedAt: data.user.profileUpdatedAt || localProfile?.profileUpdatedAt,
               bio: localProfile?.bio || data.user.bio,
               gender: localProfile?.gender || data.user.gender,
@@ -5331,16 +5352,18 @@ export default function App() {
               );
               const backendAvatarTime = Date.parse(String(data.avatarUpdatedAt || data.profileUpdatedAt || "")) || 0;
               const localAvatarTime = Date.parse(String(prev?.avatarUpdatedAt || prev?.profileUpdatedAt || "")) || 0;
-              const keepNewerLocalAvatar = Boolean(
-                sameAccount && prev?.avatar && prev.avatarSource === "user-upload" && localAvatarTime > backendAvatarTime
-              );
+              const localCustomAvatar = Boolean(sameAccount && prev?.avatar && prev.avatarSource === "user-upload");
+              const backendCustomAvatar = Boolean(data.avatar && data.avatarSource === "user-upload");
+              const useBackendAvatar = Boolean(backendCustomAvatar && (!localCustomAvatar || backendAvatarTime > localAvatarTime));
+              const keepLocalAvatar = Boolean(localCustomAvatar && !useBackendAvatar);
               return {
                 ...prev,
                 ...data,
-                avatar: keepNewerLocalAvatar ? prev!.avatar : (data.avatar || prev?.avatar || ""),
-                avatarUrl: keepNewerLocalAvatar ? (prev!.avatarUrl || prev!.avatar) : (data.avatarUrl || data.avatar || prev?.avatar || ""),
-                avatarUpdatedAt: keepNewerLocalAvatar ? prev!.avatarUpdatedAt : data.avatarUpdatedAt,
-                avatarSource: keepNewerLocalAvatar ? prev!.avatarSource : (data.avatarSource || (data.avatar ? "user-upload" : "default")),
+                // Do not let a default/stale backend avatar replace a user-selected DP.
+                avatar: keepLocalAvatar ? prev!.avatar : (data.avatar || prev?.avatar || ""),
+                avatarUrl: keepLocalAvatar ? (prev!.avatarUrl || prev!.avatar) : (data.avatarUrl || data.avatar || prev?.avatar || ""),
+                avatarUpdatedAt: keepLocalAvatar ? prev!.avatarUpdatedAt : data.avatarUpdatedAt,
+                avatarSource: keepLocalAvatar ? prev!.avatarSource : (data.avatarSource || (data.avatar ? "user-upload" : "default")),
               } as UserProfile;
             });
             lastSavedUserRef.current = JSON.stringify(data);
@@ -6282,13 +6305,15 @@ export default function App() {
         persistentAvatar = uploadData.url;
       }
 
+      const avatarChangedByUser = Boolean(persistentAvatar && persistentAvatar !== user.avatar);
       const updatedUser: UserProfile = {
         ...user,
         // Username is the permanent account identity and cannot be changed here.
         username: user.username,
         avatar: persistentAvatar,
         avatarUrl: persistentAvatar,
-        avatarUpdatedAt: persistentAvatar ? (user.avatarUpdatedAt || new Date().toISOString()) : undefined,
+        // Only a real user-selected replacement gets a new timestamp.
+        avatarUpdatedAt: persistentAvatar ? (avatarChangedByUser ? new Date().toISOString() : user.avatarUpdatedAt || new Date().toISOString()) : undefined,
         avatarSource: persistentAvatar ? "user-upload" : "default",
         profileUpdatedAt: new Date().toISOString(),
         gender: editGender,

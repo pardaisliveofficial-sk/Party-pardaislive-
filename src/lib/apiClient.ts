@@ -176,6 +176,8 @@ export const refreshSession = async (): Promise<string | null> => {
     console.warn("[PARDAIS-PARTY API CLIENT] Session refresh failed:", err);
   }
 
+  // Never clear the durable local account here. A failed refresh is a transport/session
+  // problem only; the UI must remain signed in until the user explicitly logs out.
   return existingToken || null;
 };
 
