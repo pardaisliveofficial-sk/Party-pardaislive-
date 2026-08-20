@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { App as CapacitorApp } from "@capacitor/app";
-import { authenticatedFetch, resolveApiUrl, refreshSession, getAuthToken, isCapacitorOrAndroid } from "./lib/apiClient";
+import { authenticatedFetch, resolveApiUrl, refreshSession, getAuthToken, isCapacitorOrAndroid, emailPasswordLogin } from "./lib/apiClient";
 import { COUNTRIES_CURRENCIES, CountryCurrency, getCoinsCostInCurrency } from "./currencyUtils";
 import { ReelsView } from "./components/ReelsView";
 import PersistentEmailAuth from "./components/PersistentEmailAuth";
@@ -874,6 +874,29 @@ export default function App() {
   useEffect(() => {
     syncNominatedAdminEmails();
     const restoreSession = async () => {
+    const restoreSavedPasswordAccount = async (savedProfile: UserProfile | null) => {
+      try {
+        const raw = localStorage.getItem("pardais_saved_login_credentials");
+        if (!raw) return false;
+        const saved = JSON.parse(raw);
+        if (!saved?.identifier || !saved?.password) return false;
+        // Only restore the saved account; never use this mechanism for Guest_Visitor.
+        if (String(savedProfile?.username || "").toLowerCase() === "guest_visitor" || String(savedProfile?.uid || "").startsWith("guest_")) return false;
+        const result = await emailPasswordLogin(String(saved.identifier), String(saved.password));
+        if (!result?.success || !result?.token || !result?.user) return false;
+        localStorage.setItem("pardais_auth_token", String(result.token));
+        localStorage.setItem("pardais_is_logged_in", "true");
+        localStorage.setItem("pardais_user_profile", JSON.stringify(result.user));
+        setUser(result.user);
+        setIsLoggedIn(true);
+        lastSavedUserRef.current = JSON.stringify(result.user);
+        return true;
+      } catch (err) {
+        console.warn("[PARDAIS AUTH] Saved password restore failed:", err);
+        return false;
+      }
+    };
+
       // 1. Check if returning from Google Sign-In redirect
       try {
         if (clientAuth) {
@@ -904,10 +927,13 @@ export default function App() {
       }
 
       if (!token) {
-        // A WebView/browser refresh can clear the short-lived token while the
-        // durable profile remains. Recreate the server session from the saved
-        // account identity instead of treating the user as logged out.
-        refreshSession().then((newToken) => {
+        // Android WebView can lose the short-lived token after a process restart.
+        // Restore the permanent email/username + password account first, then
+        // fall back to the server session refresh path.
+        restoreSavedPasswordAccount(savedProfile).then((restoredByPassword) => {
+          if (restoredByPassword) return null;
+          return refreshSession();
+        }).then((newToken) => {
           if (!newToken) return;
           setIsLoggedIn(true);
           return authenticatedFetch("/api/v1/auth/me");
@@ -986,9 +1012,11 @@ export default function App() {
         })
         .catch(async err => {
           console.warn("[PARDAIS AUTH RESTORE] Session verification notice:", err.message);
-          // If the stored token is stale after a Railway restart, rebuild a
-          // signed session from the durable email/UID profile and retry once.
+          // If the stored token is stale after a Railway restart, first restore
+          // the permanent password account, then rebuild a signed session.
           try {
+            const restoredByPassword = await restoreSavedPasswordAccount(savedProfile);
+            if (restoredByPassword) return;
             const refreshed = await refreshSession();
             if (!refreshed) return;
             const retry = await authenticatedFetch("/api/v1/auth/me");
@@ -8036,6 +8064,7 @@ export default function App() {
       localStorage.removeItem("pardais_auth_token");
       localStorage.removeItem("pardais_user_profile");
       localStorage.removeItem("pardais_is_logged_in");
+      localStorage.removeItem("pardais_saved_login_credentials");
       try { sessionStorage.removeItem("pardais_signup_token"); } catch {}
       setIsLoggedIn(false);
       setShowAuthModal(false);

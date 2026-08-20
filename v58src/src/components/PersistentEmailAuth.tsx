@@ -4,7 +4,8 @@ import {
   verifyEmailOtp,
   sendLoginEmailOtp,
   verifyLoginEmailOtp,
-  completeEmailProfile
+  completeEmailProfile,
+  emailPasswordLogin
 } from "../lib/apiClient";
 
 type Props = {
@@ -19,6 +20,10 @@ export default function PersistentEmailAuth({ onAuthenticated }: Props) {
   const [mode, setMode] = useState<Mode>("login");
   const [step, setStep] = useState<Step>("email");
   const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [otp, setOtp] = useState("");
   const [name, setName] = useState("");
   const [username, setUsername] = useState("");
@@ -47,9 +52,48 @@ export default function PersistentEmailAuth({ onAuthenticated }: Props) {
     setMode(next);
     setStep("email");
     setOtp("");
+    setPassword("");
     setError("");
     setNotice("");
     setResendCooldown(0);
+  };
+
+  const passwordLogin = async () => {
+    const identifier = email.trim();
+    if (!identifier) {
+      setError("Enter your email, username or Pardais ID.");
+      return;
+    }
+    if (!password) {
+      setError("Enter your password.");
+      return;
+    }
+
+    setError("");
+    setNotice("");
+    setBusy(true);
+    try {
+      const result = await emailPasswordLogin(identifier, password);
+      if (!result?.success || !result?.token || !result?.user) {
+        throw new Error(result?.error || "Login failed. Please check your account details.");
+      }
+
+      // Keep the returning account credentials on this device so an Android
+      // WebView restart can silently sign the same account back in.
+      try {
+        localStorage.setItem("pardais_saved_login_credentials", JSON.stringify({
+          identifier,
+          password,
+          savedAt: Date.now()
+        }));
+      } catch {}
+
+      onAuthenticated(result);
+    } catch (e) {
+      fail(e, "Login failed. Please check your password.");
+    } finally {
+      setBusy(false);
+    }
   };
 
   const requestOtp = async () => {
@@ -153,6 +197,14 @@ export default function PersistentEmailAuth({ onAuthenticated }: Props) {
       setError("Select your date of birth.");
       return;
     }
+    if (password.length < 6) {
+      setError("Password must be at least 6 characters.");
+      return;
+    }
+    if (password !== confirmPassword) {
+      setError("Passwords do not match.");
+      return;
+    }
 
     let verifiedToken = "";
     try {
@@ -173,7 +225,8 @@ export default function PersistentEmailAuth({ onAuthenticated }: Props) {
         verifiedToken,
         name.trim(),
         requestedUsername,
-        dob
+        dob,
+        password
       );
 
       if (!result?.success || !result?.token || !result?.user) {
@@ -182,6 +235,11 @@ export default function PersistentEmailAuth({ onAuthenticated }: Props) {
 
       try {
         sessionStorage.removeItem("pardais_signup_token");
+        localStorage.setItem("pardais_saved_login_credentials", JSON.stringify({
+          identifier: email.trim().toLowerCase(),
+          password,
+          savedAt: Date.now()
+        }));
       } catch {}
 
       onAuthenticated(result);
@@ -259,31 +317,72 @@ export default function PersistentEmailAuth({ onAuthenticated }: Props) {
           <input
             value={email}
             onChange={e => setEmail(e.target.value)}
-            type="email"
-            placeholder="Email address"
+            type="text"
+            placeholder={mode === "login" ? "Email, username or Pardais ID" : "Email address"}
             className="w-full bg-[#1e1e2d] border border-[#303040] rounded-xl px-3 py-3 text-white text-sm"
-            autoComplete="email"
+            autoComplete={mode === "login" ? "username" : "email"}
             disabled={busy}
           />
 
-          <button
-            type="button"
-            disabled={busy}
-            onClick={requestOtp}
-            className="w-full bg-gradient-to-r from-[#ff007f] to-[#7b2cbf] text-white py-3 rounded-xl font-bold"
-          >
-            {busy
-              ? "Please wait…"
-              : mode === "login"
-                ? "SEND LOGIN CODE"
-                : "SEND SIGNUP CODE"}
-          </button>
+          {mode === "login" ? (
+            <>
+              <div className="relative">
+                <input
+                  value={password}
+                  onChange={e => setPassword(e.target.value)}
+                  type={showPassword ? "text" : "password"}
+                  placeholder="Password"
+                  className="w-full bg-[#1e1e2d] border border-[#303040] rounded-xl px-3 py-3 pr-20 text-white text-sm"
+                  autoComplete="current-password"
+                  disabled={busy}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(v => !v)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-pink-300"
+                  disabled={busy}
+                >
+                  {showPassword ? "HIDE" : "SHOW"}
+                </button>
+              </div>
 
-          <p className="text-[10px] text-gray-500 text-center">
-            {mode === "login"
-              ? "Your registered email will receive a one-time login code."
-              : "Your email will be verified first. Then you will set your profile."}
-          </p>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={passwordLogin}
+                className="w-full bg-gradient-to-r from-[#ff007f] to-[#7b2cbf] text-white py-3 rounded-xl font-bold"
+              >
+                {busy ? "LOGGING IN…" : "LOGIN"}
+              </button>
+
+              <button
+                type="button"
+                disabled={busy}
+                onClick={requestOtp}
+                className="w-full bg-white/5 border border-white/10 text-gray-200 py-2.5 rounded-xl text-xs font-bold"
+              >
+                LOGIN WITH EMAIL CODE
+              </button>
+
+              <p className="text-[10px] text-gray-500 text-center">
+                Your account stays saved on this device. After an app restart, Pardais Party will restore this account automatically.
+              </p>
+            </>
+          ) : (
+            <>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={requestOtp}
+                className="w-full bg-gradient-to-r from-[#ff007f] to-[#7b2cbf] text-white py-3 rounded-xl font-bold"
+              >
+                {busy ? "Please wait…" : "SEND SIGNUP CODE"}
+              </button>
+              <p className="text-[10px] text-gray-500 text-center">
+                Your email will be verified first. Then you will set your profile and password.
+              </p>
+            </>
+          )}
         </>
       )}
 
@@ -382,6 +481,31 @@ export default function PersistentEmailAuth({ onAuthenticated }: Props) {
             className="w-full bg-[#1e1e2d] border border-[#303040] rounded-xl px-3 py-3 text-white text-sm"
             disabled={busy}
           />
+
+          <div className="relative">
+            <input
+              value={password}
+              onChange={e => setPassword(e.target.value)}
+              type={showPassword ? "text" : "password"}
+              placeholder="Create password (6+ characters)"
+              className="w-full bg-[#1e1e2d] border border-[#303040] rounded-xl px-3 py-3 pr-20 text-white text-sm"
+              autoComplete="new-password"
+              disabled={busy}
+            />
+            <button type="button" onClick={() => setShowPassword(v => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-pink-300">{showPassword ? "HIDE" : "SHOW"}</button>
+          </div>
+          <div className="relative">
+            <input
+              value={confirmPassword}
+              onChange={e => setConfirmPassword(e.target.value)}
+              type={showConfirmPassword ? "text" : "password"}
+              placeholder="Confirm password"
+              className="w-full bg-[#1e1e2d] border border-[#303040] rounded-xl px-3 py-3 pr-20 text-white text-sm"
+              autoComplete="new-password"
+              disabled={busy}
+            />
+            <button type="button" onClick={() => setShowConfirmPassword(v => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-pink-300">{showConfirmPassword ? "HIDE" : "SHOW"}</button>
+          </div>
 
           <button
             type="button"

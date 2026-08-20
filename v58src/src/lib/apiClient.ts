@@ -415,7 +415,7 @@ export async function createEmailPassword(token: string, password: string) {
 }
 
 
-export async function completeEmailProfile(token: string, fullName: string, username: string, dob: string) {
+export async function completeEmailProfile(token: string, fullName: string, username: string, dob: string, password: string) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 30000);
   try {
@@ -429,6 +429,7 @@ export async function completeEmailProfile(token: string, fullName: string, user
         fullName: fullName.trim(),
         username: username.trim().replace(/^@/, ""),
         dob: dob.trim(),
+        password,
         verificationToken: token
       }),
       signal: controller.signal

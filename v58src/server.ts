@@ -1956,6 +1956,7 @@ app.post("/api/v1/auth/create-account", authenticateUser, async (req: any, res) 
     ? req.body.username.trim().replace(/^@/, "")
     : "";
   const dob = typeof req.body?.dob === "string" ? req.body.dob.trim() : "";
+  const password = typeof req.body?.password === "string" ? req.body.password : "";
   const avatar = typeof req.body?.avatar === "string" ? req.body.avatar.trim() : "";
   const gender = typeof req.body?.gender === "string" ? req.body.gender.trim() : "";
 
@@ -1973,6 +1974,10 @@ app.post("/api/v1/auth/create-account", authenticateUser, async (req: any, res) 
 
   if (!dob) {
     return res.status(400).json({ success: false, error: "Date of birth is required." });
+  }
+
+  if (password.length < 6) {
+    return res.status(400).json({ success: false, code: "PASSWORD_REQUIRED", error: "Password must be at least 6 characters." });
   }
 
   const currentEmail = String(req.user.email).toLowerCase().trim();
@@ -2014,9 +2019,9 @@ app.post("/api/v1/auth/create-account", authenticateUser, async (req: any, res) 
   if (avatar && /^https?:\/\//i.test(avatar)) req.user.avatar = avatar;
   if (gender) req.user.gender = gender;
 
-  // Password authentication is intentionally disabled for this auth flow.
-  // Keep any legacy passwordHash field untouched for old data compatibility,
-  // but never require it and never create a new password.
+  // Every newly completed email account gets a permanent password so the
+  // Android app can restore the same account after a WebView/process restart.
+  req.user.passwordHash = hashPassword(password);
   req.user.authProvider = "email";
   req.user.isVerified = true;
   req.user.accountStatus = "registered";
