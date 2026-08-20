@@ -1,5 +1,5 @@
 // Pardais Party — PWA Service Worker v10
-const CACHE_NAME = "pardais-party-v10";
+const CACHE_NAME = "pardais-party-v11";
 const ASSETS_TO_CACHE = [
   "/",
   "/?mode=standalone",
@@ -60,6 +60,14 @@ self.addEventListener("fetch", (event) => {
           });
         })
     );
+    return;
+  }
+
+  // Never cache API responses. Authentication, sessions, reels, presence and
+  // other production data must always come from the live server.
+  const requestUrl = new URL(event.request.url);
+  if (requestUrl.pathname.startsWith("/api/")) {
+    event.respondWith(fetch(event.request));
     return;
   }
 

@@ -197,12 +197,13 @@ const databaseReady = loadDatabase();
 // request OTP -> verify OTP for login.
 // ------------------------------------------------------------------
 const freshAuthReady = async () => {
-  try {
-    await Promise.race([
-      databaseReady,
-      new Promise<void>((resolve) => setTimeout(resolve, 12000))
-    ]);
-  } catch {}
+  // Authentication must not wait for the full Firestore/reels bootstrap.
+  // Railway can receive an auth request while the background database hydration
+  // is still running. The auth functions already use the local cache first and
+  // have bounded durable Firestore fallbacks, so waiting here only turns a fast
+  // OTP request into a 12-second production timeout.
+  if (!Array.isArray(dbData.users)) dbData.users = [];
+  if (!dbData.emailOtps || typeof dbData.emailOtps !== "object") dbData.emailOtps = {};
 };
 
 const freshAuthEmailKey = (email: string) =>
@@ -7186,18 +7187,70 @@ app.post("/api/v1/wallet/withdraw", authenticateUser, async (req: any, res) => {
 });
 
 // Reels endpoints
-app.get("/api/v1/reels", async (req, res) => {
-  await hydrateReelsFromFirestore(true);
-  await hydrateReelsFromR2Metadata();
+// IMPORTANT: /api/v1/reels is requested repeatedly during app startup/refresh.
+// The old implementation waited for Firestore + R2 metadata on every request
+// and synchronously rewrote the entire local DB. On Railway this could produce
+// 30–50s requests and make the web service appear unavailable after refresh.
+// Serve the hot cache immediately and refresh it in the background at most once
+// per minute. A single first-load hydration is allowed to run briefly when the
+// cache is empty.
+let reelsHydrationInFlight: Promise<void> | null = null;
+let lastReelsHydrationAt = 0;
+
+function sortReelsCache() {
   const map = new Map<string, any>();
-  (dbData.reels || []).forEach((r: any) => { if (r?.id) map.set(String(r.id), r); });
+  (dbData.reels || []).forEach((r: any) => {
+    if (r?.id) map.set(String(r.id), r);
+  });
   dbData.reels = Array.from(map.values()).sort((a: any, b: any) => {
     const ta = Date.parse(a?.createdAt || "") || 0;
     const tb = Date.parse(b?.createdAt || "") || 0;
     return tb - ta;
   });
-  saveDatabase();
-  res.json(dbData.reels);
+}
+
+function scheduleReelsHydration(force = false) {
+  const now = Date.now();
+  if (reelsHydrationInFlight) return reelsHydrationInFlight;
+  if (!force && now - lastReelsHydrationAt < 60_000) return Promise.resolve();
+
+  lastReelsHydrationAt = now;
+  reelsHydrationInFlight = (async () => {
+    try {
+      await Promise.race([
+        Promise.all([hydrateReelsFromFirestore(true), hydrateReelsFromR2Metadata()]),
+        new Promise<void>((resolve) => setTimeout(resolve, 8_000))
+      ]);
+      sortReelsCache();
+      // Persist in the background only. Never make a GET /reels request wait for
+      // a synchronous filesystem write.
+      setImmediate(() => {
+        try { saveDatabase(); } catch {}
+      });
+    } catch (err: any) {
+      console.warn("[PARDAIS-PARTY REELS] Background hydration skipped:", err?.message || err);
+    } finally {
+      reelsHydrationInFlight = null;
+    }
+  })();
+  return reelsHydrationInFlight;
+}
+
+app.get("/api/v1/reels", async (_req, res) => {
+  sortReelsCache();
+  const cached = Array.isArray(dbData.reels) ? dbData.reels : [];
+
+  // If the cache is empty, give the first request a short chance to populate it.
+  // Otherwise respond immediately and refresh in the background.
+  if (cached.length === 0) {
+    await scheduleReelsHydration(true);
+  } else {
+    void scheduleReelsHydration(false);
+  }
+
+  sortReelsCache();
+  res.setHeader("Cache-Control", "no-store, max-age=0");
+  return res.json(Array.isArray(dbData.reels) ? dbData.reels : []);
 });
 
 app.post("/api/v1/reels", async (req, res) => {
@@ -8554,6 +8607,13 @@ if(new URLSearchParams(location.search).get("restore")==="1")showMode("restore")
 </html>`;
 
 async function startServer() {
+  // Railway health checks must always have a lightweight endpoint that does not
+  // depend on Firebase, R2, reels, or authentication state.
+  app.get("/healthz", (_req, res) => {
+    res.setHeader("Cache-Control", "no-store, max-age=0");
+    return res.status(200).json({ ok: true, service: "pardais-party", uptime: Math.round(process.uptime()) });
+  });
+
   app.get("/delete-account", (req, res) => res.type("html").send(ACCOUNT_DELETION_PAGE));
   app.get("/delete-account/", (req, res) => res.type("html").send(ACCOUNT_DELETION_PAGE));
   // Separate routes for Web Admin
@@ -8576,12 +8636,15 @@ async function startServer() {
     app.use(express.static(distPath));
     
     app.get('*', (req, res) => {
-      // If requested file looks like an admin file or contains /admin in path, redirect/serve admin
+      // SPA fallback must always return a fresh HTML shell. This prevents a stale
+      // service-worker/browser document from masking a successful Railway deploy.
+      res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+      res.setHeader("Pragma", "no-cache");
+      res.setHeader("Expires", "0");
       if (req.path.startsWith("/admin")) {
-        res.sendFile(path.join(distPath, 'admin.html'));
-      } else {
-        res.sendFile(path.join(distPath, 'index.html'));
+        return res.sendFile(path.join(distPath, 'admin.html'));
       }
+      return res.sendFile(path.join(distPath, 'index.html'));
     });
   }
 
