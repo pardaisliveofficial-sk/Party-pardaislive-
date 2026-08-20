@@ -1175,20 +1175,22 @@ async function findUserByIdentifierDurably(identifier: string, timeoutMs = 1800)
 
   if (localUser) return localUser;
 
-  // 2. Search durable Firestore storage
+  // 2. Search durable Firestore storage. Email uses the canonical email registry;
+  // username/ID uses the same user-session lookup path so login still works after
+  // a Railway restart when the in-memory user cache is empty.
   try {
-    if (isEmail) {
-      const persisted = await Promise.race([
-        getPersistedUserForEmail(normalized),
-        new Promise<any | null>((resolve) => setTimeout(() => resolve(null), timeoutMs))
-      ]);
-      if (persisted) {
-        if (!dbData.users.some((u: any) => u && (u.uid === persisted.uid || (u.email && u.email.toLowerCase() === persisted.email.toLowerCase())))) {
-          dbData.users.push(persisted);
-          saveDatabase();
-        }
-        return persisted;
+    const persisted = await Promise.race([
+      isEmail
+        ? getPersistedUserForEmail(normalized)
+        : getPersistedUserForSession({ username: normalized }),
+      new Promise<any | null>((resolve) => setTimeout(() => resolve(null), timeoutMs))
+    ]);
+    if (persisted) {
+      if (!dbData.users.some((u: any) => u && (u.uid === persisted.uid || (u.email && String(u.email).toLowerCase() === String(persisted.email || '').toLowerCase()) || (u.username && String(u.username).toLowerCase() === String(persisted.username || '').toLowerCase())))) {
+        dbData.users.push(persisted);
+        saveDatabase();
       }
+      return persisted;
     }
   } catch (err) {
     console.warn("[PARDAIS AUTH] Durable lookup note:", err);
@@ -2719,23 +2721,66 @@ app.post("/api/v1/auth/refresh-session", async (req, res) => {
     });
   }
 
-  const requestedUsername = req.body?.username || `user_${Math.floor(1000 + Math.random() * 9000)}`;
-  const requestedUid = req.body?.uid || `guest_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+  const requestedUsername = typeof req.body?.username === "string" ? req.body.username.trim() : "";
+  const requestedUid = typeof req.body?.uid === "string" ? req.body.uid.trim() : "";
   const requestedEmail = typeof req.body?.email === "string" ? req.body.email.toLowerCase().trim() : "";
-  
-  let user = dbData.users?.find((u: any) => 
-    (requestedUid && u.uid === requestedUid) || 
-    (requestedUsername && u.username === requestedUsername)
+  const requestedFullName = typeof req.body?.fullName === "string" ? req.body.fullName : "Pardais Member";
+
+  // First resolve the existing account from the local cache. If the Railway
+  // instance restarted, resolve it from Firestore before ever creating a user.
+  let user = (dbData.users || []).find((u: any) =>
+    u && ((requestedUid && u.uid === requestedUid) ||
+      (requestedEmail && String(u.email || "").toLowerCase().trim() === requestedEmail) ||
+      (requestedUsername && String(u.username || "").toLowerCase() === requestedUsername.toLowerCase()))
   );
 
+  if (!user && (requestedEmail || requestedUid || requestedUsername)) {
+    try {
+      const persisted = requestedEmail
+        ? await Promise.race([
+            getPersistedUserForEmail(requestedEmail),
+            new Promise<any | null>((resolve) => setTimeout(() => resolve(null), 3000))
+          ])
+        : await Promise.race([
+            getPersistedUserForSession({ uid: requestedUid, username: requestedUsername, email: requestedEmail }),
+            new Promise<any | null>((resolve) => setTimeout(() => resolve(null), 3000))
+          ]);
+      if (persisted) {
+        user = persisted;
+        const existingIndex = (dbData.users || []).findIndex((u: any) =>
+          u && (u.uid === persisted.uid || String(u.email || "").toLowerCase().trim() === String(persisted.email || "").toLowerCase().trim())
+        );
+        if (existingIndex === -1) dbData.users.push(persisted);
+        else dbData.users[existingIndex] = persisted;
+      }
+    } catch (err) {
+      console.warn("[PARDAIS AUTH] Durable refresh-session lookup delayed:", err);
+    }
+  }
+
   if (!user) {
+    // Never manufacture a new real account during silent session restoration.
+    // A missing durable email/UID/username match means the stored account must
+    // be recovered through the normal Login/Forgot Password flow instead.
+    // Guest sessions are the only sessions allowed to be recreated silently.
+    const isGuestRestore = !requestedEmail && String(requestedUid || "").startsWith("guest_");
+    if (!isGuestRestore) {
+      return res.status(401).json({
+        success: false,
+        code: "ACCOUNT_NOT_RESTORED",
+        error: "Saved account could not be restored. Please log in again."
+      });
+    }
+
+    const stableEmailUid = requestedUid || `guest_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+    const stableUsername = requestedUsername || `user_${Math.floor(1000 + Math.random() * 9000)}`;
     user = {
-      uid: requestedUid,
-      username: requestedUsername,
-      uniqueId: `pardais_${Math.floor(1000 + Math.random() * 9000)}`,
+      uid: stableEmailUid,
+      username: stableUsername,
+      uniqueId: requestedEmail ? stablePardaisId(requestedEmail) : `pardais_${Math.floor(1000 + Math.random() * 9000)}`,
       email: requestedEmail,
-      fullName: req.body?.fullName || "Pardais Member",
-      avatar: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80",
+      fullName: requestedFullName,
+      avatar: "",
       bio: "Pardais Party Member 🇵🇰",
       gender: "Male",
       country: "Pakistan",
@@ -2745,29 +2790,29 @@ app.post("/api/v1/auth/refresh-session", async (req, res) => {
       userLevel: 1,
       hostLevel: 1,
       wealthLevel: 1,
-      xp: 0
+      xp: 0,
+      accountStatus: requestedEmail ? "pending_profile" : "registered",
+      profileCompleted: false,
+      isVerified: Boolean(requestedEmail)
     };
+    if (requestedEmail) ensureStableEmailIdentity(user, requestedEmail);
     if (!Array.isArray(dbData.users)) dbData.users = [];
     dbData.users.push(user);
     applyAdminAccountState(user, { initializeCoins: true });
-    syncDocument("users", user.username, user);
-  } else {
+  } else if (user.email) {
+    // Normalize identity without changing an already assigned Pardais ID/avatar.
+    ensureStableEmailIdentity(user, String(user.email).toLowerCase().trim());
     applyAdminAccountState(user, { initializeCoins: true });
   }
 
-  const token = `pardais_session_${user.uid}_${Math.random().toString(36).substring(2, 10)}`;
-  const sessionData = {
-    uid: user.uid,
-    username: user.username,
-    email: user.email || "",
-    loginTime: new Date().toISOString()
-  };
-  if (!dbData.sessions) dbData.sessions = {};
-  dbData.sessions[token] = sessionData;
+  // Never overwrite a permanent identity with request-side/random values.
+  if (!user.uniqueId && user.email) user.uniqueId = stablePardaisId(String(user.email).toLowerCase().trim());
+  if (!user.username && requestedUsername) user.username = requestedUsername;
 
+  await persistUserDurably(user);
   saveDatabase();
-  await syncDocument("sessions", token, sessionData);
 
+  const token = await createSession(user);
   return res.json({
     success: true,
     token,

@@ -7536,51 +7536,61 @@ export default function App() {
     }
   };
 
-  // Quick One-Tap Guest Login Handler
-  const handleQuickGuestLogin = () => {
+  // Quick One-Tap Guest Login Handler — persist the guest account on the backend first.
+  const handleQuickGuestLogin = async () => {
     if (!termsAccepted) setTermsAccepted(true);
     setLoginError("");
     setLoginSuccessMsg("");
-    const guestUid = `guest_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-    const guestUser: UserProfile = {
-      uid: guestUid,
-      email: `${guestUid}@pardaisparty.com`,
-      username: `Pardais_User_${Math.floor(1000 + Math.random() * 9000)}`,
-      uniqueId: `pardes_${Math.floor(1000 + Math.random() * 9000)}`,
-      fullName: "Pardais Member",
-      avatar: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80",
-      coverPhoto: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=800&q=80",
-      bio: "Welcome to Pardais Party! 🇵🇰",
-      gender: "Male",
-      country: "Pakistan",
-      language: "Urdu / Hinglish",
-      familyId: "",
-      agencyId: "",
-      isVerified: false,
-      isBanned: false,
-      twoFactorEnabled: false,
-      coins: 1000000,
-      diamonds: 0,
-      vipLevel: 0,
-      userLevel: 1,
-      hostLevel: 1,
-      wealthLevel: 1,
-      xp: 0
-    };
 
-    const token = `pardais_session_${guestUid}_${Math.random().toString(36).substring(2, 10)}`;
-    localStorage.setItem("pardais_auth_token", token);
-    localStorage.setItem("pardais_is_logged_in", "true");
-    localStorage.setItem("pardais_user_profile", JSON.stringify(guestUser));
-    setUser(guestUser);
-    setIsLoggedIn(true);
-    setShowAuthModal(false);
-    if (pendingAuthCallback) {
-      const cb = pendingAuthCallback;
-      setPendingAuthCallback(null);
-      try { cb(); } catch (e) {}
+    const guestUid = `guest_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+    const guestUsername = `Pardais_User_${Math.floor(1000 + Math.random() * 9000)}`;
+    const deviceId = deviceInfo?.deviceId || "";
+
+    try {
+      const response = await fetch(resolveApiUrl("/api/v1/auth/guest-login"), {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(deviceId ? { "X-Device-ID": deviceId } : {})
+        },
+        body: JSON.stringify({
+          uid: guestUid,
+          username: guestUsername,
+          fullName: "Pardais Member",
+          deviceId
+        })
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data?.success || !data?.token || !data?.user) {
+        throw new Error(data?.message || data?.error || "Guest login failed.");
+      }
+
+      const guestUser = {
+        ...data.user,
+        isGuest: true,
+        authProvider: "guest",
+        accountStatus: data.user.accountStatus || "guest",
+        profileCompleted: Boolean(data.user.profileCompleted)
+      } as UserProfile;
+
+      localStorage.setItem("pardais_auth_token", data.token);
+      localStorage.setItem("pardais_is_logged_in", "true");
+      localStorage.setItem("pardais_user_profile", JSON.stringify(guestUser));
+      setUser(guestUser);
+      setIsLoggedIn(true);
+      setShowAuthModal(false);
+      setLoginSuccessMsg("Guest account created successfully.");
+
+      if (pendingAuthCallback) {
+        const cb = pendingAuthCallback;
+        setPendingAuthCallback(null);
+        try { cb(); } catch {}
+      }
+      setShowProfileSetupModal(true);
+    } catch (err: any) {
+      console.warn("[GUEST AUTH] Backend guest login failed:", err);
+      setLoginError(err?.message || "Guest login failed. Please try again.");
     }
-    setShowProfileSetupModal(true);
   };
 
   // Complete Profile Setup

@@ -641,8 +641,18 @@ const ReelVideoPlayer: React.FC<ReelVideoPlayerProps> = ({
 
 export default function App() {
   // Authentication State
+  const [authHydrating, setAuthHydrating] = useState<boolean>(true);
+
   const [isLoggedIn, setIsLoggedIn] = useState<boolean>(() => {
-    return localStorage.getItem("pardais_is_logged_in") === "true" && !!localStorage.getItem("pardais_auth_token");
+    // A browser/WebView refresh must NEVER be treated as a manual logout.
+    // The durable account profile is the local source of truth for restoring
+    // the UI while the backend session token is silently refreshed in the
+    // restoreSession effect below. Only the explicit Logout action clears the
+    // durable login flag/profile.
+    const loggedFlag = localStorage.getItem("pardais_is_logged_in") === "true";
+    const token = localStorage.getItem("pardais_auth_token");
+    const savedProfile = localStorage.getItem("pardais_user_profile");
+    return !!savedProfile && (savedProfile.length > 0) && (loggedFlag || !!token || !!savedProfile);
   });
   const [showSplash, setShowSplash] = useState<boolean>(true);
   const [splashProgress, setSplashProgress] = useState<number>(0);
@@ -710,9 +720,8 @@ export default function App() {
   const getInitialUser = (): UserProfile => {
     if (typeof window !== "undefined") {
       try {
-        const isLogged = localStorage.getItem("pardais_is_logged_in") === "true";
         const saved = localStorage.getItem("pardais_user_profile");
-        if (isLogged && saved) {
+        if (saved) {
           const parsed = JSON.parse(saved);
           if (parsed && (parsed.username || parsed.uniqueId)) {
             parsed.isGuest = false;
@@ -890,14 +899,28 @@ export default function App() {
       if (savedProfile && (savedProfile.username || savedProfile.uniqueId)) {
         setUser(savedProfile);
         setIsLoggedIn(true);
+        localStorage.setItem("pardais_is_logged_in", "true");
+        if (savedProfile.email) localStorage.setItem("pardais_account_email", String(savedProfile.email).toLowerCase());
       }
 
       if (!token) {
-        if (!savedProfile) {
-          refreshSession().then(() => {
-            setIsLoggedIn(true);
-          });
-        }
+        // A WebView/browser refresh can clear the short-lived token while the
+        // durable profile remains. Recreate the server session from the saved
+        // account identity instead of treating the user as logged out.
+        refreshSession().then((newToken) => {
+          if (!newToken) return;
+          setIsLoggedIn(true);
+          return authenticatedFetch("/api/v1/auth/me");
+        }).then((res) => {
+          if (!res || !res.ok) return;
+          return res.json();
+        }).then((data) => {
+          if (data?.user) {
+            setUser((prev) => ({ ...prev, ...data.user }));
+            localStorage.setItem("pardais_user_profile", JSON.stringify(data.user));
+            lastSavedUserRef.current = JSON.stringify(data.user);
+          }
+        }).catch((err) => console.warn("[PARDAIS AUTH RESTORE] Durable session recreation notice:", err));
         return;
       }
 
@@ -920,20 +943,33 @@ export default function App() {
             const backendAvatarTime = Date.parse(String(data.user.avatarUpdatedAt || data.user.profileUpdatedAt || "")) || 0;
             const localAvatarTime = Date.parse(String(localProfile?.avatarUpdatedAt || localProfile?.profileUpdatedAt || "")) || 0;
             const localCustomAvatar = Boolean(localProfile?.avatar && localProfile.avatarSource === "user-upload");
-            const useLocalAvatar = Boolean(localProfile?.avatar && localCustomAvatar && localAvatarTime > backendAvatarTime);
-            const preservedAvatar = useLocalAvatar ? localProfile!.avatar : (data.user.avatar || localProfile?.avatar || "");
-            const preservedAvatarUpdatedAt = useLocalAvatar ? localProfile!.avatarUpdatedAt : (data.user.avatarUpdatedAt || localProfile?.avatarUpdatedAt);
+            const backendCustomAvatar = Boolean(data.user.avatar && data.user.avatarSource === "user-upload");
+            // A user-selected DP is permanent until the user selects another one.
+            // Never replace it with the platform/default avatar during refresh or
+            // session restoration. A backend user-upload may replace it only when
+            // the server explicitly has a newer user-selected photo.
+            const useBackendAvatar = Boolean(
+              backendCustomAvatar &&
+              (!localCustomAvatar || backendAvatarTime > localAvatarTime)
+            );
+            const useLocalAvatar = Boolean(localProfile?.avatar && localCustomAvatar && !useBackendAvatar);
+            const preservedAvatar = useBackendAvatar
+              ? data.user.avatar
+              : (useLocalAvatar ? localProfile!.avatar : (data.user.avatar || localProfile?.avatar || ""));
+            const preservedAvatarUpdatedAt = useBackendAvatar
+              ? data.user.avatarUpdatedAt
+              : (useLocalAvatar ? localProfile!.avatarUpdatedAt : (data.user.avatarUpdatedAt || localProfile?.avatarUpdatedAt));
             const mergedUser: UserProfile = {
               ...data.user,
               // Backend is authoritative for account identity. Never reuse a previous
               // account's Pardais ID, username or name after a different account logs in.
               fullName: data.user.fullName || "",
-              username: data.user.username || "",
-              uniqueId: data.user.uniqueId || "",
+              username: localProfile?.username || data.user.username || "",
+              uniqueId: localProfile?.uniqueId || data.user.uniqueId || "",
               avatar: preservedAvatar,
               avatarUrl: useLocalAvatar ? localProfile!.avatarUrl || preservedAvatar : (data.user.avatarUrl || preservedAvatar),
               avatarUpdatedAt: preservedAvatarUpdatedAt,
-              avatarSource: (useLocalAvatar ? localProfile!.avatarSource : data.user.avatarSource) || (preservedAvatar ? "user-upload" : "default"),
+              avatarSource: (useBackendAvatar ? "user-upload" : (useLocalAvatar ? localProfile!.avatarSource : data.user.avatarSource)) || (preservedAvatar ? "user-upload" : "default"),
               profileUpdatedAt: data.user.profileUpdatedAt || localProfile?.profileUpdatedAt,
               bio: localProfile?.bio || data.user.bio,
               gender: localProfile?.gender || data.user.gender,
@@ -948,18 +984,58 @@ export default function App() {
             lastSavedUserRef.current = JSON.stringify(mergedUser);
           }
         })
-        .catch(err => {
+        .catch(async err => {
           console.warn("[PARDAIS AUTH RESTORE] Session verification notice:", err.message);
+          // If the stored token is stale after a Railway restart, rebuild a
+          // signed session from the durable email/UID profile and retry once.
+          try {
+            const refreshed = await refreshSession();
+            if (!refreshed) return;
+            const retry = await authenticatedFetch("/api/v1/auth/me");
+            if (!retry.ok) return;
+            const retryData = await retry.json().catch(() => ({}));
+            if (retryData?.user) {
+              const restored = {
+                ...retryData.user,
+                uid: retryData.user.uid || savedProfile?.uid || "",
+                email: retryData.user.email || savedProfile?.email || "",
+                username: savedProfile?.username || retryData.user.username || "",
+                uniqueId: savedProfile?.uniqueId || retryData.user.uniqueId || "",
+                avatar: (savedProfile?.avatar && savedProfile?.avatarSource === "user-upload")
+                  ? savedProfile.avatar
+                  : (retryData.user.avatar || savedProfile?.avatar || ""),
+                avatarUrl: (savedProfile?.avatar && savedProfile?.avatarSource === "user-upload")
+                  ? (savedProfile.avatarUrl || savedProfile.avatar)
+                  : (retryData.user.avatarUrl || savedProfile?.avatarUrl || retryData.user.avatar || "")
+              };
+              setUser(restored);
+              setIsLoggedIn(true);
+              localStorage.setItem("pardais_is_logged_in", "true");
+              localStorage.setItem("pardais_user_profile", JSON.stringify(restored));
+              lastSavedUserRef.current = JSON.stringify(restored);
+            }
+          } catch (refreshErr) {
+            console.warn("[PARDAIS AUTH RESTORE] Session refresh retry notice:", refreshErr);
+          }
         });
     };
 
-    restoreSession();
+    restoreSession().finally(() => {
+      // Never interpret a failed network/session check as a manual logout.
+      // The durable local profile remains the signed-in source of truth.
+      setAuthHydrating(false);
+    });
   }, []);
 
-  // Sync login status
+  // Persist login state only after the initial auth restoration has completed.
+  // This prevents a browser/WebView refresh from briefly writing false before
+  // the durable local account has been restored. Only handleLogout explicitly
+  // clears the account state.
   useEffect(() => {
-    localStorage.setItem("pardais_is_logged_in", isLoggedIn ? "true" : "false");
-  }, [isLoggedIn]);
+    if (!authHydrating) {
+      localStorage.setItem("pardais_is_logged_in", isLoggedIn ? "true" : "false");
+    }
+  }, [isLoggedIn, authHydrating]);
 
   // Edit Profile States
   const [isEditingProfile, setIsEditingProfile] = useState<boolean>(false);
@@ -7784,51 +7860,61 @@ export default function App() {
     }
   };
 
-  // Quick One-Tap Guest Login Handler
-  const handleQuickGuestLogin = () => {
+  // Quick One-Tap Guest Login Handler — persist the guest account on the backend first.
+  const handleQuickGuestLogin = async () => {
     if (!termsAccepted) setTermsAccepted(true);
     setLoginError("");
     setLoginSuccessMsg("");
-    const guestUid = `guest_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-    const guestUser: UserProfile = {
-      uid: guestUid,
-      email: `${guestUid}@pardaisparty.com`,
-      username: `Pardais_User_${Math.floor(1000 + Math.random() * 9000)}`,
-      uniqueId: `pardes_${Math.floor(1000 + Math.random() * 9000)}`,
-      fullName: "Pardais Member",
-      avatar: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80",
-      coverPhoto: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=800&q=80",
-      bio: "Welcome to Pardais Party! 🇵🇰",
-      gender: "Male",
-      country: "Pakistan",
-      language: "Urdu / Hinglish",
-      familyId: "",
-      agencyId: "",
-      isVerified: false,
-      isBanned: false,
-      twoFactorEnabled: false,
-      coins: 0,
-      diamonds: 0,
-      vipLevel: 0,
-      userLevel: 1,
-      hostLevel: 1,
-      wealthLevel: 1,
-      xp: 0
-    };
 
-    const token = `pardais_session_${guestUid}_${Math.random().toString(36).substring(2, 10)}`;
-    localStorage.setItem("pardais_auth_token", token);
-    localStorage.setItem("pardais_is_logged_in", "true");
-    localStorage.setItem("pardais_user_profile", JSON.stringify(guestUser));
-    setUser(guestUser);
-    setIsLoggedIn(true);
-    setShowAuthModal(false);
-    if (pendingAuthCallback) {
-      const cb = pendingAuthCallback;
-      setPendingAuthCallback(null);
-      try { cb(); } catch (e) {}
+    const guestUid = `guest_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+    const guestUsername = `Pardais_User_${Math.floor(1000 + Math.random() * 9000)}`;
+    const deviceId = deviceInfo?.deviceId || "";
+
+    try {
+      const response = await fetch(resolveApiUrl("/api/v1/auth/guest-login"), {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(deviceId ? { "X-Device-ID": deviceId } : {})
+        },
+        body: JSON.stringify({
+          uid: guestUid,
+          username: guestUsername,
+          fullName: "Pardais Member",
+          deviceId
+        })
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data?.success || !data?.token || !data?.user) {
+        throw new Error(data?.message || data?.error || "Guest login failed.");
+      }
+
+      const guestUser = {
+        ...data.user,
+        isGuest: true,
+        authProvider: "guest",
+        accountStatus: data.user.accountStatus || "guest",
+        profileCompleted: Boolean(data.user.profileCompleted)
+      } as UserProfile;
+
+      localStorage.setItem("pardais_auth_token", data.token);
+      localStorage.setItem("pardais_is_logged_in", "true");
+      localStorage.setItem("pardais_user_profile", JSON.stringify(guestUser));
+      setUser(guestUser);
+      setIsLoggedIn(true);
+      setShowAuthModal(false);
+      setLoginSuccessMsg("Guest account created successfully.");
+
+      if (pendingAuthCallback) {
+        const cb = pendingAuthCallback;
+        setPendingAuthCallback(null);
+        try { cb(); } catch {}
+      }
+      setShowProfileSetupModal(true);
+    } catch (err: any) {
+      console.warn("[GUEST AUTH] Backend guest login failed:", err);
+      setLoginError(err?.message || "Guest login failed. Please try again.");
     }
-    setShowProfileSetupModal(true);
   };
 
   // Complete Profile Setup
