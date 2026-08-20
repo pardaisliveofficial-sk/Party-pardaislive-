@@ -897,26 +897,6 @@ function encodeSessionToken(sessionData: any): string {
   return `pardais_v2.${payload}.${signature}`;
 }
 
-// Replica-safe email OTP challenge
-function encodeOtpChallenge(email: string, otp: string, expiresAt: number): string {
-  const payload = Buffer.from(JSON.stringify({ email: String(email).toLowerCase().trim(), otp: String(otp), expiresAt: Number(expiresAt), nonce: crypto.randomBytes(12).toString("hex") }), "utf8").toString("base64url");
-  const signature = crypto.createHmac("sha256", getSessionSecret()).update(payload).digest("base64url");
-  return `pardais_otp_v1.${payload}.${signature}`;
-}
-
-function decodeOtpChallenge(token: string): { email: string; otp: string; expiresAt: number } | null {
-  try {
-    const parts = String(token || "").split(".");
-    if (parts.length !== 3 || parts[0] !== "pardais_otp_v1") return null;
-    const payload = parts[1], signature = parts[2];
-    const expected = crypto.createHmac("sha256", getSessionSecret()).update(payload).digest("base64url");
-    if (signature.length !== expected.length || !crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) return null;
-    const data = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
-    if (!data?.email || !data?.otp || !data?.expiresAt || Date.now() > Number(data.expiresAt)) return null;
-    return { email: String(data.email).toLowerCase().trim(), otp: String(data.otp), expiresAt: Number(data.expiresAt) };
-  } catch { return null; }
-}
-
 function decodeSessionToken(token: string): any | null {
   try {
     const parts = String(token || "").split(".");
@@ -1426,7 +1406,6 @@ app.post("/api/v1/auth/send-email-otp", async (req, res) => {
     return res.json({
       success: true,
       delivered: true,
-      challengeToken: encodeOtpChallenge(cleanEmail, otp, challenge.expiresAt),
       message: `Verification code sent to ${cleanEmail}. Check your email inbox.`
     });
   } catch (emailErr: any) {
@@ -1447,7 +1426,7 @@ app.post("/api/v1/auth/send-email-otp", async (req, res) => {
 // The browser must receive the signed session token immediately after the OTP
 // matches. No Firestore read/write is awaited on this request.
 app.post("/api/v1/auth/verify-email-otp", async (req, res) => {
-  const { email, otp, challengeToken } = req.body || {};
+  const { email, otp } = req.body || {};
   if (!email || !otp) {
     return res.status(400).json({ success: false, error: "Email and verification OTP code are required." });
   }
@@ -1459,9 +1438,9 @@ app.post("/api/v1/auth/verify-email-otp", async (req, res) => {
   }
 
   const challengeKey = `email_${cleanEmail.replace(/[^a-zA-Z0-9]/g, "_")}`;
-  const signedChallenge = decodeOtpChallenge(String(challengeToken || ""));
-  let stored = signedChallenge && signedChallenge.email === cleanEmail && signedChallenge.otp === cleanOtp
-    ? signedChallenge : (dbData.emailOtps?.[cleanEmail] || null);
+  // Same-instance verification is the normal path because send-email-otp stores
+  // the challenge in dbData.emailOtps before sending the email.
+  let stored = dbData.emailOtps?.[cleanEmail] || null;
 
   // Only use the durable challenge store when the hot copy is missing. Bound it
   // tightly so a Firestore outage can never turn a correct OTP into a timeout.
@@ -1499,6 +1478,27 @@ app.post("/api/v1/auth/verify-email-otp", async (req, res) => {
   let user = (dbData.users || []).find((u: any) =>
     u && ((typeof u.email === "string" && u.email.toLowerCase().trim() === cleanEmail) || u.uid === uid)
   );
+
+  // Returning OTP login must resolve the existing durable account before creating
+  // anything new. This is critical after a Railway restart/replica switch: the
+  // in-memory users array can be empty while Firestore still contains the real
+  // account, including its permanent Pardais ID and user-selected avatar.
+  if (!user) {
+    try {
+      user = await Promise.race([
+        findAnyEmailUserDurably(cleanEmail, 2500),
+        new Promise<any | undefined>((resolve) => setTimeout(() => resolve(undefined), 3000))
+      ]);
+      if (user) {
+        const existingIndex = (dbData.users || []).findIndex((u: any) =>
+          u && (u.uid === user.uid || String(u.email || "").toLowerCase().trim() === cleanEmail)
+        );
+        if (existingIndex === -1) dbData.users.push(user);
+      }
+    } catch (err) {
+      console.warn("[PARDAIS AUTH] Durable OTP account lookup delayed:", err);
+    }
+  }
 
   let isNewUser = false;
   if (!user) {
@@ -1576,7 +1576,7 @@ app.post("/api/v1/auth/verify-email-otp", async (req, res) => {
 // Recovery endpoint for a verified OTP when a proxy drops the original response.
 // It validates the same challenge and returns a fresh signed session immediately.
 app.post("/api/v1/auth/recover-email-session", async (req, res) => {
-  const { email, otp, challengeToken } = req.body || {};
+  const { email, otp } = req.body || {};
   const cleanEmail = String(email || "").toLowerCase().trim();
   const cleanOtp = String(otp || "").trim().replace(/\D/g, "");
   if (!cleanEmail || cleanOtp.length !== 6) {
@@ -1584,9 +1584,7 @@ app.post("/api/v1/auth/recover-email-session", async (req, res) => {
   }
 
   const challengeKey = `email_${cleanEmail.replace(/[^a-zA-Z0-9]/g, "_")}`;
-  const signedChallenge = decodeOtpChallenge(String(challengeToken || ""));
-  let stored = signedChallenge && signedChallenge.email === cleanEmail && signedChallenge.otp === cleanOtp
-    ? signedChallenge : (dbData.emailOtps?.[cleanEmail] || null);
+  let stored = dbData.emailOtps?.[cleanEmail] || null;
   if (!stored) {
     try {
       stored = await Promise.race([
@@ -2386,23 +2384,57 @@ app.post("/api/v1/auth/refresh-session", async (req, res) => {
     });
   }
 
-  const requestedUsername = req.body?.username || `user_${Math.floor(1000 + Math.random() * 9000)}`;
-  const requestedUid = req.body?.uid || `guest_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+  const requestedUsername = typeof req.body?.username === "string" ? req.body.username.trim() : "";
+  const requestedUid = typeof req.body?.uid === "string" ? req.body.uid.trim() : "";
   const requestedEmail = typeof req.body?.email === "string" ? req.body.email.toLowerCase().trim() : "";
-  
-  let user = dbData.users?.find((u: any) => 
-    (requestedUid && u.uid === requestedUid) || 
-    (requestedUsername && u.username === requestedUsername)
+  const requestedFullName = typeof req.body?.fullName === "string" ? req.body.fullName : "Pardais Member";
+
+  // First resolve the existing account from the local cache. If the Railway
+  // instance restarted, resolve it from Firestore before ever creating a user.
+  let user = (dbData.users || []).find((u: any) =>
+    u && ((requestedUid && u.uid === requestedUid) ||
+      (requestedEmail && String(u.email || "").toLowerCase().trim() === requestedEmail) ||
+      (requestedUsername && String(u.username || "").toLowerCase() === requestedUsername.toLowerCase()))
   );
 
+  if (!user && (requestedEmail || requestedUid || requestedUsername)) {
+    try {
+      const persisted = requestedEmail
+        ? await Promise.race([
+            getPersistedUserForEmail(requestedEmail),
+            new Promise<any | null>((resolve) => setTimeout(() => resolve(null), 3000))
+          ])
+        : await Promise.race([
+            getPersistedUserForSession({ uid: requestedUid, username: requestedUsername, email: requestedEmail }),
+            new Promise<any | null>((resolve) => setTimeout(() => resolve(null), 3000))
+          ]);
+      if (persisted) {
+        user = persisted;
+        const existingIndex = (dbData.users || []).findIndex((u: any) =>
+          u && (u.uid === persisted.uid || String(u.email || "").toLowerCase().trim() === String(persisted.email || "").toLowerCase().trim())
+        );
+        if (existingIndex === -1) dbData.users.push(persisted);
+        else dbData.users[existingIndex] = persisted;
+      }
+    } catch (err) {
+      console.warn("[PARDAIS AUTH] Durable refresh-session lookup delayed:", err);
+    }
+  }
+
   if (!user) {
+    // Only create a fallback account when no durable account exists at all.
+    // Never generate a random Pardais ID for a real email account.
+    const stableEmailUid = requestedEmail
+      ? `email_${requestedEmail.replace(/[^a-zA-Z0-9]/g, "_")}`
+      : (requestedUid || `guest_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`);
+    const stableUsername = requestedUsername || (requestedEmail ? usernameFromEmail(requestedEmail) : `user_${Math.floor(1000 + Math.random() * 9000)}`);
     user = {
-      uid: requestedUid,
-      username: requestedUsername,
-      uniqueId: `pardais_${Math.floor(1000 + Math.random() * 9000)}`,
+      uid: stableEmailUid,
+      username: stableUsername,
+      uniqueId: requestedEmail ? stablePardaisId(requestedEmail) : `pardais_${Math.floor(1000 + Math.random() * 9000)}`,
       email: requestedEmail,
-      fullName: req.body?.fullName || "Pardais Member",
-      avatar: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80",
+      fullName: requestedFullName,
+      avatar: "",
       bio: "Pardais Party Member 🇵🇰",
       gender: "Male",
       country: "Pakistan",
@@ -2412,29 +2444,29 @@ app.post("/api/v1/auth/refresh-session", async (req, res) => {
       userLevel: 1,
       hostLevel: 1,
       wealthLevel: 1,
-      xp: 0
+      xp: 0,
+      accountStatus: requestedEmail ? "pending_profile" : "registered",
+      profileCompleted: false,
+      isVerified: Boolean(requestedEmail)
     };
+    if (requestedEmail) ensureStableEmailIdentity(user, requestedEmail);
     if (!Array.isArray(dbData.users)) dbData.users = [];
     dbData.users.push(user);
     applyAdminAccountState(user, { initializeCoins: true });
-    syncDocument("users", user.username, user);
-  } else {
+  } else if (user.email) {
+    // Normalize identity without changing an already assigned Pardais ID/avatar.
+    ensureStableEmailIdentity(user, String(user.email).toLowerCase().trim());
     applyAdminAccountState(user, { initializeCoins: true });
   }
 
-  const token = `pardais_session_${user.uid}_${Math.random().toString(36).substring(2, 10)}`;
-  const sessionData = {
-    uid: user.uid,
-    username: user.username,
-    email: user.email || "",
-    loginTime: new Date().toISOString()
-  };
-  if (!dbData.sessions) dbData.sessions = {};
-  dbData.sessions[token] = sessionData;
+  // Never overwrite a permanent identity with request-side/random values.
+  if (!user.uniqueId && user.email) user.uniqueId = stablePardaisId(String(user.email).toLowerCase().trim());
+  if (!user.username && requestedUsername) user.username = requestedUsername;
 
+  await persistUserDurably(user);
   saveDatabase();
-  await syncDocument("sessions", token, sessionData);
 
+  const token = await createSession(user);
   return res.json({
     success: true,
     token,

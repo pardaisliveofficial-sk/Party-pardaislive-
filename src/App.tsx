@@ -671,7 +671,6 @@ export default function App() {
   const [loginEmail, setLoginEmail] = useState<string>("");
   const [loginOtp, setLoginOtp] = useState<string>("");
   const [isOtpSent, setIsOtpSent] = useState<boolean>(false);
-  const [emailOtpChallengeToken, setEmailOtpChallengeToken] = useState<string>("");
   const [selectedAuthMethod, setSelectedAuthMethod] = useState<"email" | "google">("email");
   const [showProfileSetupModal, setShowProfileSetupModal] = useState<boolean>(false);
   const [setupFullName, setSetupFullName] = useState<string>("");
@@ -896,11 +895,23 @@ export default function App() {
       }
 
       if (!token) {
-        if (!savedProfile) {
-          refreshSession().then(() => {
-            setIsLoggedIn(true);
-          });
-        }
+        // A WebView/browser refresh can clear the short-lived token while the
+        // durable profile remains. Recreate the server session from the saved
+        // account identity instead of treating the user as logged out.
+        refreshSession().then((newToken) => {
+          if (!newToken) return;
+          setIsLoggedIn(true);
+          return authenticatedFetch("/api/v1/auth/me");
+        }).then((res) => {
+          if (!res || !res.ok) return;
+          return res.json();
+        }).then((data) => {
+          if (data?.user) {
+            setUser((prev) => ({ ...prev, ...data.user }));
+            localStorage.setItem("pardais_user_profile", JSON.stringify(data.user));
+            lastSavedUserRef.current = JSON.stringify(data.user);
+          }
+        }).catch((err) => console.warn("[PARDAIS AUTH RESTORE] Durable session recreation notice:", err));
         return;
       }
 
@@ -951,8 +962,26 @@ export default function App() {
             lastSavedUserRef.current = JSON.stringify(mergedUser);
           }
         })
-        .catch(err => {
+        .catch(async err => {
           console.warn("[PARDAIS AUTH RESTORE] Session verification notice:", err.message);
+          // If the stored token is stale after a Railway restart, rebuild a
+          // signed session from the durable email/UID profile and retry once.
+          try {
+            const refreshed = await refreshSession();
+            if (!refreshed) return;
+            const retry = await authenticatedFetch("/api/v1/auth/me");
+            if (!retry.ok) return;
+            const retryData = await retry.json().catch(() => ({}));
+            if (retryData?.user) {
+              setUser((prev) => ({ ...prev, ...retryData.user }));
+              setIsLoggedIn(true);
+              localStorage.setItem("pardais_is_logged_in", "true");
+              localStorage.setItem("pardais_user_profile", JSON.stringify(retryData.user));
+              lastSavedUserRef.current = JSON.stringify(retryData.user);
+            }
+          } catch (refreshErr) {
+            console.warn("[PARDAIS AUTH RESTORE] Session refresh retry notice:", refreshErr);
+          }
         });
     };
 
@@ -7581,7 +7610,6 @@ export default function App() {
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok || !data.success) throw new Error(data.error || "Verification email could not be sent. Please try again.");
-      setEmailOtpChallengeToken(String(data.challengeToken || ""));
       setIsOtpSent(true);
       setLoginSuccessMsg(data.message || `Verification code sent to ${cleanEmail}`);
     } catch (err: any) {
@@ -7606,14 +7634,14 @@ export default function App() {
       try {
         const response = await fetch(resolveApiUrl("/api/v1/auth/verify-email-otp"), {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email: cleanEmail, otp: cleanOtp, challengeToken: emailOtpChallengeToken || undefined })
+          body: JSON.stringify({ email: cleanEmail, otp: cleanOtp })
         });
         data = await response.json().catch(() => ({}));
         if (!response.ok || !data.success || !data.token) throw new Error(data.error || "Verification failed.");
       } catch (firstError) {
         const recovery = await fetch(resolveApiUrl("/api/v1/auth/recover-email-session"), {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email: cleanEmail, otp: cleanOtp, challengeToken: emailOtpChallengeToken || undefined })
+          body: JSON.stringify({ email: cleanEmail, otp: cleanOtp })
         });
         data = await recovery.json().catch(() => ({}));
         if (!recovery.ok || !data.success || !data.token) throw firstError;
