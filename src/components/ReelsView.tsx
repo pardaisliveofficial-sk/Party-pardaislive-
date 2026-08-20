@@ -420,7 +420,7 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
   const filteredReels = (reels || []).filter(r => {
     if (!r) return false;
     if ((blockedUsers || []).includes(r.creator)) return false;
-    if (reelsTab === "following") return r.isFollowed && r.privacy === "public";
+    if (reelsTab === "following") return false;
     if (reelsTab === "explore") return r.isExplore && r.privacy === "public";
     return r.privacy === "public";
   });
@@ -475,20 +475,7 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
         </button>
         
         <div className="flex items-center space-x-6">
-          <button
-            onClick={() => {
-              setReelsTab("following");
-              setCurrentReelIndex(0);
-            }}
-            className={`text-xs font-black tracking-wider uppercase transition-all duration-200 relative pb-1.5 ${
-              reelsTab === "following" ? "text-[#ff007f] scale-105 font-black" : "text-white/60 hover:text-white"
-            }`}
-          >
-            Following
-            {reelsTab === "following" && (
-              <span className="absolute bottom-0 left-1/2 -translate-x-1/2 w-4 h-0.5 bg-[#ff007f] rounded-full"></span>
-            )}
-          </button>
+          
           
           <button
             onClick={() => {
@@ -791,23 +778,7 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
                       <div className="w-10 h-10 rounded-full border-2 border-[#ff007f] overflow-hidden bg-[#1e1e2d] shadow-xl transition-all hover:scale-105 active:scale-95">
                         <img src={reel.avatar} className="w-full h-full object-cover" alt="creator" />
                       </div>
-                      <button
-                        onClick={() => {
-                          if (onRequireAuth && !onRequireAuth("follow creators")) return;
-                          setReels(prev => prev.map(r => {
-                            if (r.creator === reel.creator) {
-                              return { ...r, isFollowed: !r.isFollowed };
-                            }
-                            return r;
-                          }));
-                          alert(reel.isFollowed ? `Unfollowed @${reel.creator}` : `Followed @${reel.creator}! Added to your 'Following' Reels feed!`);
-                        }}
-                        className={`absolute -bottom-1.5 left-1/2 -translate-x-1/2 rounded-full font-black text-[9px] w-4.5 h-4.5 flex items-center justify-center text-white border border-[#12121a] shadow transition-all duration-300 ${
-                          reel.isFollowed ? "bg-[#00f5ff] text-[#051622]" : "bg-[#ff007f]"
-                        }`}
-                      >
-                        {reel.isFollowed ? "✓" : "+"}
-                      </button>
+                      
                     </div>
 
                     {/* Like Action */}
@@ -1480,23 +1451,7 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
                             </div>
                             
                             <div className="flex items-center space-x-2" onClick={(e) => e.stopPropagation()}>
-                              <button
-                                onClick={() => {
-                                  setReels(prev => prev.map(r => {
-                                    if (r.creator === creator.username) {
-                                      return { ...r, isFollowed: !r.isFollowed };
-                                    }
-                                    return r;
-                                  }));
-                                }}
-                                className={`px-2.5 py-1 rounded-full text-[8.5px] font-black uppercase tracking-wider transition-all duration-300 ${
-                                  creator.isFollowed 
-                                    ? "bg-white/10 text-white border border-white/15" 
-                                    : "bg-[#ff007f] text-white hover:bg-[#ff007f]/90"
-                                }`}
-                              >
-                                {creator.isFollowed ? "Following" : "Follow"}
-                              </button>
+                              
 
                               <button
                                 onClick={() => setSelectedUserChat(creator)}
@@ -1615,8 +1570,7 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
               {/* Stats Counters */}
               <div className="grid grid-cols-3 gap-6 text-center w-full max-w-[280px] py-2">
                 <div>
-                  <p className="text-xs font-mono font-black text-white">{selectedUserProfile.following}</p>
-                  <p className="text-[8.5px] text-gray-500 uppercase font-bold tracking-wider mt-0.5">Following</p>
+                  
                 </div>
                 <div>
                   <p className="text-xs font-mono font-black text-white">{selectedUserProfile.followers}</p>
@@ -1630,27 +1584,7 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
 
               {/* Action Buttons */}
               <div className="flex items-center space-x-3 w-full max-w-[280px]">
-                <button
-                  onClick={() => {
-                    setReels(prev => prev.map(r => {
-                      if (r.creator === selectedUserProfile.username) {
-                        return { ...r, isFollowed: !r.isFollowed };
-                      }
-                      return r;
-                    }));
-                    setSelectedUserProfile(prev => ({
-                      ...prev,
-                      isFollowed: !prev.isFollowed
-                    }));
-                  }}
-                  className={`flex-1 py-2 rounded-full text-[9.5px] font-black uppercase tracking-wider transition-all duration-300 ${
-                    selectedUserProfile.isFollowed 
-                      ? "bg-white/10 text-white border border-white/15" 
-                      : "bg-gradient-to-r from-[#ff007f] to-[#7b2cbf] text-white hover:opacity-90"
-                  }`}
-                >
-                  {selectedUserProfile.isFollowed ? "✓ Following" : "Follow Creator"}
-                </button>
+                
 
                 <button
                   onClick={() => setSelectedUserChat(selectedUserProfile)}

@@ -643,6 +643,8 @@ const ReelVideoPlayer: React.FC<ReelVideoPlayerProps> = ({
 
 export default function App() {
   // Authentication State
+  const [authHydrating, setAuthHydrating] = useState<boolean>(true);
+
   const [isLoggedIn, setIsLoggedIn] = useState<boolean>(() => {
     // A browser/WebView refresh must NEVER be treated as a manual logout.
     // The durable account profile is the local source of truth for restoring
@@ -652,9 +654,7 @@ export default function App() {
     const loggedFlag = localStorage.getItem("pardais_is_logged_in") === "true";
     const token = localStorage.getItem("pardais_auth_token");
     const savedProfile = localStorage.getItem("pardais_user_profile");
-    // A transient/stale login flag must never eject a real saved account on refresh.
-    // Explicit logout removes the saved profile and token, so this remains safe.
-    return Boolean(savedProfile);
+    return !!savedProfile && (savedProfile.length > 0) && (loggedFlag || !!token || !!savedProfile);
   });
   const [showSplash, setShowSplash] = useState<boolean>(true);
   const [splashProgress, setSplashProgress] = useState<number>(0);
@@ -722,9 +722,8 @@ export default function App() {
   const getInitialUser = (): UserProfile => {
     if (typeof window !== "undefined") {
       try {
-        const isLogged = localStorage.getItem("pardais_is_logged_in") === "true";
         const saved = localStorage.getItem("pardais_user_profile");
-        if (isLogged && saved) {
+        if (saved) {
           const parsed = JSON.parse(saved);
           if (parsed && (parsed.username || parsed.uniqueId)) {
             parsed.isGuest = false;
@@ -899,14 +898,11 @@ export default function App() {
         try { savedProfile = JSON.parse(savedUserRaw); } catch (e) {}
       }
 
-      if (savedProfile && (savedProfile.username || savedProfile.uniqueId || savedProfile.email)) {
-        // Restore the last known real account immediately. A backend response is
-        // allowed to enrich it later, but never replace a stable identity with
-        // an incomplete/temporary record during refresh.
-        savedProfile.isGuest = false;
+      if (savedProfile && (savedProfile.username || savedProfile.uniqueId)) {
         setUser(savedProfile);
         setIsLoggedIn(true);
         localStorage.setItem("pardais_is_logged_in", "true");
+        if (savedProfile.email) localStorage.setItem("pardais_account_email", String(savedProfile.email).toLowerCase());
       }
 
       if (!token) {
@@ -967,14 +963,11 @@ export default function App() {
               : (useLocalAvatar ? localProfile!.avatarUpdatedAt : (data.user.avatarUpdatedAt || localProfile?.avatarUpdatedAt));
             const mergedUser: UserProfile = {
               ...data.user,
-              // Keep stable identity from the saved account if the backend returns
-              // an incomplete/stale mirror during a Railway/Firestore cold start.
-              // The user's own Logout action is the only operation allowed to clear it.
-              fullName: data.user.fullName || localProfile?.fullName || "",
-              username: data.user.username || localProfile?.username || "",
-              uniqueId: data.user.uniqueId || localProfile?.uniqueId || "",
-              uid: data.user.uid || localProfile?.uid || "",
-              email: data.user.email || localProfile?.email || "",
+              // Backend is authoritative for account identity. Never reuse a previous
+              // account's Pardais ID, username or name after a different account logs in.
+              fullName: data.user.fullName || "",
+              username: localProfile?.username || data.user.username || "",
+              uniqueId: localProfile?.uniqueId || data.user.uniqueId || "",
               avatar: preservedAvatar,
               avatarUrl: useLocalAvatar ? localProfile!.avatarUrl || preservedAvatar : (data.user.avatarUrl || preservedAvatar),
               avatarUpdatedAt: preservedAvatarUpdatedAt,
@@ -987,7 +980,6 @@ export default function App() {
               kycStatus: localProfile?.kycStatus || data.user.kycStatus,
               isVerified: data.user.isVerified !== undefined ? data.user.isVerified : localProfile?.isVerified,
             };
-            mergedUser.isGuest = false;
             setUser(mergedUser);
             setIsLoggedIn(true);
             localStorage.setItem("pardais_user_profile", JSON.stringify(mergedUser));
@@ -1005,11 +997,24 @@ export default function App() {
             if (!retry.ok) return;
             const retryData = await retry.json().catch(() => ({}));
             if (retryData?.user) {
-              setUser((prev) => ({ ...prev, ...retryData.user }));
+              const restored = {
+                ...retryData.user,
+                uid: retryData.user.uid || savedProfile?.uid || "",
+                email: retryData.user.email || savedProfile?.email || "",
+                username: savedProfile?.username || retryData.user.username || "",
+                uniqueId: savedProfile?.uniqueId || retryData.user.uniqueId || "",
+                avatar: (savedProfile?.avatar && savedProfile?.avatarSource === "user-upload")
+                  ? savedProfile.avatar
+                  : (retryData.user.avatar || savedProfile?.avatar || ""),
+                avatarUrl: (savedProfile?.avatar && savedProfile?.avatarSource === "user-upload")
+                  ? (savedProfile.avatarUrl || savedProfile.avatar)
+                  : (retryData.user.avatarUrl || savedProfile?.avatarUrl || retryData.user.avatar || "")
+              };
+              setUser(restored);
               setIsLoggedIn(true);
               localStorage.setItem("pardais_is_logged_in", "true");
-              localStorage.setItem("pardais_user_profile", JSON.stringify(retryData.user));
-              lastSavedUserRef.current = JSON.stringify(retryData.user);
+              localStorage.setItem("pardais_user_profile", JSON.stringify(restored));
+              lastSavedUserRef.current = JSON.stringify(restored);
             }
           } catch (refreshErr) {
             console.warn("[PARDAIS AUTH RESTORE] Session refresh retry notice:", refreshErr);
@@ -1017,13 +1022,22 @@ export default function App() {
         });
     };
 
-    restoreSession();
+    restoreSession().finally(() => {
+      // Never interpret a failed network/session check as a manual logout.
+      // The durable local profile remains the signed-in source of truth.
+      setAuthHydrating(false);
+    });
   }, []);
 
-  // Sync login status
+  // Persist login state only after the initial auth restoration has completed.
+  // This prevents a browser/WebView refresh from briefly writing false before
+  // the durable local account has been restored. Only handleLogout explicitly
+  // clears the account state.
   useEffect(() => {
-    localStorage.setItem("pardais_is_logged_in", isLoggedIn ? "true" : "false");
-  }, [isLoggedIn]);
+    if (!authHydrating) {
+      localStorage.setItem("pardais_is_logged_in", isLoggedIn ? "true" : "false");
+    }
+  }, [isLoggedIn, authHydrating]);
 
   // Edit Profile States
   const [isEditingProfile, setIsEditingProfile] = useState<boolean>(false);
@@ -7682,11 +7696,49 @@ export default function App() {
         data = await recovery.json().catch(() => ({}));
         if (!recovery.ok || !data.success || !data.token) throw firstError;
       }
+      // Preserve the existing permanent account identity/profile when logging
+      // back in with the same email. The backend response must never replace a
+      // user's permanent Pardais ID or custom DP with a newly generated/default
+      // value. New accounts (no matching saved email) use the server response.
+      let authUser: UserProfile = data.user as UserProfile;
+      try {
+        const previousRaw = localStorage.getItem("pardais_user_profile");
+        const previous = previousRaw ? JSON.parse(previousRaw) : null;
+        const sameEmail = previous?.email && String(previous.email).toLowerCase().trim() === cleanEmail;
+        if (sameEmail) {
+          authUser = {
+            ...data.user,
+            uid: previous.uid || data.user.uid,
+            email: previous.email || data.user.email,
+            uniqueId: previous.uniqueId || data.user.uniqueId,
+            username: previous.username || data.user.username,
+            fullName: data.user.fullName || previous.fullName || "",
+            avatar: previous.avatar && previous.avatarSource === "user-upload" ? previous.avatar : (data.user.avatar || previous.avatar || ""),
+            avatarUrl: previous.avatar && previous.avatarSource === "user-upload" ? (previous.avatarUrl || previous.avatar) : (data.user.avatarUrl || data.user.avatar || previous.avatar || ""),
+            avatarSource: previous.avatar && previous.avatarSource === "user-upload" ? "user-upload" : (data.user.avatarSource || previous.avatarSource || "default"),
+            avatarUpdatedAt: previous.avatar && previous.avatarSource === "user-upload" ? (previous.avatarUpdatedAt || data.user.avatarUpdatedAt) : data.user.avatarUpdatedAt,
+            bio: previous.bio || data.user.bio,
+            gender: previous.gender || data.user.gender,
+            dob: previous.dob || data.user.dob,
+            country: previous.country || data.user.country,
+            language: previous.language || data.user.language,
+          } as UserProfile;
+        }
+      } catch {}
+
       localStorage.setItem("pardais_auth_token", data.token);
       localStorage.setItem("pardais_is_logged_in", "true");
-      localStorage.setItem("pardais_user_profile", JSON.stringify(data.user));
-      setUser(data.user);
+      localStorage.setItem("pardais_user_profile", JSON.stringify(authUser));
+      localStorage.setItem("pardais_account_email", cleanEmail);
+      setUser(authUser);
       setIsLoggedIn(true);
+      // Re-save the durable profile to the backend so the permanent ID/DP
+      // survives device changes and future OTP logins, not just this browser.
+      authenticatedFetch("/api/v1/user", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(authUser)
+      }).catch(() => {});
       setShowAuthModal(false);
       if (pendingAuthCallback) { const cb = pendingAuthCallback; setPendingAuthCallback(null); try { cb(); } catch {} }
       if (data.isNewUser || !data.user.fullName) setShowProfileSetupModal(true);
@@ -8924,6 +8976,13 @@ export default function App() {
                     >
                       Clear Session
                     </button>
+                  </div>
+                ) : authHydrating ? (
+                  <div className="min-h-screen flex items-center justify-center bg-[#07070b] text-white">
+                    <div className="text-center">
+                      <div className="text-3xl font-black">Pardais Party</div>
+                      <div className="mt-2 text-sm text-white/60">Restoring your account…</div>
+                    </div>
                   </div>
                 ) : !isLoggedIn || user?.isGuest || !user?.username ? (
                   /* ========================================= */
