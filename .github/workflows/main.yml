@@ -20,7 +20,7 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Install Dependencies (production source: v58src)
+      - name: Install Dependencies (production source: v58src)"
         run: |
           set -euo pipefail
           cd v58src
