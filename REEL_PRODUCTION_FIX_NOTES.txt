@@ -1,0 +1,18 @@
+Pardais Party - Reel Production Fix
+=====================================
+
+Fixed:
+1. Removed all fake/demo reel upload presets from the reel publishing flow.
+2. Gallery upload now always uses the actual selected device video file.
+3. Camera recording now publishes the actual recorded video only.
+4. Removed direct Firestore addDoc from the client reel publish flow; reels are persisted exactly once through /api/v1/reels, which syncs the same record to Firestore.
+5. Prevented duplicate Creator Hub entries caused by client Firestore + backend double-write.
+6. New reels start with views=0 and likes=0; removed fake 1.2K/2.5K/5K profile reel view defaults.
+7. Firestore reel synchronization now merges by stable reel ID and does not wipe the reel cache on an empty/transient snapshot.
+8. Server loads its local database backup before starting Firestore listeners and initializes the reels array safely.
+9. Removed the old pre-recorded/demo reel buttons and mock gallery album list.
+10. Kept the previous profile fixes from the supplied last ZIP (username lock and non-editable follower/following/likes fields).
+
+Build verification:
+- Global TypeScript syntax checks for App.tsx and server.ts report no TS1005/TS1381/TS17008 syntax errors.
+- Full npm build could not be executed in this environment because project dependencies are not installed and npm ci timed out.
