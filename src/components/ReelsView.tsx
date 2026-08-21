@@ -358,6 +358,7 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
   const [selectedCommentForReply, setSelectedCommentForReply] = useState<{ commentId: string; userName: string } | null>(null);
   const [replyText, setReplyText] = useState<string>("");
   const [showShareDrawer, setShowShareDrawer] = useState<boolean>(false);
+  const defaultAvatar = "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80";
   const [showReelGiftOverlay, setShowReelGiftOverlay] = useState<boolean>(false);
   const [activeReelGiftAnimation, setActiveReelGiftAnimation] = useState<{ icon: string; name: string } | null>(null);
 
@@ -420,7 +421,7 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
   const filteredReels = (reels || []).filter(r => {
     if (!r) return false;
     if ((blockedUsers || []).includes(r.creator)) return false;
-    if (reelsTab === "following") return false;
+    if (reelsTab === "following") return r.isFollowed && r.privacy === "public";
     if (reelsTab === "explore") return r.isExplore && r.privacy === "public";
     return r.privacy === "public";
   });
@@ -475,7 +476,20 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
         </button>
         
         <div className="flex items-center space-x-6">
-          
+          <button
+            onClick={() => {
+              setReelsTab("following");
+              setCurrentReelIndex(0);
+            }}
+            className={`text-xs font-black tracking-wider uppercase transition-all duration-200 relative pb-1.5 ${
+              reelsTab === "following" ? "text-[#ff007f] scale-105 font-black" : "text-white/60 hover:text-white"
+            }`}
+          >
+            Following
+            {reelsTab === "following" && (
+              <span className="absolute bottom-0 left-1/2 -translate-x-1/2 w-4 h-0.5 bg-[#ff007f] rounded-full"></span>
+            )}
+          </button>
           
           <button
             onClick={() => {
@@ -776,9 +790,25 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
                     {/* User Profile and Follow button */}
                     <div className="relative flex flex-col items-center mb-1">
                       <div className="w-10 h-10 rounded-full border-2 border-[#ff007f] overflow-hidden bg-[#1e1e2d] shadow-xl transition-all hover:scale-105 active:scale-95">
-                        <img src={reel.avatar} className="w-full h-full object-cover" alt="creator" />
+                        <img src={reel.avatar || defaultAvatar} className="w-full h-full object-cover" alt="creator" />
                       </div>
-                      
+                      <button
+                        onClick={() => {
+                          if (onRequireAuth && !onRequireAuth("follow creators")) return;
+                          setReels(prev => prev.map(r => {
+                            if (r.creator === reel.creator) {
+                              return { ...r, isFollowed: !r.isFollowed };
+                            }
+                            return r;
+                          }));
+                          alert(reel.isFollowed ? `Unfollowed @${reel.creator}` : `Followed @${reel.creator}! Added to your 'Following' Reels feed!`);
+                        }}
+                        className={`absolute -bottom-1.5 left-1/2 -translate-x-1/2 rounded-full font-black text-[9px] w-4.5 h-4.5 flex items-center justify-center text-white border border-[#12121a] shadow transition-all duration-300 ${
+                          reel.isFollowed ? "bg-[#00f5ff] text-[#051622]" : "bg-[#ff007f]"
+                        }`}
+                      >
+                        {reel.isFollowed ? "✓" : "+"}
+                      </button>
                     </div>
 
                     {/* Like Action */}
@@ -884,7 +914,7 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
                     <div className="relative w-10 h-10 mt-1 flex items-center justify-center">
                       <div className="w-8 h-8 rounded-full bg-gradient-to-r from-gray-900 via-gray-700 to-black border border-white/20 flex items-center justify-center animate-spin-slow shadow-lg">
                         <div className="w-3.5 h-3.5 rounded-full overflow-hidden bg-pink-500 flex items-center justify-center">
-                          <img src={reel.avatar} className="w-full h-full object-cover" alt="disc" />
+                          <img src={reel.avatar || defaultAvatar} className="w-full h-full object-cover" alt="disc" />
                         </div>
                       </div>
                       <span className="absolute bottom-0 right-0 text-[10px] animate-bounce">🎵</span>
@@ -1142,7 +1172,7 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
                 <div key={comment.id || `comment-${cIdx}`} className="space-y-2">
                   <div className="flex items-start space-x-2">
                     <img
-                      src={comment.userAvatar}
+                      src={comment.userAvatar || defaultAvatar}
                       className="w-7 h-7 rounded-full border border-white/10 shrink-0"
                       alt="user"
                     />
@@ -1199,7 +1229,7 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
                   {comment.replies && comment.replies.map((rep: any, rIdx: number) => (
                     <div key={rep.id || `reply-${rIdx}`} className="ml-9 flex items-start space-x-2 bg-white/5 p-2 rounded-xl border border-white/5">
                       <img
-                        src={rep.userAvatar}
+                        src={rep.userAvatar || defaultAvatar}
                         className="w-5.5 h-5.5 rounded-full border border-white/10 shrink-0"
                         alt="rep user"
                       />
@@ -1401,7 +1431,7 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
                         className="flex items-center justify-between p-2.5 rounded-xl bg-white/5 border border-white/5 hover:border-white/10 transition-all cursor-pointer"
                       >
                         <div className="flex items-center space-x-3 min-w-0">
-                          <img src={creator.avatar} className="w-9 h-9 rounded-full object-cover border border-[#ff007f]/30" alt="" />
+                          <img src={creator.avatar || defaultAvatar} className="w-9 h-9 rounded-full object-cover border border-[#ff007f]/30" alt="" />
                           <div className="min-w-0">
                             <div className="flex items-center space-x-1">
                               <span className="text-[11px] font-black text-white truncate">@{creator.username}</span>
@@ -1439,7 +1469,7 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
                             onClick={() => setSelectedUserProfile(creator)}
                           >
                             <div className="flex items-center space-x-3 min-w-0">
-                              <img src={creator.avatar} className="w-10 h-10 rounded-full object-cover border border-[#ff007f]/40" alt="" />
+                              <img src={creator.avatar || defaultAvatar} className="w-10 h-10 rounded-full object-cover border border-[#ff007f]/40" alt="" />
                               <div className="min-w-0">
                                 <div className="flex items-center space-x-1">
                                   <span className="text-[11px] font-black text-white truncate">@{creator.username}</span>
@@ -1451,7 +1481,23 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
                             </div>
                             
                             <div className="flex items-center space-x-2" onClick={(e) => e.stopPropagation()}>
-                              
+                              <button
+                                onClick={() => {
+                                  setReels(prev => prev.map(r => {
+                                    if (r.creator === creator.username) {
+                                      return { ...r, isFollowed: !r.isFollowed };
+                                    }
+                                    return r;
+                                  }));
+                                }}
+                                className={`px-2.5 py-1 rounded-full text-[8.5px] font-black uppercase tracking-wider transition-all duration-300 ${
+                                  creator.isFollowed 
+                                    ? "bg-white/10 text-white border border-white/15" 
+                                    : "bg-[#ff007f] text-white hover:bg-[#ff007f]/90"
+                                }`}
+                              >
+                                {creator.isFollowed ? "Following" : "Follow"}
+                              </button>
 
                               <button
                                 onClick={() => setSelectedUserChat(creator)}
@@ -1542,7 +1588,7 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
             <div className="p-5 flex flex-col items-center text-center space-y-4 bg-gradient-to-b from-[#12121c]/40 to-transparent border-b border-white/5">
               <div className="relative">
                 <img 
-                  src={selectedUserProfile.avatar} 
+                  src={selectedUserProfile.avatar || defaultAvatar} 
                   className="w-20 h-20 rounded-full object-cover border-2 border-[#ff007f] shadow-lg shadow-[#ff007f]/10" 
                   alt="" 
                 />
@@ -1570,7 +1616,8 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
               {/* Stats Counters */}
               <div className="grid grid-cols-3 gap-6 text-center w-full max-w-[280px] py-2">
                 <div>
-                  
+                  <p className="text-xs font-mono font-black text-white">{selectedUserProfile.following}</p>
+                  <p className="text-[8.5px] text-gray-500 uppercase font-bold tracking-wider mt-0.5">Following</p>
                 </div>
                 <div>
                   <p className="text-xs font-mono font-black text-white">{selectedUserProfile.followers}</p>
@@ -1584,7 +1631,27 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
 
               {/* Action Buttons */}
               <div className="flex items-center space-x-3 w-full max-w-[280px]">
-                
+                <button
+                  onClick={() => {
+                    setReels(prev => prev.map(r => {
+                      if (r.creator === selectedUserProfile.username) {
+                        return { ...r, isFollowed: !r.isFollowed };
+                      }
+                      return r;
+                    }));
+                    setSelectedUserProfile(prev => ({
+                      ...prev,
+                      isFollowed: !prev.isFollowed
+                    }));
+                  }}
+                  className={`flex-1 py-2 rounded-full text-[9.5px] font-black uppercase tracking-wider transition-all duration-300 ${
+                    selectedUserProfile.isFollowed 
+                      ? "bg-white/10 text-white border border-white/15" 
+                      : "bg-gradient-to-r from-[#ff007f] to-[#7b2cbf] text-white hover:opacity-90"
+                  }`}
+                >
+                  {selectedUserProfile.isFollowed ? "✓ Following" : "Follow Creator"}
+                </button>
 
                 <button
                   onClick={() => setSelectedUserChat(selectedUserProfile)}
@@ -1654,7 +1721,7 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
               <span className="text-[10px] font-black uppercase font-mono tracking-wider">Back</span>
             </button>
             <div className="flex items-center space-x-2">
-              <img src={selectedUserChat.avatar} className="w-6 h-6 rounded-full object-cover" alt="" />
+              <img src={selectedUserChat.avatar || defaultAvatar} className="w-6 h-6 rounded-full object-cover" alt="" />
               <span className="text-[10px] font-black text-white font-mono uppercase">Chat with @{selectedUserChat.username}</span>
             </div>
             <div className="w-8 h-8"></div>
@@ -1668,7 +1735,7 @@ export const ReelsView: React.FC<ReelsViewProps> = ({
 
             {/* Default greeting message from creator */}
             <div className="flex items-start space-x-2">
-              <img src={selectedUserChat.avatar} className="w-7 h-7 rounded-full object-cover border border-white/5" alt="" />
+              <img src={selectedUserChat.avatar || defaultAvatar} className="w-7 h-7 rounded-full object-cover border border-white/5" alt="" />
               <div className="bg-white/5 border border-white/5 text-white rounded-2xl rounded-tl-none p-3 max-w-[75%] text-xs leading-relaxed">
                 Asalam-o-Alaikum! Welcome to my chat room. Follow me and support my live PK matches with rose gifts! 🌹
                 <span className="block text-[7px] text-gray-500 font-mono mt-1 text-right">Just now</span>

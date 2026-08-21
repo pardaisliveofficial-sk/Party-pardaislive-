@@ -97,6 +97,23 @@ export interface UserProfile {
   videos?: any[];
 }
 
+export interface SavedAccount {
+  uid: string;
+  uniqueId: string;
+  username: string;
+  fullName: string;
+  email: string;
+  avatar: string;
+  token: string;
+  userProfile: UserProfile;
+  lastActiveAt: number;
+  coins?: number;
+  diamonds?: number;
+  vipLevel?: number;
+  userLevel?: number;
+  authMethod?: "password" | "google" | "otp" | "demo";
+}
+
 export interface DeviceRecord {
   deviceId: string;
   deviceModel: string;

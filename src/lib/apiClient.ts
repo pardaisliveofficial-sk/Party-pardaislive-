@@ -37,86 +37,30 @@ export const isCapacitorOrAndroid = (): boolean => {
 };
 
 export const resolveApiUrl = (path: string): string => {
-  if (!path) {
-    return isCapacitorOrAndroid() ? PRODUCTION_API_BASE : "";
-  }
+  if (!path) return "";
   if (path.startsWith("http://") || path.startsWith("https://")) {
     return path;
   }
 
   const cleanPath = path.startsWith("/") ? path : `/${path}`;
 
-  // In Android APK / Capacitor environment, route to central production API base
-  if (isCapacitorOrAndroid()) {
-    const envApiUrl = (import.meta as any).env?.VITE_API_URL;
-    const base = typeof envApiUrl === "string" && envApiUrl.trim()
-      ? envApiUrl.trim().replace(/\/+$/, "")
-      : PRODUCTION_API_BASE;
-    return `${base}${cleanPath}`;
-  }
-
-  // Production web must always use the real Pardais API. Falling back to a
-  // relative /api route can accidentally send auth requests to the frontend
-  // host/Cloudflare edge, which returns 405 or an empty response.
+  // If an explicit VITE_API_URL is configured in environment, use it
   const envApiUrl = (import.meta as any).env?.VITE_API_URL;
-  const base = typeof envApiUrl === "string" && envApiUrl.trim()
-    ? envApiUrl.trim().replace(/\/+$/, "")
-    : PRODUCTION_API_BASE;
-  return `${base}${cleanPath}`;
-};
-
-// Global fetch interceptor to guarantee relative API requests resolve to production API base on Android APK
-if (typeof window !== "undefined" && !(window as any).__pardais_fetch_patched) {
-  (window as any).__pardais_fetch_patched = true;
-
-  try {
-    const originalFetch = window.fetch ? window.fetch.bind(window) : globalThis.fetch.bind(globalThis);
-
-    const customFetch = async function (input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
-      let urlString = "";
-      if (typeof input === "string") {
-        urlString = input;
-      } else if (input instanceof URL) {
-        urlString = input.toString();
-      } else if (input && typeof input === "object" && "url" in input) {
-        urlString = (input as Request).url;
-      }
-
-      if (urlString && (urlString.startsWith("/api/") || urlString.startsWith("api/"))) {
-        const resolved = resolveApiUrl(urlString);
-        if (typeof input === "string") {
-          input = resolved;
-        } else if (input instanceof URL) {
-          input = new URL(resolved);
-        } else if (input && typeof input === "object" && "url" in input) {
-          input = new Request(resolved, input as RequestInit);
-        }
-      }
-
-      return originalFetch(input, init);
-    };
-
-    // Check if property descriptor allows redefinition before attempting
-    let desc: PropertyDescriptor | undefined;
-    let targetObj: any = window;
-    while (targetObj) {
-      desc = Object.getOwnPropertyDescriptor(targetObj, "fetch");
-      if (desc) break;
-      targetObj = Object.getPrototypeOf(targetObj);
-    }
-
-    if (!desc || desc.configurable !== false) {
-      Object.defineProperty(window, "fetch", {
-        value: customFetch,
-        writable: true,
-        configurable: true,
-        enumerable: true,
-      });
-    }
-  } catch (err) {
-    console.warn("[PARDAIS API] Global fetch patching skipped:", err);
+  if (typeof envApiUrl === "string" && envApiUrl.trim()) {
+    return `${envApiUrl.trim().replace(/\/+$/, "")}${cleanPath}`;
   }
-}
+
+  // In Android APK / Capacitor native wrapper with file:// or capacitor:// protocol, route to production base
+  if (typeof window !== "undefined") {
+    const loc = window.location;
+    if (loc && (loc.protocol === "file:" || loc.protocol.includes("capacitor") || loc.origin === "null")) {
+      return `${PRODUCTION_API_BASE}${cleanPath}`;
+    }
+  }
+
+  // In standard web browser environments (AI Studio dev/preview, localhost, cloud run, etc.), use the relative path
+  return cleanPath;
+};
 
 export const getAuthToken = (): string | null => {
   if (typeof window === "undefined") return null;
@@ -176,8 +120,6 @@ export const refreshSession = async (): Promise<string | null> => {
     console.warn("[PARDAIS-PARTY API CLIENT] Session refresh failed:", err);
   }
 
-  // Never clear the durable local account here. A failed refresh is a transport/session
-  // problem only; the UI must remain signed in until the user explicitly logs out.
   return existingToken || null;
 };
 
@@ -244,101 +186,141 @@ export const authenticatedFetch = async (
 
 
 // ------------------------------------------------------------------
-// Pardais Party persistent email authentication helpers
+// Pardais Party resilient authentication helpers
 // ------------------------------------------------------------------
-export async function emailStatus(email: string) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 9000);
+export async function safeAuthFetch(path: string, options: RequestInit = {}): Promise<{ ok: boolean; status: number; data: any }> {
+  const primaryUrl = resolveApiUrl(path);
+  const fallbackUrl = path.startsWith("/") ? path : `/${path}`;
+
+  const executeFetch = async (url: string) => {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 20000);
+    try {
+      const res = await window.fetch(url, {
+        ...options,
+        signal: controller.signal
+      });
+      clearTimeout(timeout);
+      const data = await res.json().catch(() => ({}));
+      return { ok: res.ok, status: res.status, data };
+    } catch (err: any) {
+      clearTimeout(timeout);
+      throw err;
+    }
+  };
+
   try {
-    const res = await fetch(resolveApiUrl("/api/v1/auth/email-status"), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email: email.trim().toLowerCase() }),
-      signal: controller.signal
-    });
-    return await res.json().catch(() => ({ success: false }));
-  } catch (err: any) {
-    if (err?.name === "AbortError") return { success: false, exists: false, timedOut: true };
-    return { success: false, exists: false };
-  } finally {
-    clearTimeout(timeout);
+    return await executeFetch(primaryUrl);
+  } catch (primaryErr: any) {
+    if (primaryUrl !== fallbackUrl) {
+      try {
+        console.warn(`[PARDAIS AUTH] Primary url ${primaryUrl} failed, falling back to relative ${fallbackUrl}...`);
+        return await executeFetch(fallbackUrl);
+      } catch (fallbackErr: any) {
+        console.warn("[PARDAIS AUTH] Fallback url also failed:", fallbackErr);
+      }
+    }
+    const isTimeout = primaryErr?.name === "AbortError";
+    const msg = isTimeout 
+      ? "Request timed out. Please check your network and try again." 
+      : "Could not reach the server. Please check your network connection.";
+    return {
+      ok: false,
+      status: 0,
+      data: { success: false, error: msg, code: isTimeout ? "TIMEOUT" : "NETWORK_ERROR" }
+    };
   }
+}
+
+export async function emailStatus(email: string) {
+  const { data } = await safeAuthFetch("/api/v1/auth/email-status", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: email.trim().toLowerCase() })
+  });
+  return data || { success: false, exists: false };
 }
 
 export async function sendEmailOtp(email: string) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 25000);
-  try {
-    const res = await fetch(resolveApiUrl("/api/v1/auth/send-email-otp"), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email: email.trim().toLowerCase() }),
-      signal: controller.signal
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) return { success: false, error: data?.error || `Verification request failed (HTTP ${res.status}).`, code: data?.code };
-    if (!data?.success || data?.delivered !== true) {
-      return { success: false, error: data?.error || "Verification email could not be delivered. Please try again later.", code: data?.code || "EMAIL_DELIVERY_FAILED" };
-    }
-    return data;
-  } catch (err: any) {
-    if (err?.name === "AbortError") return { success: false, error: "Verification request timed out. Please try again." };
-    return { success: false, error: "Could not reach the verification service. Please try again." };
-  } finally {
-    clearTimeout(timeout);
+  const cleanEmail = email.trim().toLowerCase();
+  const { ok, data } = await safeAuthFetch("/api/v1/auth/send-email-otp", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: cleanEmail })
+  });
+  if (!ok || !data?.success) {
+    const err: any = new Error(data?.error || "Could not send verification code. Please try again.");
+    err.code = data?.code;
+    throw err;
   }
+  return data;
 }
 
 export async function verifyEmailOtp(email: string, otp: string) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 25000);
-  try {
-    const res = await fetch(resolveApiUrl("/api/v1/auth/verify-email-otp"), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email: email.trim().toLowerCase(), otp: otp.trim() }),
-      signal: controller.signal
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) return { success: false, error: data?.error || `Verification failed (HTTP ${res.status}).`, code: data?.code };
-    return data;
-  } catch (err: any) {
-    if (err?.name === "AbortError") return { success: false, error: "Verification is taking too long. Please try again.", code: "VERIFY_TIMEOUT" };
-    return { success: false, error: "Could not reach the verification service. Please try again.", code: "NETWORK_ERROR" };
-  } finally {
-    clearTimeout(timeout);
+  const cleanEmail = email.trim().toLowerCase();
+  const cleanOtp = otp.trim().replace(/\D/g, "");
+  const { ok, data } = await safeAuthFetch("/api/v1/auth/verify-email-otp", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: cleanEmail, otp: cleanOtp })
+  });
+  if (!ok || !data?.success || !data?.token) {
+    const err: any = new Error(data?.error || "Invalid or expired verification code.");
+    err.code = data?.code;
+    throw err;
   }
+  return data;
 }
 
-export async function emailPasswordLogin(email: string, password: string) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 20000);
-  try {
-    const res = await fetch(resolveApiUrl("/api/v1/auth/password-login"), {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "Accept": "application/json" },
-      body: JSON.stringify({ identifier: email.trim(), email: email.trim(), password }),
-      signal: controller.signal
-    });
-    const raw = await res.text().catch(() => "");
-    let data: any = {};
-    try { data = raw ? JSON.parse(raw) : {}; } catch {
-      data = { success: false, error: `Login service returned an invalid response (HTTP ${res.status}).` };
+export async function createAccount(params: {
+  fullName: string;
+  username: string;
+  password: string;
+  gender?: string;
+  avatar?: string;
+  email?: string;
+  verificationToken: string;
+}) {
+  const token = params.verificationToken;
+  const { ok, data } = await safeAuthFetch("/api/v1/auth/create-account", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${token}`
+    },
+    body: JSON.stringify(params)
+  });
+
+  if (!ok || !data?.success || !data?.user) {
+    if (data?.code === "USERNAME_TAKEN") {
+      throw new Error("This username is already taken. Please choose another username.");
     }
-    if (!res.ok) {
-      return { success: false, ...data, error: data?.error || `Login request failed (HTTP ${res.status}).`, code: data?.code };
-    }
-    return data;
-  } catch (err: any) {
-    if (err?.name === "AbortError") return { success: false, error: "Login request timed out. Please try again.", code: "LOGIN_TIMEOUT" };
-    return { success: false, error: "Could not reach the login service. Please try again.", code: "NETWORK_ERROR" };
-  } finally {
-    clearTimeout(timeout);
+    throw new Error(data?.error || "Account creation failed. Please try again.");
   }
+  return data;
+}
+
+export async function emailPasswordLogin(identifier: string, password: string) {
+  const cleanIdentifier = identifier.trim();
+  const { ok, data } = await safeAuthFetch("/api/v1/auth/password-login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ identifier: cleanIdentifier, password })
+  });
+  if (!ok || !data?.success || !data?.token || !data?.user) {
+    if (data?.code === "PASSWORD_NOT_SET") {
+      throw new Error("This account does not have a password set. Use Forgot Password to set one.");
+    }
+    if (data?.code === "ACCOUNT_NOT_FOUND") {
+      throw new Error("No account found for this email/username. Please sign up first.");
+    }
+    throw new Error(data?.error || "Incorrect email/username or password.");
+  }
+  return data;
 }
 
 export async function createEmailPassword(token: string, password: string) {
-  const res = await fetch(resolveApiUrl("/api/v1/auth/set-password"), {
+  const { ok, data } = await safeAuthFetch("/api/v1/auth/set-password", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -346,50 +328,32 @@ export async function createEmailPassword(token: string, password: string) {
     },
     body: JSON.stringify({ password })
   });
-  return res.json();
+  return data;
 }
 
 export async function requestPasswordReset(email: string) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 20000);
-  try {
-    const res = await fetch(resolveApiUrl("/api/v1/auth/forgot-password"), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email: email.trim().toLowerCase() }),
-      signal: controller.signal
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) return { success: false, error: data?.error || `Recovery request failed (HTTP ${res.status}).`, code: data?.code };
-    if (!data?.success || data?.delivered !== true) {
-      return { success: false, error: data?.error || "Recovery email could not be delivered. Please try again later.", code: data?.code || "EMAIL_DELIVERY_FAILED" };
-    }
-    return data;
-  } catch (err: any) {
-    if (err?.name === "AbortError") return { success: false, error: "Recovery service timed out. Please try again.", code: "RECOVERY_TIMEOUT" };
-    return { success: false, error: "Could not reach the recovery service. Please try again.", code: "NETWORK_ERROR" };
-  } finally {
-    clearTimeout(timeout);
+  const cleanEmail = email.trim().toLowerCase();
+  const { ok, data } = await safeAuthFetch("/api/v1/auth/forgot-password", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: cleanEmail })
+  });
+  if (!ok || !data?.success) {
+    throw new Error(data?.error || "Could not send recovery code. Please try again.");
   }
+  return data;
 }
 
 export async function resetEmailPassword(email: string, otp: string, password: string) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 20000);
-  try {
-    const res = await fetch(resolveApiUrl("/api/v1/auth/reset-password"), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email: email.trim().toLowerCase(), otp: otp.trim(), password }),
-      signal: controller.signal
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) return { success: false, error: data?.error || `Password reset failed (HTTP ${res.status}).`, code: data?.code };
-    return data;
-  } catch (err: any) {
-    if (err?.name === "AbortError") return { success: false, error: "Password reset is taking too long. Please try again.", code: "RESET_TIMEOUT" };
-    return { success: false, error: "Could not reach the recovery service. Please try again.", code: "NETWORK_ERROR" };
-  } finally {
-    clearTimeout(timeout);
+  const cleanEmail = email.trim().toLowerCase();
+  const cleanOtp = otp.trim().replace(/\D/g, "");
+  const { ok, data } = await safeAuthFetch("/api/v1/auth/reset-password", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: cleanEmail, otp: cleanOtp, newPassword: password })
+  });
+  if (!ok || !data?.success || !data?.token || !data?.user) {
+    throw new Error(data?.error || "Password reset failed. Please verify your code and try again.");
   }
+  return data;
 }

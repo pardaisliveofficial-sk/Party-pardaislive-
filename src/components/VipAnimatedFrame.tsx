@@ -55,7 +55,7 @@ export const VipAnimatedFrame: React.FC<{
     }
   }
 
-  if (!frame) {
+  if (!frame || !frame.asset) {
     return <div className={`relative inline-block overflow-visible ${className}`}>{children}</div>;
   }
 

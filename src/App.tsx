@@ -1,9 +1,8 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { App as CapacitorApp } from "@capacitor/app";
-import { authenticatedFetch, resolveApiUrl, refreshSession, getAuthToken, isCapacitorOrAndroid } from "./lib/apiClient";
+import { authenticatedFetch, resolveApiUrl, refreshSession, getAuthToken, isCapacitorOrAndroid, createAccount, verifyEmailOtp, sendEmailOtp, emailPasswordLogin, requestPasswordReset, resetEmailPassword } from "./lib/apiClient";
 import { COUNTRIES_CURRENCIES, CountryCurrency, getCoinsCostInCurrency } from "./currencyUtils";
 import { ReelsView } from "./components/ReelsView";
-import AuthScreen from "./components/AuthScreen";
 import { AgoraStream } from "./components/AgoraStream";
 import { AgoraPartyAudio } from "./components/AgoraPartyAudio";
 import { VipAnimatedFrame, VIP_FRAMES_LIST } from "./components/VipAnimatedFrame";
@@ -89,6 +88,7 @@ import {
   Clock,
   Sliders,
   X,
+  Copy,
   HelpCircle,
   FileText,
   MessageCircle,
@@ -101,8 +101,7 @@ import {
   AlertCircle,
   Pencil,
   Database,
-  ArrowRight,
-  EyeOff
+  LogIn
 } from "lucide-react";
 import { Gift, GiftType, ChatMessage, HostProfile, UserProfile, Family, Agency, Transaction, LiveAnnouncement, KycRequest, UserStory } from "./types";
 import { DEFAULT_USER, MOCK_GIFTS, MOCK_HOSTS, MOCK_FAMILIES, MOCK_AGENCIES, DAILY_MISSIONS, STATIC_COMMENTS_POOL } from "./data";
@@ -112,6 +111,12 @@ import { dbDataCache, db, auth as firebaseAuth } from "./db/firebaseDb";
 import { PardaisPartyLogo, PardaisLiveLogo } from "./components/PardaisPartyLogo";
 import { PardaisPartySplashScreen } from "./components/PardaisPartySplashScreen";
 import { PartyGamesModal } from "./components/PartyGamesModal";
+import AuthModal from "./components/AuthModal";
+import AccountSwitcherModal from "./components/AccountSwitcherModal";
+import { getSavedAccounts, saveAccountToDevice, removeAccountFromDevice, getDemoAccounts } from "./lib/accountStorage";
+import { SavedAccount } from "./types";
+import ProfileSetupModal from "./components/ProfileSetupModal";
+import AccountDeletionModal from "./components/AccountDeletionModal";
 import { initializeApp, getApps, getApp } from "firebase/app";
 import { getAuth, signInWithPopup, signInWithRedirect, getRedirectResult, GoogleAuthProvider, signOut } from "firebase/auth";
 import firebaseConfig from "../firebase-applet-config.json";
@@ -166,6 +171,11 @@ if (!clientAuth) {
 }
 
 const googleProvider = new GoogleAuthProvider();
+googleProvider.setCustomParameters({
+  prompt: 'select_account'
+});
+googleProvider.addScope('email');
+googleProvider.addScope('profile');
 
 // Silence internal Firestore Client SDK logging to prevent spamming quota-exhausted stream errors in console
 setLogLevel("silent");
@@ -643,18 +653,8 @@ const ReelVideoPlayer: React.FC<ReelVideoPlayerProps> = ({
 
 export default function App() {
   // Authentication State
-  const [authHydrating, setAuthHydrating] = useState<boolean>(true);
-
   const [isLoggedIn, setIsLoggedIn] = useState<boolean>(() => {
-    // A browser/WebView refresh must NEVER be treated as a manual logout.
-    // The durable account profile is the local source of truth for restoring
-    // the UI while the backend session token is silently refreshed in the
-    // restoreSession effect below. Only the explicit Logout action clears the
-    // durable login flag/profile.
-    const loggedFlag = localStorage.getItem("pardais_is_logged_in") === "true";
-    const token = localStorage.getItem("pardais_auth_token");
-    const savedProfile = localStorage.getItem("pardais_user_profile");
-    return !!savedProfile && (savedProfile.length > 0) && (loggedFlag || !!token || !!savedProfile);
+    return localStorage.getItem("pardais_is_logged_in") === "true" && !!localStorage.getItem("pardais_auth_token");
   });
   const [showSplash, setShowSplash] = useState<boolean>(true);
   const [splashProgress, setSplashProgress] = useState<number>(0);
@@ -665,12 +665,15 @@ export default function App() {
     const raw = localStorage.getItem("pardais_saved_google_accounts");
     if (raw) {
       try {
-        return JSON.parse(raw);
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
       } catch (e) {
-        return [];
+        // ignore JSON parse error
       }
     }
-    return [];
+    return [
+      { email: "pardaisliveofficial@gmail.com", name: "Pardais Official" }
+    ];
   });
   const [customGoogleEmail, setCustomGoogleEmail] = useState<string>("");
   const [customGoogleName, setCustomGoogleName] = useState<string>("");
@@ -681,7 +684,23 @@ export default function App() {
   const [loginEmail, setLoginEmail] = useState<string>("");
   const [loginOtp, setLoginOtp] = useState<string>("");
   const [isOtpSent, setIsOtpSent] = useState<boolean>(false);
-  const [selectedAuthMethod, setSelectedAuthMethod] = useState<"email" | "google">("email");
+  const [selectedAuthMethod, setSelectedAuthMethod] = useState<"login" | "signup" | "google" | "forgot">("login");
+  const [loginIdentifier, setLoginIdentifier] = useState<string>("");
+  const [loginPassword, setLoginPassword] = useState<string>("");
+  const [showLoginPassword, setShowLoginPassword] = useState<boolean>(false);
+  const [signupStep, setSignupStep] = useState<"email" | "otp" | "profile">("email");
+  const [signupFullName, setSignupFullName] = useState<string>("");
+  const [signupUsername, setSignupUsername] = useState<string>("");
+  const [signupPassword, setSignupPassword] = useState<string>("");
+  const [signupConfirmPassword, setSignupConfirmPassword] = useState<string>("");
+  const [signupShowPassword, setSignupShowPassword] = useState<boolean>(false);
+  const [signupToken, setSignupToken] = useState<string>("");
+  const [forgotEmail, setForgotEmail] = useState<string>("");
+  const [forgotOtp, setForgotOtp] = useState<string>("");
+  const [forgotOtpSent, setForgotOtpSent] = useState<boolean>(false);
+  const [forgotNewPassword, setForgotNewPassword] = useState<string>("");
+  const [forgotShowPassword, setForgotShowPassword] = useState<boolean>(false);
+  const [isAuthLoading, setIsAuthLoading] = useState<boolean>(false);
   const [showProfileSetupModal, setShowProfileSetupModal] = useState<boolean>(false);
   const [setupFullName, setSetupFullName] = useState<string>("");
   const [setupUsername, setSetupUsername] = useState<string>("");
@@ -694,8 +713,9 @@ export default function App() {
   const [showTwoFactorModal, setShowTwoFactorModal] = useState<boolean>(false);
   const [twoFactorCode, setTwoFactorCode] = useState<string>("");
 
-  // Guest Mode & Auth Prompt Modal State
+  // Guest Mode & Auth Prompt Modal State (Default to false so visitor can see and explore full app)
   const [showAuthModal, setShowAuthModal] = useState<boolean>(false);
+  const [showDeletionModal, setShowDeletionModal] = useState<boolean>(false);
   const [authModalReason, setAuthModalReason] = useState<string>("interact with features");
   const [pendingAuthCallback, setPendingAuthCallback] = useState<(() => void) | null>(null);
 
@@ -722,8 +742,9 @@ export default function App() {
   const getInitialUser = (): UserProfile => {
     if (typeof window !== "undefined") {
       try {
+        const isLogged = localStorage.getItem("pardais_is_logged_in") === "true";
         const saved = localStorage.getItem("pardais_user_profile");
-        if (saved) {
+        if (isLogged && saved) {
           const parsed = JSON.parse(saved);
           if (parsed && (parsed.username || parsed.uniqueId)) {
             parsed.isGuest = false;
@@ -736,9 +757,12 @@ export default function App() {
     }
     return {
       ...DEFAULT_USER,
-      username: "Guest_Visitor",
-      fullName: "Guest Visitor",
-      isGuest: true,
+      uid: "",
+      email: "",
+      username: "",
+      fullName: "",
+      uniqueId: "",
+      isGuest: false,
     };
   };
 
@@ -901,28 +925,14 @@ export default function App() {
       if (savedProfile && (savedProfile.username || savedProfile.uniqueId)) {
         setUser(savedProfile);
         setIsLoggedIn(true);
-        localStorage.setItem("pardais_is_logged_in", "true");
-        if (savedProfile.email) localStorage.setItem("pardais_account_email", String(savedProfile.email).toLowerCase());
       }
 
       if (!token) {
-        // A WebView/browser refresh can clear the short-lived token while the
-        // durable profile remains. Recreate the server session from the saved
-        // account identity instead of treating the user as logged out.
-        refreshSession().then((newToken) => {
-          if (!newToken) return;
-          setIsLoggedIn(true);
-          return authenticatedFetch("/api/v1/auth/me");
-        }).then((res) => {
-          if (!res || !res.ok) return;
-          return res.json();
-        }).then((data) => {
-          if (data?.user) {
-            setUser((prev) => ({ ...prev, ...data.user }));
-            localStorage.setItem("pardais_user_profile", JSON.stringify(data.user));
-            lastSavedUserRef.current = JSON.stringify(data.user);
-          }
-        }).catch((err) => console.warn("[PARDAIS AUTH RESTORE] Durable session recreation notice:", err));
+        if (!savedProfile) {
+          refreshSession().then(() => {
+            setIsLoggedIn(true);
+          });
+        }
         return;
       }
 
@@ -945,33 +955,20 @@ export default function App() {
             const backendAvatarTime = Date.parse(String(data.user.avatarUpdatedAt || data.user.profileUpdatedAt || "")) || 0;
             const localAvatarTime = Date.parse(String(localProfile?.avatarUpdatedAt || localProfile?.profileUpdatedAt || "")) || 0;
             const localCustomAvatar = Boolean(localProfile?.avatar && localProfile.avatarSource === "user-upload");
-            const backendCustomAvatar = Boolean(data.user.avatar && data.user.avatarSource === "user-upload");
-            // A user-selected DP is permanent until the user selects another one.
-            // Never replace it with the platform/default avatar during refresh or
-            // session restoration. A backend user-upload may replace it only when
-            // the server explicitly has a newer user-selected photo.
-            const useBackendAvatar = Boolean(
-              backendCustomAvatar &&
-              (!localCustomAvatar || backendAvatarTime > localAvatarTime)
-            );
-            const useLocalAvatar = Boolean(localProfile?.avatar && localCustomAvatar && !useBackendAvatar);
-            const preservedAvatar = useBackendAvatar
-              ? data.user.avatar
-              : (useLocalAvatar ? localProfile!.avatar : (data.user.avatar || localProfile?.avatar || ""));
-            const preservedAvatarUpdatedAt = useBackendAvatar
-              ? data.user.avatarUpdatedAt
-              : (useLocalAvatar ? localProfile!.avatarUpdatedAt : (data.user.avatarUpdatedAt || localProfile?.avatarUpdatedAt));
+            const useLocalAvatar = Boolean(localProfile?.avatar && localCustomAvatar && localAvatarTime > backendAvatarTime);
+            const preservedAvatar = useLocalAvatar ? localProfile!.avatar : (data.user.avatar || localProfile?.avatar || "");
+            const preservedAvatarUpdatedAt = useLocalAvatar ? localProfile!.avatarUpdatedAt : (data.user.avatarUpdatedAt || localProfile?.avatarUpdatedAt);
             const mergedUser: UserProfile = {
               ...data.user,
               // Backend is authoritative for account identity. Never reuse a previous
               // account's Pardais ID, username or name after a different account logs in.
               fullName: data.user.fullName || "",
-              username: localProfile?.username || data.user.username || "",
-              uniqueId: localProfile?.uniqueId || data.user.uniqueId || "",
+              username: data.user.username || "",
+              uniqueId: data.user.uniqueId || "",
               avatar: preservedAvatar,
               avatarUrl: useLocalAvatar ? localProfile!.avatarUrl || preservedAvatar : (data.user.avatarUrl || preservedAvatar),
               avatarUpdatedAt: preservedAvatarUpdatedAt,
-              avatarSource: (useBackendAvatar ? "user-upload" : (useLocalAvatar ? localProfile!.avatarSource : data.user.avatarSource)) || (preservedAvatar ? "user-upload" : "default"),
+              avatarSource: (useLocalAvatar ? localProfile!.avatarSource : data.user.avatarSource) || (preservedAvatar ? "user-upload" : "default"),
               profileUpdatedAt: data.user.profileUpdatedAt || localProfile?.profileUpdatedAt,
               bio: localProfile?.bio || data.user.bio,
               gender: localProfile?.gender || data.user.gender,
@@ -986,58 +983,18 @@ export default function App() {
             lastSavedUserRef.current = JSON.stringify(mergedUser);
           }
         })
-        .catch(async err => {
+        .catch(err => {
           console.warn("[PARDAIS AUTH RESTORE] Session verification notice:", err.message);
-          // If the stored token is stale after a Railway restart, rebuild a
-          // signed session from the durable email/UID profile and retry once.
-          try {
-            const refreshed = await refreshSession();
-            if (!refreshed) return;
-            const retry = await authenticatedFetch("/api/v1/auth/me");
-            if (!retry.ok) return;
-            const retryData = await retry.json().catch(() => ({}));
-            if (retryData?.user) {
-              const restored = {
-                ...retryData.user,
-                uid: retryData.user.uid || savedProfile?.uid || "",
-                email: retryData.user.email || savedProfile?.email || "",
-                username: savedProfile?.username || retryData.user.username || "",
-                uniqueId: savedProfile?.uniqueId || retryData.user.uniqueId || "",
-                avatar: (savedProfile?.avatar && savedProfile?.avatarSource === "user-upload")
-                  ? savedProfile.avatar
-                  : (retryData.user.avatar || savedProfile?.avatar || ""),
-                avatarUrl: (savedProfile?.avatar && savedProfile?.avatarSource === "user-upload")
-                  ? (savedProfile.avatarUrl || savedProfile.avatar)
-                  : (retryData.user.avatarUrl || savedProfile?.avatarUrl || retryData.user.avatar || "")
-              };
-              setUser(restored);
-              setIsLoggedIn(true);
-              localStorage.setItem("pardais_is_logged_in", "true");
-              localStorage.setItem("pardais_user_profile", JSON.stringify(restored));
-              lastSavedUserRef.current = JSON.stringify(restored);
-            }
-          } catch (refreshErr) {
-            console.warn("[PARDAIS AUTH RESTORE] Session refresh retry notice:", refreshErr);
-          }
         });
     };
 
-    restoreSession().finally(() => {
-      // Never interpret a failed network/session check as a manual logout.
-      // The durable local profile remains the signed-in source of truth.
-      setAuthHydrating(false);
-    });
+    restoreSession();
   }, []);
 
-  // Persist login state only after the initial auth restoration has completed.
-  // This prevents a browser/WebView refresh from briefly writing false before
-  // the durable local account has been restored. Only handleLogout explicitly
-  // clears the account state.
+  // Sync login status
   useEffect(() => {
-    if (!authHydrating) {
-      localStorage.setItem("pardais_is_logged_in", isLoggedIn ? "true" : "false");
-    }
-  }, [isLoggedIn, authHydrating]);
+    localStorage.setItem("pardais_is_logged_in", isLoggedIn ? "true" : "false");
+  }, [isLoggedIn]);
 
   // Edit Profile States
   const [isEditingProfile, setIsEditingProfile] = useState<boolean>(false);
@@ -1282,8 +1239,11 @@ export default function App() {
 
   // Real-time Reels sync with Firestore database
   useEffect(() => {
-    const q = query(collection(db, "reels"), orderBy("createdAt", "desc"));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
+    if (!db) return;
+    let unsubscribe = () => {};
+    try {
+      const q = query(collection(db, "reels"), orderBy("createdAt", "desc"));
+      unsubscribe = onSnapshot(q, (snapshot) => {
       const firestoreReels = snapshot.docs.map(doc => {
         const data = doc.data();
         let rawUrl = data.videoUrl || data.publicUrl || data.mediaUrl || "";
@@ -1408,15 +1368,21 @@ export default function App() {
         });
       }
     }, (error) => {
-      console.error("Firestore reels subscription error:", error);
+      console.warn("Firestore reels subscription note:", error);
     });
-    return () => unsubscribe();
+    } catch (err) {
+      console.warn("Firestore reels initialization note:", err);
+    }
+    return () => {
+      try { unsubscribe(); } catch (e) {}
+    };
   }, [user.uniqueId, user.fullName]);
 
   // Top header interactive states
   const [showNotifications, setShowNotifications] = useState<boolean>(false);
   const [hasUnreadNotifications, setHasUnreadNotifications] = useState<boolean>(true);
   const [showSettingsDrawer, setShowSettingsDrawer] = useState<boolean>(false);
+  const [showAccountSwitcherModal, setShowAccountSwitcherModal] = useState<boolean>(false);
 
   // Android App Conversion & PWA Install State
   const [showAndroidInstallModal, setShowAndroidInstallModal] = useState<boolean>(false);
@@ -3071,9 +3037,11 @@ export default function App() {
 
   // 1. Sync all registered users from Firestore to resolve profiles in real time
   useEffect(() => {
-    if (!isLoggedIn || !user?.username) return;
-    const q = collection(db, "users");
-    const unsubscribe = onSnapshot(q, (snapshot) => {
+    if (!isLoggedIn || !user?.username || !db) return;
+    let unsubscribe = () => {};
+    try {
+      const q = collection(db, "users");
+      unsubscribe = onSnapshot(q, (snapshot) => {
       const list: any[] = [];
       const seenUsernames = new Set();
       snapshot.forEach(docSnap => {
@@ -3088,9 +3056,14 @@ export default function App() {
       });
       setAllRegisteredUsers(list);
     }, err => {
-      console.error("Error syncing users list from Firestore:", err);
+      console.warn("Error syncing users list from Firestore:", err);
     });
-    return () => unsubscribe();
+    } catch (err) {
+      console.warn("Error initializing users list from Firestore:", err);
+    }
+    return () => {
+      try { unsubscribe(); } catch (e) {}
+    };
   }, [isLoggedIn, user?.username]);
 
   // 2. Real-time active conversations list for current user
@@ -3100,14 +3073,20 @@ export default function App() {
       setConversationsLoading(false);
       return;
     }
+    if (!db) {
+      setConversationsLoading(false);
+      return;
+    }
 
     setConversationsLoading(true);
-    const q = query(
-      collection(db, "conversations"),
-      where("participants", "array-contains", user.username)
-    );
+    let unsubscribe = () => {};
+    try {
+      const q = query(
+        collection(db, "conversations"),
+        where("participants", "array-contains", user.username)
+      );
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
+      unsubscribe = onSnapshot(q, (snapshot) => {
       const list: any[] = [];
       snapshot.forEach((docSnap) => {
         list.push({ id: docSnap.id, ...docSnap.data() });
@@ -3123,11 +3102,17 @@ export default function App() {
       setConversations(list);
       setConversationsLoading(false);
     }, (err) => {
-      console.error("Error listening to conversations:", err);
+      console.warn("Error listening to conversations:", err);
       setConversationsLoading(false);
     });
+    } catch (err) {
+      console.warn("Error setting up conversations listener:", err);
+      setConversationsLoading(false);
+    }
 
-    return () => unsubscribe();
+    return () => {
+      try { unsubscribe(); } catch (e) {}
+    };
   }, [isLoggedIn, user?.username]);
 
   // 3. Real-time active chat message list for currently selected conversation
@@ -3136,14 +3121,17 @@ export default function App() {
       setActiveChatMessages([]);
       return;
     }
+    if (!db) return;
 
     const otherUsername = activeChatContact.username || activeChatContact.name;
     const conversationId = [user.username, otherUsername].sort().join("_");
+    let unsubscribe = () => {};
 
-    const messagesRef = collection(db, "conversations", conversationId, "messages");
-    const q = query(messagesRef, orderBy("createdAt", "asc"));
+    try {
+      const messagesRef = collection(db, "conversations", conversationId, "messages");
+      const q = query(messagesRef, orderBy("createdAt", "asc"));
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
+      unsubscribe = onSnapshot(q, (snapshot) => {
       const msgs: any[] = [];
       snapshot.forEach((docSnap) => {
         const data = docSnap.data();
@@ -3188,16 +3176,25 @@ export default function App() {
         });
 
         // Reset parent conversation's unread count for current user
-        const convRef = doc(db, "conversations", conversationId);
-        updateDoc(convRef, {
-          [`unreadCounts.${user.username}`]: 0
-        }).catch(err => console.error("Error resetting conversation unread count:", err));
+        if (db) {
+          try {
+            const convRef = doc(db, "conversations", conversationId);
+            updateDoc(convRef, {
+              [`unreadCounts.${user.username}`]: 0
+            }).catch(err => console.warn("Error resetting conversation unread count:", err));
+          } catch (cErr) {}
+        }
       }
     }, (err) => {
-      console.error("Error listening to chat messages:", err);
+      console.warn("Error listening to chat messages:", err);
     });
+    } catch (mInitErr) {
+      console.warn("Error initializing chat messages listener:", mInitErr);
+    }
 
-    return () => unsubscribe();
+    return () => {
+      try { unsubscribe(); } catch (e) {}
+    };
   }, [isLoggedIn, user?.username, activeChatContact]);
 
   // 4. Case-insensitive substring search for registered users in Firestore
@@ -3208,31 +3205,33 @@ export default function App() {
     }
     setSearchLoading(true);
     try {
-      const q = query(collection(db, "users"));
-      const querySnapshot = await getDocs(q);
-      const list: any[] = [];
-      const seenUsernames = new Set();
-      querySnapshot.forEach(docSnap => {
-        const u = docSnap.data();
-        if (u.username === user.username) return;
+      if (db) {
+        const q = query(collection(db, "users"));
+        const querySnapshot = await getDocs(q);
+        const list: any[] = [];
+        const seenUsernames = new Set();
+        querySnapshot.forEach(docSnap => {
+          const u = docSnap.data();
+          if (u.username === user.username) return;
 
-        const matchUsername = u.username?.toLowerCase().includes(searchTerm.toLowerCase());
-        const matchFullName = u.fullName?.toLowerCase().includes(searchTerm.toLowerCase());
-        const matchUniqueId = u.uniqueId?.toLowerCase().includes(searchTerm.toLowerCase());
+          const matchUsername = u.username?.toLowerCase().includes(searchTerm.toLowerCase());
+          const matchFullName = u.fullName?.toLowerCase().includes(searchTerm.toLowerCase());
+          const matchUniqueId = u.uniqueId?.toLowerCase().includes(searchTerm.toLowerCase());
 
-        if (matchUsername || matchFullName || matchUniqueId) {
-          if (u.username) {
-            const lowerUsername = u.username.toLowerCase();
-            if (!seenUsernames.has(lowerUsername)) {
-              seenUsernames.add(lowerUsername);
-              list.push(u);
+          if (matchUsername || matchFullName || matchUniqueId) {
+            if (u.username) {
+              const lowerUsername = u.username.toLowerCase();
+              if (!seenUsernames.has(lowerUsername)) {
+                seenUsernames.add(lowerUsername);
+                list.push(u);
+              }
             }
           }
-        }
-      });
-      setSearchedUsers(list);
+        });
+        setSearchedUsers(list);
+      }
     } catch (err) {
-      console.error("Error searching registered users in Firestore:", err);
+      console.warn("Error searching registered users in Firestore:", err);
     } finally {
       setSearchLoading(false);
     }
@@ -4122,7 +4121,7 @@ export default function App() {
   }, []);
 
   const liveBroadcasterName = clientView === "user-live" ? user.username : (activeHost?.name || "Broadcaster");
-  const liveBroadcasterAvatar = clientView === "user-live" ? user.avatar : (activeHost?.avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80");
+  const liveBroadcasterAvatar = clientView === "user-live" ? (user.avatar || DEFAULT_USER.avatar) : (activeHost?.avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80");
   const liveBroadcasterLevel = clientView === "user-live" ? (user.userLevel || 1) : (activeHost?.hostLevel || activeHost?.level || 1);
   const [userLiveChatVisible, setUserLiveChatVisible] = useState<boolean>(true);
 
@@ -4261,7 +4260,7 @@ export default function App() {
 
               if (data.activeSession) {
                 const sess = data.activeSession;
-                const otherHost = sess.hostA.username.toLowerCase() === user.username.toLowerCase() ? sess.hostB : sess.hostA;
+                const otherHost = (sess.hostA?.username || "").toLowerCase() === (user.username || "").toLowerCase() ? sess.hostB : sess.hostA;
                 setUserLiveCoHost({
                   username: otherHost.username,
                   userId: otherHost.userId || otherHost.username,
@@ -4297,7 +4296,7 @@ export default function App() {
           if (data.activeSession && data.activeSession.status !== "ended") {
             missedActiveSessionCountRef.current = 0; // reset consecutive missed poll counter
             const sess = data.activeSession;
-            const isHostA = (sess.hostA?.username && sess.hostA.username.toLowerCase() === user.username.toLowerCase()) ||
+            const isHostA = (sess.hostA?.username && sess.hostA.username.toLowerCase() === (user.username || "").toLowerCase()) ||
                             (sess.hostA?.userId && String(sess.hostA.userId).toLowerCase() === String(user.uid || user.username).toLowerCase());
             const myHost = isHostA ? sess.hostA : sess.hostB;
             const otherHost = isHostA ? sess.hostB : sess.hostA;
@@ -4316,7 +4315,7 @@ export default function App() {
             }
 
             // Check PK Battle in-session request
-            if (sess.pkRequested && sess.pkRequestedBy && sess.pkRequestedBy.toLowerCase() !== user.username.toLowerCase()) {
+            if (sess.pkRequested && sess.pkRequestedBy && sess.pkRequestedBy.toLowerCase() !== (user.username || "").toLowerCase()) {
               setIncomingPkBattleChallenge(sess);
             } else {
               setIncomingPkBattleChallenge(null);
@@ -5377,18 +5376,16 @@ export default function App() {
               );
               const backendAvatarTime = Date.parse(String(data.avatarUpdatedAt || data.profileUpdatedAt || "")) || 0;
               const localAvatarTime = Date.parse(String(prev?.avatarUpdatedAt || prev?.profileUpdatedAt || "")) || 0;
-              const localCustomAvatar = Boolean(sameAccount && prev?.avatar && prev.avatarSource === "user-upload");
-              const backendCustomAvatar = Boolean(data.avatar && data.avatarSource === "user-upload");
-              const useBackendAvatar = Boolean(backendCustomAvatar && (!localCustomAvatar || backendAvatarTime > localAvatarTime));
-              const keepLocalAvatar = Boolean(localCustomAvatar && !useBackendAvatar);
+              const keepNewerLocalAvatar = Boolean(
+                sameAccount && prev?.avatar && prev.avatarSource === "user-upload" && localAvatarTime > backendAvatarTime
+              );
               return {
                 ...prev,
                 ...data,
-                // Do not let a default/stale backend avatar replace a user-selected DP.
-                avatar: keepLocalAvatar ? prev!.avatar : (data.avatar || prev?.avatar || ""),
-                avatarUrl: keepLocalAvatar ? (prev!.avatarUrl || prev!.avatar) : (data.avatarUrl || data.avatar || prev?.avatar || ""),
-                avatarUpdatedAt: keepLocalAvatar ? prev!.avatarUpdatedAt : data.avatarUpdatedAt,
-                avatarSource: keepLocalAvatar ? prev!.avatarSource : (data.avatarSource || (data.avatar ? "user-upload" : "default")),
+                avatar: keepNewerLocalAvatar ? prev!.avatar : (data.avatar || prev?.avatar || ""),
+                avatarUrl: keepNewerLocalAvatar ? (prev!.avatarUrl || prev!.avatar) : (data.avatarUrl || data.avatar || prev?.avatar || ""),
+                avatarUpdatedAt: keepNewerLocalAvatar ? prev!.avatarUpdatedAt : data.avatarUpdatedAt,
+                avatarSource: keepNewerLocalAvatar ? prev!.avatarSource : (data.avatarSource || (data.avatar ? "user-upload" : "default")),
               } as UserProfile;
             });
             lastSavedUserRef.current = JSON.stringify(data);
@@ -5478,7 +5475,7 @@ export default function App() {
         .catch(() => {});
 
       // Real-time user profile sync
-      const token = localStorage.getItem("pardais_user_token");
+      const token = localStorage.getItem("pardais_auth_token") || localStorage.getItem("pardais_user_token");
       if (token) {
         fetch("/api/v1/user/me", { headers: { "Authorization": `Bearer ${token}` } })
           .then(res => res.json())
@@ -6310,35 +6307,35 @@ export default function App() {
         // A 45s client guard prevents an Android WebView from waiting indefinitely.
         const controller = new AbortController();
         const timeoutId = window.setTimeout(() => controller.abort(), 45000);
-        let uploadRes: Response;
+        let uploadRes: Response | null = null;
         try {
           uploadRes = await authenticatedFetch("/api/v1/user/avatar", {
             method: "POST",
             body: formData,
             signal: controller.signal
           });
+        } catch (uploadErr) {
+          console.warn("[PARDAIS PROFILE] Avatar upload network notice:", uploadErr);
         } finally {
           window.clearTimeout(timeoutId);
         }
 
-        const uploadData: any = await uploadRes.json().catch(() => ({}));
-        if (!uploadRes.ok || !uploadData?.url) {
-          const detail = uploadData?.error || `Profile photo upload failed (HTTP ${uploadRes.status}).`;
-          throw new Error(detail);
+        const uploadData: any = uploadRes ? await uploadRes.json().catch(() => ({})) : null;
+        if (uploadRes && uploadRes.ok && uploadData?.url) {
+          persistentAvatar = uploadData.url;
+        } else {
+          console.warn("[PARDAIS PROFILE] Server upload notice, keeping local preview avatar:", uploadData?.error || "Offline/Network notice");
+          persistentAvatar = selectedAvatar || user.avatar || "";
         }
-
-        persistentAvatar = uploadData.url;
       }
 
-      const avatarChangedByUser = Boolean(persistentAvatar && persistentAvatar !== user.avatar);
       const updatedUser: UserProfile = {
         ...user,
         // Username is the permanent account identity and cannot be changed here.
         username: user.username,
         avatar: persistentAvatar,
         avatarUrl: persistentAvatar,
-        // Only a real user-selected replacement gets a new timestamp.
-        avatarUpdatedAt: persistentAvatar ? (avatarChangedByUser ? new Date().toISOString() : user.avatarUpdatedAt || new Date().toISOString()) : undefined,
+        avatarUpdatedAt: persistentAvatar ? (user.avatarUpdatedAt || new Date().toISOString()) : undefined,
         avatarSource: persistentAvatar ? "user-upload" : "default",
         profileUpdatedAt: new Date().toISOString(),
         gender: editGender,
@@ -6359,12 +6356,17 @@ export default function App() {
       setEditAvatar(persistentAvatar);
       setEditAvatarFile(null);
       setIsEditingProfile(false);
-    } catch (err) {
-      console.error("[PARDAIS PROFILE] Profile save/upload failed:", err);
-      const message = err instanceof DOMException && err.name === "AbortError"
-        ? "Upload is taking too long. Please check the connection and try again."
-        : (err instanceof Error ? err.message : "Please try again.");
-      alert(`Profile photo upload failed. ${message}`);
+    } catch (err: any) {
+      console.warn("[PARDAIS PROFILE] Profile save notice:", err?.message || err);
+      const fallbackUser: UserProfile = {
+        ...user,
+        gender: editGender,
+        fullName: editFullName.trim() || user.fullName,
+        dob: editDob,
+        phoneNumber: editPhoneNumber,
+      };
+      saveAndSyncUserProfile(fallbackUser);
+      setIsEditingProfile(false);
     } finally {
       setIsSavingProfile(false);
     }
@@ -6612,44 +6614,46 @@ export default function App() {
       status: "sent"
     };
 
-    try {
-      const convRef = doc(db, "conversations", conversationId);
-      
-      // Get current unread count for the other participant
-      let currentUnread = 0;
+    if (db) {
       try {
-        const convSnap = await getDoc(convRef);
-        if (convSnap.exists()) {
-          const cData = convSnap.data();
-          currentUnread = cData?.unreadCounts?.[otherUsername] || 0;
+        const convRef = doc(db, "conversations", conversationId);
+        
+        // Get current unread count for the other participant
+        let currentUnread = 0;
+        try {
+          const convSnap = await getDoc(convRef);
+          if (convSnap.exists()) {
+            const cData = convSnap.data();
+            currentUnread = cData?.unreadCounts?.[otherUsername] || 0;
+          }
+        } catch (err) {
+          console.warn("Error reading conversation unread count:", err);
         }
+
+        // 1. Save/Update parent conversation document
+        const convData = {
+          id: conversationId,
+          participants: [user.username, otherUsername],
+          lastMessage: text,
+          lastMessageType: isVoice ? "voice" : isImage ? "image" : isSticker ? "sticker" : "text",
+          lastMessageAt: new Date().toISOString(),
+          lastSenderId: user.username,
+          updatedAt: new Date().toISOString(),
+          unreadCounts: {
+            [user.username]: 0, // sender unread count is always 0
+            [otherUsername]: currentUnread + 1 // increment recipient's unread count
+          }
+        };
+        await setDoc(convRef, convData, { merge: true });
+
+        // 2. Save individual message document in subcollection
+        const msgRef = doc(db, "conversations", conversationId, "messages", messageId);
+        await setDoc(msgRef, messageData);
+
+        console.log("[PARDAIS-PARTY CHAT] Message synced to Firestore:", messageId);
       } catch (err) {
-        console.error("Error reading conversation unread count:", err);
+        console.warn("Error sending message to Firestore:", err);
       }
-
-      // 1. Save/Update parent conversation document
-      const convData = {
-        id: conversationId,
-        participants: [user.username, otherUsername],
-        lastMessage: text,
-        lastMessageType: isVoice ? "voice" : isImage ? "image" : isSticker ? "sticker" : "text",
-        lastMessageAt: new Date().toISOString(),
-        lastSenderId: user.username,
-        updatedAt: new Date().toISOString(),
-        unreadCounts: {
-          [user.username]: 0, // sender unread count is always 0
-          [otherUsername]: currentUnread + 1 // increment recipient's unread count
-        }
-      };
-      await setDoc(convRef, convData, { merge: true });
-
-      // 2. Save individual message document in subcollection
-      const msgRef = doc(db, "conversations", conversationId, "messages", messageId);
-      await setDoc(msgRef, messageData);
-
-      console.log("[PARDAIS-PARTY CHAT] Message synced to Firestore:", messageId);
-    } catch (err) {
-      console.error("Error sending message to Firestore:", err);
     }
   };
 
@@ -7357,7 +7361,7 @@ export default function App() {
         })
       }).then(res => res.json()).then(resData => {
         if (resData.success && resData.session) {
-          const isHostA = (resData.session.hostA?.username && resData.session.hostA.username.toLowerCase() === user.username.toLowerCase()) ||
+          const isHostA = (resData.session.hostA?.username && resData.session.hostA.username.toLowerCase() === (user.username || "").toLowerCase()) ||
                           (resData.session.hostA?.userId && String(resData.session.hostA.userId).toLowerCase() === String(user.uid || user.username).toLowerCase());
           const myScore = isHostA ? (resData.session.hostA?.score || 0) : (resData.session.hostB?.score || 0);
           const otherScore = isHostA ? (resData.session.hostB?.score || 0) : (resData.session.hostA?.score || 0);
@@ -7536,8 +7540,8 @@ export default function App() {
     setLiveStreamsList(prev => prev.filter(h => 
       h.id !== hostId && 
       h.id !== `h-${user.username}` &&
-      h.hostUsername?.toLowerCase() !== user.username.toLowerCase() && 
-      h.name?.toLowerCase() !== user.username.toLowerCase() &&
+      h.hostUsername?.toLowerCase() !== (user.username || "").toLowerCase() && 
+      h.name?.toLowerCase() !== (user.username || "").toLowerCase() &&
       h.hostUid !== user.uniqueId &&
       h.hostUid !== user.username
     ));
@@ -7569,8 +7573,8 @@ export default function App() {
         setLiveStreamsList(prev => prev.filter(h => 
           h.id !== hostId && 
           h.id !== `h-${user.username}` &&
-          h.hostUsername?.toLowerCase() !== user.username.toLowerCase() && 
-          h.name?.toLowerCase() !== user.username.toLowerCase() &&
+          h.hostUsername?.toLowerCase() !== (user.username || "").toLowerCase() && 
+          h.name?.toLowerCase() !== (user.username || "").toLowerCase() &&
           h.hostUid !== user.uniqueId &&
           h.hostUid !== user.username
         ));
@@ -7616,34 +7620,44 @@ export default function App() {
     ]);
   };
 
-  // Unified persistent email authentication (AI Studio working flow)
-  const handleAuthAuthenticated = async (payload: any) => {
-    const authToken = String(payload?.token || "").trim();
-    const authUser = payload?.user;
-    if (!authToken || !authUser) {
-      setLoginError("Authentication response was incomplete. Please try again.");
+  // Email OTP Login Handlers
+  // 1. Password Login Handler (Email or Username + Password)
+  const handleEmailPasswordLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!termsAccepted) setTermsAccepted(true);
+    const identifier = (loginIdentifier || loginEmail).trim();
+    if (!identifier || !loginPassword) {
+      setLoginError("Please enter your registered email/username and password.");
       return;
     }
-
-    localStorage.setItem("pardais_auth_token", authToken);
-    localStorage.setItem("pardais_is_logged_in", "true");
-    localStorage.setItem("pardais_user_profile", JSON.stringify(authUser));
-    lastSavedUserRef.current = JSON.stringify(authUser);
-    setUser(authUser);
-    setIsLoggedIn(true);
-    setShowAuthModal(false);
     setLoginError("");
     setLoginSuccessMsg("");
-
-    if (pendingAuthCallback) {
-      const cb = pendingAuthCallback;
-      setPendingAuthCallback(null);
-      try { cb(); } catch {}
+    setIsAuthLoading(true);
+    try {
+      const data = await emailPasswordLogin(identifier, loginPassword);
+      localStorage.setItem("pardais_auth_token", data.token);
+      localStorage.setItem("pardais_is_logged_in", "true");
+      localStorage.setItem("pardais_user_profile", JSON.stringify(data.user));
+      lastSavedUserRef.current = JSON.stringify(data.user);
+      setUser(data.user);
+      setIsLoggedIn(true);
+      setShowAuthModal(false);
+      setLoginPassword("");
+      setLoginError("");
+      if (pendingAuthCallback) {
+        const cb = pendingAuthCallback;
+        setPendingAuthCallback(null);
+        try { cb(); } catch {}
+      }
+    } catch (err: any) {
+      setLoginError(err?.message || "Incorrect email/username or password.");
+    } finally {
+      setIsAuthLoading(false);
     }
   };
 
-  // Email OTP Login Handlers
-  const handleSendEmailOtp = async (e: React.FormEvent) => {
+  // 2. Send Signup OTP Handler
+  const handleSendSignupOtp = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!termsAccepted) setTermsAccepted(true);
     const cleanEmail = loginEmail.trim().toLowerCase();
@@ -7653,99 +7667,166 @@ export default function App() {
     }
     setLoginError("");
     setLoginSuccessMsg("");
+    setIsAuthLoading(true);
     try {
-      const response = await fetch(resolveApiUrl("/api/v1/auth/send-email-otp"), {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: cleanEmail })
-      });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok || !data.success) throw new Error(data.error || "Verification email could not be sent. Please try again.");
+      const data = await sendEmailOtp(cleanEmail);
+      setSignupStep("otp");
       setIsOtpSent(true);
       setLoginSuccessMsg(data.message || `Verification code sent to ${cleanEmail}`);
     } catch (err: any) {
-      setIsOtpSent(false);
-      setLoginError(err?.message || "Verification email could not be sent. Please try again.");
+      if (err?.code === "EMAIL_ALREADY_REGISTERED") {
+        setLoginIdentifier(cleanEmail);
+        setSelectedAuthMethod("login");
+        setLoginError("This email is already registered. Please enter your password to log in.");
+        return;
+      }
+      setLoginError(err?.message || "Could not send verification code. Please try again.");
+    } finally {
+      setIsAuthLoading(false);
     }
   };
 
-  const handleVerifyEmailOtp = async (e: React.FormEvent) => {
+  // 3. Verify Signup OTP Handler
+  const handleVerifySignupOtp = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!termsAccepted) setTermsAccepted(true);
     const cleanEmail = loginEmail.trim().toLowerCase();
     const cleanOtp = loginOtp.trim().replace(/\D/g, "");
     if (!cleanEmail || cleanOtp.length !== 6) {
-      setLoginError("Please enter the 6-digit OTP verification code.");
+      setLoginError("Please enter the 6-digit OTP code sent to your email.");
       return;
     }
     setLoginError("");
     setLoginSuccessMsg("");
+    setIsAuthLoading(true);
     try {
-      let data: any;
-      try {
-        const response = await fetch(resolveApiUrl("/api/v1/auth/verify-email-otp"), {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email: cleanEmail, otp: cleanOtp })
-        });
-        data = await response.json().catch(() => ({}));
-        if (!response.ok || !data.success || !data.token) throw new Error(data.error || "Verification failed.");
-      } catch (firstError) {
-        const recovery = await fetch(resolveApiUrl("/api/v1/auth/recover-email-session"), {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email: cleanEmail, otp: cleanOtp })
-        });
-        data = await recovery.json().catch(() => ({}));
-        if (!recovery.ok || !data.success || !data.token) throw firstError;
-      }
-      // Preserve the existing permanent account identity/profile when logging
-      // back in with the same email. The backend response must never replace a
-      // user's permanent Pardais ID or custom DP with a newly generated/default
-      // value. New accounts (no matching saved email) use the server response.
-      let authUser: UserProfile = data.user as UserProfile;
-      try {
-        const previousRaw = localStorage.getItem("pardais_user_profile");
-        const previous = previousRaw ? JSON.parse(previousRaw) : null;
-        const sameEmail = previous?.email && String(previous.email).toLowerCase().trim() === cleanEmail;
-        if (sameEmail) {
-          authUser = {
-            ...data.user,
-            uid: previous.uid || data.user.uid,
-            email: previous.email || data.user.email,
-            uniqueId: previous.uniqueId || data.user.uniqueId,
-            username: previous.username || data.user.username,
-            fullName: data.user.fullName || previous.fullName || "",
-            avatar: previous.avatar && previous.avatarSource === "user-upload" ? previous.avatar : (data.user.avatar || previous.avatar || ""),
-            avatarUrl: previous.avatar && previous.avatarSource === "user-upload" ? (previous.avatarUrl || previous.avatar) : (data.user.avatarUrl || data.user.avatar || previous.avatar || ""),
-            avatarSource: previous.avatar && previous.avatarSource === "user-upload" ? "user-upload" : (data.user.avatarSource || previous.avatarSource || "default"),
-            avatarUpdatedAt: previous.avatar && previous.avatarSource === "user-upload" ? (previous.avatarUpdatedAt || data.user.avatarUpdatedAt) : data.user.avatarUpdatedAt,
-            bio: previous.bio || data.user.bio,
-            gender: previous.gender || data.user.gender,
-            dob: previous.dob || data.user.dob,
-            country: previous.country || data.user.country,
-            language: previous.language || data.user.language,
-          } as UserProfile;
-        }
-      } catch {}
-
-      localStorage.setItem("pardais_auth_token", data.token);
-      localStorage.setItem("pardais_is_logged_in", "true");
-      localStorage.setItem("pardais_user_profile", JSON.stringify(authUser));
-      localStorage.setItem("pardais_account_email", cleanEmail);
-      setUser(authUser);
-      setIsLoggedIn(true);
-      // Re-save the durable profile to the backend so the permanent ID/DP
-      // survives device changes and future OTP logins, not just this browser.
-      authenticatedFetch("/api/v1/user", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(authUser)
-      }).catch(() => {});
-      setShowAuthModal(false);
-      if (pendingAuthCallback) { const cb = pendingAuthCallback; setPendingAuthCallback(null); try { cb(); } catch {} }
-      if (data.isNewUser || !data.user.fullName) setShowProfileSetupModal(true);
+      const data = await verifyEmailOtp(cleanEmail, cleanOtp);
+      setSignupToken(data.token);
+      try { sessionStorage.setItem("pardais_signup_token", data.token); } catch {}
+      if (data.user?.fullName) setSignupFullName(data.user.fullName);
+      if (data.user?.username) setSignupUsername(data.user.username);
+      setSignupStep("profile");
+      setLoginSuccessMsg("Email verified! Now enter your name & password.");
     } catch (err: any) {
-      setLoginError(err?.message || "Invalid or expired verification code. Please request a new code.");
+      setLoginError(err?.message || "Invalid or expired verification code.");
+    } finally {
+      setIsAuthLoading(false);
     }
   };
+
+  // 4. Complete Signup (Create Account) Handler
+  const handleCompleteSignup = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!signupFullName.trim()) {
+      setLoginError("Please enter your real name.");
+      return;
+    }
+    if (!signupPassword || signupPassword.length < 6) {
+      setLoginError("Password must be at least 6 characters.");
+      return;
+    }
+    if (signupPassword !== signupConfirmPassword) {
+      setLoginError("Passwords do not match.");
+      return;
+    }
+    const tokenToUse = signupToken || sessionStorage.getItem("pardais_signup_token");
+    if (!tokenToUse) {
+      setLoginError("Verification session expired. Please verify your email again.");
+      setSignupStep("email");
+      return;
+    }
+    setLoginError("");
+    setLoginSuccessMsg("");
+    setIsAuthLoading(true);
+    try {
+      const data = await createAccount({
+        fullName: signupFullName.trim(),
+        username: signupUsername.trim().replace(/^@/, ""),
+        password: signupPassword,
+        verificationToken: tokenToUse
+      });
+      const authToken = data.token || tokenToUse;
+      localStorage.setItem("pardais_auth_token", authToken);
+      localStorage.setItem("pardais_is_logged_in", "true");
+      localStorage.setItem("pardais_user_profile", JSON.stringify(data.user));
+      lastSavedUserRef.current = JSON.stringify(data.user);
+      setUser(data.user);
+      setIsLoggedIn(true);
+      setShowAuthModal(false);
+      try { sessionStorage.removeItem("pardais_signup_token"); } catch {}
+      if (pendingAuthCallback) {
+        const cb = pendingAuthCallback;
+        setPendingAuthCallback(null);
+        try { cb(); } catch {}
+      }
+    } catch (err: any) {
+      setLoginError(err?.message || "Account creation failed. Please try again.");
+    } finally {
+      setIsAuthLoading(false);
+    }
+  };
+
+  // 5. Send Forgot Password OTP
+  const handleForgotSendCode = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanEmail = forgotEmail.trim().toLowerCase();
+    if (!cleanEmail || !cleanEmail.includes("@")) {
+      setLoginError("Please enter your registered email address.");
+      return;
+    }
+    setLoginError("");
+    setLoginSuccessMsg("");
+    setIsAuthLoading(true);
+    try {
+      const data = await requestPasswordReset(cleanEmail);
+      setForgotOtpSent(true);
+      setLoginSuccessMsg(data.message || `Recovery code sent to ${cleanEmail}`);
+    } catch (err: any) {
+      setLoginError(err?.message || "Could not send recovery code.");
+    } finally {
+      setIsAuthLoading(false);
+    }
+  };
+
+  // 6. Reset Password & Login
+  const handleForgotResetPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanEmail = forgotEmail.trim().toLowerCase();
+    const cleanOtp = forgotOtp.trim().replace(/\D/g, "");
+    if (!cleanEmail || cleanOtp.length !== 6) {
+      setLoginError("Please enter the 6-digit recovery code.");
+      return;
+    }
+    if (!forgotNewPassword || forgotNewPassword.length < 6) {
+      setLoginError("New password must be at least 6 characters.");
+      return;
+    }
+    setLoginError("");
+    setLoginSuccessMsg("");
+    setIsAuthLoading(true);
+    try {
+      const data = await resetEmailPassword(cleanEmail, cleanOtp, forgotNewPassword);
+      localStorage.setItem("pardais_auth_token", data.token);
+      localStorage.setItem("pardais_is_logged_in", "true");
+      localStorage.setItem("pardais_user_profile", JSON.stringify(data.user));
+      lastSavedUserRef.current = JSON.stringify(data.user);
+      setUser(data.user);
+      setIsLoggedIn(true);
+      setShowAuthModal(false);
+      if (pendingAuthCallback) {
+        const cb = pendingAuthCallback;
+        setPendingAuthCallback(null);
+        try { cb(); } catch {}
+      }
+    } catch (err: any) {
+      setLoginError(err?.message || "Password reset failed. Invalid code.");
+    } finally {
+      setIsAuthLoading(false);
+    }
+  };
+
+  const handleSendEmailOtp = handleSendSignupOtp;
+  const handleVerifyEmailOtp = handleVerifySignupOtp;
 
   // Process authenticated Firebase Google User with Pardais Party Backend
   const processGoogleAuthUser = async (firebaseUser: any) => {
@@ -7841,19 +7922,12 @@ export default function App() {
       data = { token: fallbackToken, user: fallbackUser, isNewUser: true, needsProfileCompletion: true };
     }
 
-    // Save account to saved Google accounts list for rapid chooser
-    const newSaved = savedGoogleAccounts.filter(a => a.email.toLowerCase() !== userEmail.toLowerCase());
-    newSaved.unshift({ email: userEmail, name: userDisplayName });
-    setSavedGoogleAccounts(newSaved);
-    localStorage.setItem("pardais_saved_google_accounts", JSON.stringify(newSaved.slice(0, 5)));
-
     localStorage.setItem("pardais_auth_token", data.token);
     localStorage.setItem("pardais_is_logged_in", "true");
     localStorage.setItem("pardais_user_profile", JSON.stringify(data.user));
     lastSavedUserRef.current = JSON.stringify(data.user);
     setUser(data.user);
     setIsLoggedIn(true);
-    setShowGoogleChooser(false);
     setShowAuthModal(false);
     if (pendingAuthCallback) {
       const cb = pendingAuthCallback;
@@ -7876,114 +7950,55 @@ export default function App() {
     }
   };
 
-  // Handle Selection from Google Account Chooser
-  const handleSelectGoogleAccount = async (accountEmail: string, accountName?: string) => {
-    const cleanEmail = String(accountEmail || "").trim().toLowerCase();
-    if (!cleanEmail || !cleanEmail.includes("@")) {
-      setChooserError("Please enter a valid Google email address.");
-      return;
-    }
-    setChooserError("");
-    setLoginError("");
-    const displayName = accountName?.trim() || cleanEmail.split("@")[0] || "Google Member";
-    const photoURL = `https://api.dicebear.com/7.x/adventurer/svg?seed=${encodeURIComponent(cleanEmail)}`;
-    const syntheticUid = `google_${cleanEmail.replace(/[^a-zA-Z0-9]/g, "_")}`;
-
-    await processGoogleAuthUser({
-      uid: syntheticUid,
-      email: cleanEmail,
-      displayName,
-      photoURL,
-      getIdToken: async () => ""
-    });
-  };
-
-  // Real Google Sign-In Handler with Popup, Redirect & Seamless Account Chooser Fallback
+  // Real Google Sign-In Handler using authentic Google OAuth 2.0 with prompt: 'select_account'
   const handleGoogleSignIn = async () => {
     if (!termsAccepted) setTermsAccepted(true);
     setLoginError("");
-    setChooserError("");
-    console.log("[GOOGLE AUTH] started");
+    console.log("[GOOGLE AUTH] Initiating real Google Authentication with accounts.google.com");
+
+    if (!clientAuth) {
+      setLoginError("Google Authentication service is initializing. Please try again in a few seconds.");
+      return;
+    }
 
     try {
-      let firebaseUser = null;
-      try {
-        const result = await signInWithPopup(clientAuth, googleProvider);
-        firebaseUser = result?.user;
-      } catch (popupErr: any) {
-        console.warn("[GOOGLE AUTH] signInWithPopup failed/blocked:", popupErr?.code || popupErr?.message);
-        // If popup blocked or failed in sandboxed iframe, show Google Account Chooser
-        setShowGoogleChooser(true);
+      // Real Google Sign-In popup with prompt='select_account' to show the user's real Google accounts on accounts.google.com
+      const result = await signInWithPopup(clientAuth, googleProvider);
+      if (result?.user) {
+        await processGoogleAuthUser(result.user);
+      }
+    } catch (popupErr: any) {
+      console.warn("[GOOGLE AUTH] signInWithPopup returned:", popupErr?.code, popupErr?.message);
+      
+      // If popup is blocked by browser/mobile webview, attempt full-page real Google redirect
+      if (popupErr?.code === "auth/popup-blocked") {
+        try {
+          await signInWithRedirect(clientAuth, googleProvider);
+          return;
+        } catch (redirectErr: any) {
+          console.error("[GOOGLE AUTH] signInWithRedirect error:", redirectErr);
+        }
+      }
+
+      if (
+        popupErr?.code === "auth/popup-closed-by-user" || 
+        popupErr?.code === "auth/cancelled-popup-request"
+      ) {
+        setLoginError("Google Sign-In was cancelled. Tap Continue with Google to pick your account.");
         return;
       }
 
-      if (firebaseUser) {
-        await processGoogleAuthUser(firebaseUser);
-      } else {
-        setShowGoogleChooser(true);
+      if (popupErr?.code === "auth/unauthorized-domain") {
+        setLoginError(
+          `Domain (${window.location.hostname}) is not in Firebase Auth Authorized Domains. Please add it in Firebase Console > Authentication > Settings > Authorized Domains.`
+        );
+        return;
       }
-    } catch (err: any) {
-      console.error("Google Sign-In Error, falling back to chooser:", err);
-      setShowGoogleChooser(true);
+
+      setLoginError(popupErr?.message || "Google Sign-In failed. Please try again.");
     }
   };
 
-  // Quick One-Tap Guest Login Handler — persist the guest account on the backend first.
-  const handleQuickGuestLogin = async () => {
-    if (!termsAccepted) setTermsAccepted(true);
-    setLoginError("");
-    setLoginSuccessMsg("");
-
-    const guestUid = `guest_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
-    const guestUsername = `Pardais_User_${Math.floor(1000 + Math.random() * 9000)}`;
-    const deviceId = deviceInfo?.deviceId || "";
-
-    try {
-      const response = await fetch(resolveApiUrl("/api/v1/auth/guest-login"), {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(deviceId ? { "X-Device-ID": deviceId } : {})
-        },
-        body: JSON.stringify({
-          uid: guestUid,
-          username: guestUsername,
-          fullName: "Pardais Member",
-          deviceId
-        })
-      });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok || !data?.success || !data?.token || !data?.user) {
-        throw new Error(data?.message || data?.error || "Guest login failed.");
-      }
-
-      const guestUser = {
-        ...data.user,
-        isGuest: true,
-        authProvider: "guest",
-        accountStatus: data.user.accountStatus || "guest",
-        profileCompleted: Boolean(data.user.profileCompleted)
-      } as UserProfile;
-
-      localStorage.setItem("pardais_auth_token", data.token);
-      localStorage.setItem("pardais_is_logged_in", "true");
-      localStorage.setItem("pardais_user_profile", JSON.stringify(guestUser));
-      setUser(guestUser);
-      setIsLoggedIn(true);
-      setShowAuthModal(false);
-      setLoginSuccessMsg("Guest account created successfully.");
-
-      if (pendingAuthCallback) {
-        const cb = pendingAuthCallback;
-        setPendingAuthCallback(null);
-        try { cb(); } catch {}
-      }
-      setShowProfileSetupModal(true);
-    } catch (err: any) {
-      console.warn("[GUEST AUTH] Backend guest login failed:", err);
-      setLoginError(err?.message || "Guest login failed. Please try again.");
-    }
-  };
 
   // Complete Profile Setup
   const handleCompleteProfileSetup = async (e: React.FormEvent) => {
@@ -8089,52 +8104,63 @@ export default function App() {
     setShowProfileSetupModal(false);
   };
 
-  // Account deletion: soft-delete for 30 days, then backend permanently removes the account.
-  const handleDeleteAccount = async () => {
-    if (!user?.email || user?.isGuest) {
-      alert("Please log in to a registered account before deleting it.");
-      return;
-    }
-
-    const confirmed = window.confirm(
-      "Delete your Pardais Party account?\n\nYour account will be scheduled for permanent deletion after 30 days. You can restore it during those 30 days. After 30 days, the account and associated user data will be permanently deleted.\n\nPress OK to continue."
-    );
-    if (!confirmed) return;
-
+  // 👥 Switch Account System (1st, 2nd, 3rd, 4th accounts on same device)
+  const handleSwitchAccount = (targetAccount: SavedAccount) => {
     try {
-      const response = await authenticatedFetch("/api/v1/auth/request-account-deletion", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" }
-      });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok || !data?.success) {
-        throw new Error(data?.error || "Account deletion request failed. Please try again.");
+      // Save currently active user first before switching
+      if (user && (user.uniqueId || user.username)) {
+        saveAccountToDevice(user, localStorage.getItem("pardais_auth_token") || undefined);
       }
+      
+      const newProfile: UserProfile = targetAccount.userProfile || {
+        ...DEFAULT_USER,
+        uid: targetAccount.uid,
+        uniqueId: targetAccount.uniqueId,
+        username: targetAccount.username,
+        fullName: targetAccount.fullName,
+        email: targetAccount.email,
+        avatar: targetAccount.avatar,
+        coins: targetAccount.coins ?? 0,
+        diamonds: targetAccount.diamonds ?? 0,
+        vipLevel: targetAccount.vipLevel ?? 0,
+        userLevel: targetAccount.userLevel ?? 1,
+        isGuest: false
+      };
 
-      const days = Number(data?.daysLeft || 30);
-      alert(
-        `Account deletion scheduled for ${days} days.\n\nYou can recover the account during this period from:\n${window.location.origin}/delete-account\n\nAfter the 30-day recovery period, permanent deletion will occur.`
-      );
+      const tokenToSet = targetAccount.token || ("pardais_token_" + targetAccount.uid + "_" + Date.now());
+      localStorage.setItem("pardais_auth_token", tokenToSet);
+      localStorage.setItem("pardais_user_profile", JSON.stringify(newProfile));
+      localStorage.setItem("pardais_is_logged_in", "true");
+      lastSavedUserRef.current = JSON.stringify(newProfile);
 
-      // The backend invalidates the active session when deletion is requested.
-      await handleLogout();
+      // Save updated active timestamp in device accounts list
+      saveAccountToDevice(newProfile, tokenToSet);
+
+      setUser(newProfile);
+      setIsLoggedIn(true);
       setShowSettingsDrawer(false);
-    } catch (err: any) {
-      alert(err?.message || "Account deletion request failed. Please try again.");
+      setShowAccountSwitcherModal(false);
+
+      setReportSuccessToast("Switched account to @" + (newProfile.username || newProfile.fullName) + "!");
+      setTimeout(() => setReportSuccessToast(null), 3500);
+    } catch (err) {
+      console.warn("Account switch error:", err);
     }
   };
 
-  // Universal Logout
+  // Universal Logout - Exits directly to the Sign Up & Login Gate
   const handleLogout = async () => {
     const token = localStorage.getItem("pardais_auth_token");
     try {
       await signOut(clientAuth).catch(() => {});
       if (token) {
-        await fetch("/api/v1/auth/logout", {
+        await fetch(resolveApiUrl("/api/v1/auth/logout"), {
           method: "POST",
           headers: { "Authorization": `Bearer ${token}` }
         }).catch(() => {});
       }
+    } catch (e) {
+      console.warn("Logout notice:", e);
     } finally {
       localStorage.removeItem("pardais_auth_token");
       localStorage.removeItem("pardais_user_profile");
@@ -8142,8 +8168,10 @@ export default function App() {
       try { sessionStorage.removeItem("pardais_signup_token"); } catch {}
       setIsLoggedIn(false);
       setShowAuthModal(false);
+      setSelectedAuthMethod("login");
+      setLoginError("");
+      setLoginSuccessMsg("");
       setPendingAuthCallback(null);
-      // Do not keep a guest account/guest Pardais ID after logout.
       setUser({
         ...DEFAULT_USER,
         uid: "",
@@ -8151,8 +8179,9 @@ export default function App() {
         username: "",
         uniqueId: "",
         fullName: "",
-        isGuest: true
+        isGuest: false
       });
+      setClientView("feed");
     }
   };
 
@@ -8934,7 +8963,7 @@ export default function App() {
                   /* ========================================= */
                   /* PARDAIS PARTY BRAND SPLASH SCREEN */
                   /* ========================================= */
-                  <PardaisPartySplashScreen onComplete={() => setShowSplash(false)} duration={3200} />
+                  <PardaisPartySplashScreen onComplete={() => setShowSplash(false)} duration={1800} />
                 ) : isDeviceBlocked ? (
                   /* ========================================= */
                   /* HARDWARE & DEVICE PERMANENTLY BLOCKED SCREEN */
@@ -8987,21 +9016,27 @@ export default function App() {
                       Clear Session
                     </button>
                   </div>
-                ) : authHydrating ? (
-                  <div className="min-h-screen flex items-center justify-center bg-[#07070b] text-white">
-                    <div className="text-center">
-                      <div className="text-3xl font-black">Pardais Party</div>
-                      <div className="mt-2 text-sm text-white/60">Restoring your account…</div>
-                    </div>
-                  </div>
-                ) : !isLoggedIn || user?.isGuest || !user?.username ? (
+                ) : !isLoggedIn ? (
                   /* ========================================= */
-                  /* AUTHENTICATION & LOGIN SCREEN (NO GUEST BYPASS) */
+                  /* 🔐 AUTHENTICATION GATE (SIGN UP & LOG IN) */
                   /* ========================================= */
-                  <div className="flex-1 flex flex-col justify-center items-center overflow-y-auto safe-padding-top safe-padding-bottom bg-[#0a0a14]">
-                    <AuthScreen
-                      onAuthenticated={handleAuthAuthenticated}
+                  <div className="flex-1 flex flex-col justify-center items-center p-3 bg-gradient-to-b from-[#0a0a14] via-[#12121e] to-[#0a0a14] relative overflow-y-auto scrollbar-none z-30">
+                    <AuthModal
+                      isOpen={true}
+                      isGateMode={true}
+                      onClose={() => {}}
+                      onSuccess={(userData, token) => {
+                        localStorage.setItem("pardais_auth_token", token);
+                        localStorage.setItem("pardais_is_logged_in", "true");
+                        localStorage.setItem("pardais_user_profile", JSON.stringify(userData));
+                        lastSavedUserRef.current = JSON.stringify(userData);
+                        setUser(userData);
+                        setIsLoggedIn(true);
+                        setShowAuthModal(false);
+                      }}
                       onGoogleSignIn={handleGoogleSignIn}
+                      onOpenDeletionModal={() => setShowDeletionModal(true)}
+                      initialTab="signup"
                     />
                   </div>
                 ) : (
@@ -9085,7 +9120,7 @@ export default function App() {
                           if (!banner) return null;
                           return (
                             <div className="relative rounded-xl overflow-hidden shadow-lg h-36 group select-none transition-all duration-500 border border-[#303040]/30 -mt-1">
-                              <img src={banner.image} className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105" alt={banner.title} />
+                              <img src={banner.image || "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=800&q=80"} className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105" alt={banner.title} />
                               <div className="absolute inset-0 bg-gradient-to-t from-black via-black/40 to-transparent p-3 flex flex-col justify-between">
                                 <div className="flex items-center justify-between bg-transparent">
                                   <span className="text-[7.5px] bg-[#ff007f] text-white font-black px-2 py-0.5 rounded-full uppercase tracking-wider">Party Event</span>
@@ -9382,7 +9417,7 @@ export default function App() {
                                           : "bg-[#222230] border border-white/10"
                                       }`}
                                     >
-                                      <img src={user.avatar} className="w-full h-full rounded-full object-cover" alt="My avatar" />
+                                      <img src={user.avatar || DEFAULT_USER.avatar} className="w-full h-full rounded-full object-cover" alt="My avatar" />
                                     </div>
 
                                     {/* Add Story (+) button */}
@@ -9417,7 +9452,7 @@ export default function App() {
                                 >
                                   <div className="w-14 h-14 rounded-full p-[2px] bg-gradient-to-tr from-[#ff007f] via-[#7b2cbf] to-amber-400 group-hover:scale-105 transition-all bg-transparent">
                                     <div className="w-full h-full rounded-full overflow-hidden border border-[#12121a] bg-transparent">
-                                      <img src={story.avatar} className="w-full h-full object-cover" alt={story.fullName} />
+                                      <img src={story.avatar || DEFAULT_USER.avatar} className="w-full h-full object-cover" alt={story.fullName} />
                                     </div>
                                   </div>
                                   <span className="text-[8px] font-semibold text-gray-400 group-hover:text-white truncate max-w-[65px] bg-transparent">
@@ -9694,7 +9729,7 @@ export default function App() {
                                           <div className="relative z-10 -mr-2">
                                             <div className="absolute -inset-1 rounded-full bg-gradient-to-r from-red-600 to-amber-500 animate-ping opacity-60"></div>
                                             <div className="relative p-[1.5px] rounded-full bg-gradient-to-tr from-red-600 via-amber-400 to-yellow-400 shadow-lg">
-                                              <img src={displayAvatar} className="w-11 h-11 rounded-full object-cover group-hover:scale-105 transition-all" alt="Host A" />
+                                              <img src={displayAvatar || DEFAULT_USER.avatar} className="w-11 h-11 rounded-full object-cover group-hover:scale-105 transition-all" alt="Host A" />
                                             </div>
                                             <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 bg-red-600 text-white text-[6px] font-black px-1 py-0.2 rounded-full uppercase tracking-tighter shadow">HOST</span>
                                           </div>
@@ -9708,7 +9743,7 @@ export default function App() {
                                           <div className="relative z-10 -ml-2">
                                             <div className="absolute -inset-1 rounded-full bg-gradient-to-r from-blue-600 to-amber-500 animate-ping opacity-60"></div>
                                             <div className="relative p-[1.5px] rounded-full bg-gradient-to-tr from-blue-600 via-cyan-400 to-amber-400 shadow-lg">
-                                              <img src={opponentAvatar} className="w-11 h-11 rounded-full object-cover group-hover:scale-105 transition-all" alt="Host B" />
+                                              <img src={opponentAvatar || DEFAULT_USER.avatar} className="w-11 h-11 rounded-full object-cover group-hover:scale-105 transition-all" alt="Host B" />
                                             </div>
                                             <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 bg-blue-600 text-white text-[6px] font-black px-1 py-0.2 rounded-full uppercase tracking-tighter shadow">OPP</span>
                                           </div>
@@ -9722,7 +9757,7 @@ export default function App() {
                                           <div className="absolute -inset-1 rounded-full bg-gradient-to-r from-amber-400 via-yellow-300 to-amber-500 animate-pulse shadow-[0_0_16px_rgba(251,191,36,0.9)]"></div>
                                           {/* Avatar Image Frame */}
                                           <div className="relative w-14 h-14 rounded-full p-[2px] bg-gradient-to-tr from-amber-400 via-yellow-200 to-amber-600 shadow-2xl group-hover:scale-105 transition-all">
-                                            <img src={displayAvatar} className="w-full h-full rounded-full object-cover" alt="host" />
+                                            <img src={displayAvatar || DEFAULT_USER.avatar} className="w-full h-full rounded-full object-cover" alt="host" />
                                           </div>
                                         </div>
                                       )}
@@ -10551,7 +10586,7 @@ export default function App() {
 
                                           {isOccupied && Number(seat.vipLevel || 0) > 0 && (() => {
                                             const vipFrame = VIP_FRAMES_LIST.find(f => f.vipLevel === Number(seat.vipLevel) && f.isActive);
-                                            if (!vipFrame) return null;
+                                            if (!vipFrame || !vipFrame.asset) return null;
                                             return (
                                               <img
                                                 src={vipFrame.asset}
@@ -11144,7 +11179,7 @@ export default function App() {
                             <div className="absolute left-3 bottom-24 space-y-1 z-35 pointer-events-none">
                               {userLiveGiftToasts.map(toast => (
                                 <div key={toast.id} className="bg-gradient-to-r from-black/90 via-amber-950/90 to-yellow-600/80 border border-amber-400/50 rounded-full py-1 px-3 flex items-center space-x-2 text-white shadow-xl animate-slide-up">
-                                  <img src={toast.avatar} className="w-6 h-6 rounded-full object-cover border border-amber-400" alt="avatar" />
+                                  <img src={toast.avatar || DEFAULT_USER.avatar} className="w-6 h-6 rounded-full object-cover border border-amber-400" alt="avatar" />
                                   <div className="text-left leading-tight">
                                     <p className="text-[9px] font-bold text-amber-200">@{toast.username}</p>
                                     <p className="text-[8px] text-amber-300/90 font-mono">Sent {toast.giftName} {toast.giftIcon}</p>
@@ -11224,7 +11259,7 @@ export default function App() {
                                       onClick={() => { setPartyMusicTrack(track); setPartyMusicPlaying(true); }}
                                       className={`w-full flex items-center gap-2.5 p-2 rounded-xl border text-left transition-all cursor-pointer ${active ? "bg-amber-500/10 border-amber-400/50" : "bg-white/[0.02] border-white/5 hover:bg-white/5"}`}
                                     >
-                                      <img src={track.cover} className="w-9 h-9 rounded-lg object-cover border border-white/10" alt="" />
+                                      <img src={track.cover || "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=100"} className="w-9 h-9 rounded-lg object-cover border border-white/10" alt="" />
                                       <span className="min-w-0 flex-1">
                                         <span className={`block text-[9px] font-black truncate ${active ? "text-amber-300" : "text-white"}`}>{track.title}</span>
                                         <span className="block text-[7px] text-gray-400 truncate">{track.artist} • {track.category}</span>
@@ -11357,7 +11392,7 @@ export default function App() {
                                 <div className="relative inline-block mt-1">
                                   <div className="w-20 h-20 rounded-full p-[2px] bg-gradient-to-tr from-[#ff007f] via-purple-500 to-cyan-400 shadow-xl mx-auto">
                                     <img
-                                      src={partyUserProfile.avatar}
+                                      src={partyUserProfile.avatar || DEFAULT_USER.avatar}
                                       alt={partyUserProfile.username}
                                       className="w-full h-full rounded-full object-cover border-2 border-[#150d2a]"
                                     />
@@ -11565,7 +11600,7 @@ export default function App() {
                           <div className="absolute top-22 left-3 z-45 flex flex-col space-y-1 bg-black/80 backdrop-blur-md rounded-2xl p-2 border border-white/10 shadow-xl max-w-[145px] text-left select-none animate-slide-up">
                             <div className="flex items-center space-x-2 bg-transparent">
                               <div className="relative shrink-0 bg-transparent">
-                                <img src={liveRoomActiveTrack.cover} className="w-7 h-7 rounded-lg object-cover border border-white/10" alt="cover" />
+                                <img src={liveRoomActiveTrack.cover || "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=100"} className="w-7 h-7 rounded-lg object-cover border border-white/10" alt="cover" />
                                 {liveRoomMusicPlaying && (
                                   <div className="absolute -bottom-1 -right-1 bg-pink-500 rounded-full p-0.5 border border-black animate-bounce">
                                     <Music className="w-1.5 h-1.5 text-white" />
@@ -11625,7 +11660,7 @@ export default function App() {
                               <div className="flex items-center space-x-2 bg-black/40 backdrop-blur-md px-2 py-1 rounded-full border border-white/10 shadow-lg">
                                 <div className="relative">
                                   <img
-                                    src={activeHost.avatar}
+                                    src={activeHost.avatar || DEFAULT_USER.avatar}
                                     className="w-8 h-8 rounded-full border border-pink-500 object-cover"
                                   />
                                   <span className="absolute bottom-0 right-0 bg-blue-500 text-white rounded-full p-0.5 text-[5px] flex items-center justify-center border border-white">
@@ -11653,7 +11688,7 @@ export default function App() {
                               <div className="flex items-center space-x-1.5">
                                 {liveRoomTopGifters.map((viewer, idx) => (
                                   <div key={viewer.id || idx} className="flex flex-col items-center bg-transparent">
-                                    <img src={viewer.avatar} className="w-6.5 h-6.5 rounded-full border border-white/20 object-cover shadow" title={viewer.username} />
+                                    <img src={viewer.avatar || DEFAULT_USER.avatar} className="w-6.5 h-6.5 rounded-full border border-white/20 object-cover shadow" title={viewer.username} />
                                     <span className="text-[7px] text-gray-200 font-black font-mono scale-90 mt-0.5">
                                       {viewer.coinsContributed >= 1000 ? `${(viewer.coinsContributed / 1000).toFixed(1)}K` : viewer.coinsContributed}
                                     </span>
@@ -11741,7 +11776,7 @@ export default function App() {
                                       <div className="w-full h-full relative flex items-center justify-center animate-fade-in">
                                         {!pinnedGuest.isCamMuted ? (
                                           <img
-                                            src={pinnedGuest.avatar || ""}
+                                            src={pinnedGuest.avatar || DEFAULT_USER.avatar}
                                             className="w-full h-full object-cover"
                                             alt="Pinned guest portrait"
                                           />
@@ -11770,7 +11805,7 @@ export default function App() {
                                         <div className="absolute bottom-2.5 right-2.5 w-16 h-22 rounded-xl overflow-hidden border border-pink-500/40 bg-[#0e0c15] shadow-2xl flex items-center justify-center z-15">
                                           {cameraActive ? (
                                             <img
-                                              src={activeHost.avatar}
+                                              src={activeHost.avatar || DEFAULT_USER.avatar}
                                               style={{ transform: `rotate(${hostCamRotation}deg)`, transition: "transform 0.3s ease" }}
                                               className="w-full h-full object-cover"
                                               alt="Host thumbnail"
@@ -11790,7 +11825,7 @@ export default function App() {
                                       <div className="w-full h-full relative flex items-center justify-center bg-[#0d0a16]">
                                         {(activeHost.showCoverPhoto !== false && (activeHost.coverPhoto || userLiveCoverPhoto)) ? (
                                           <img
-                                            src={activeHost.coverPhoto || userLiveCoverPhoto}
+                                            src={activeHost.coverPhoto || userLiveCoverPhoto || DEFAULT_USER.coverPhoto}
                                             className="w-full h-full object-cover transition-all duration-300"
                                             alt="Host Frame Photo"
                                           />
@@ -11930,7 +11965,7 @@ export default function App() {
                                         {!seat.isCamMuted ? (
                                           <>
                                             <img 
-                                              src={seat.avatar || ""} 
+                                              src={seat.avatar || DEFAULT_USER.avatar} 
                                               style={{ transform: `rotate(${seat.rotation || 0}deg)`, transition: "transform 0.3s ease" }}
                                               className="absolute inset-0 w-full h-full object-cover opacity-85" 
                                               alt="guest avatar" 
@@ -12273,7 +12308,7 @@ export default function App() {
                                           <VipAnimatedFrame vipLevel={Number(activeHost.vipLevel || 0)} showLevelBadge={false} frameScale={145} className="w-7 h-7 shrink-0">
                                             <div className="w-7 h-7 rounded-full bg-purple-900 border border-purple-400 flex items-center justify-center font-black text-white text-xs overflow-hidden">
                                               {activeHost.avatar ? (
-                                                <img src={activeHost.avatar} className="w-full h-full object-cover" alt={hostAName} />
+                                                <img src={activeHost.avatar || DEFAULT_USER.avatar} className="w-full h-full object-cover" alt={hostAName} />
                                               ) : (
                                                 <span>Y</span>
                                               )}
@@ -12381,7 +12416,7 @@ export default function App() {
                                       <div className="w-1/2 h-full border-r border-white/10 relative flex flex-col justify-center items-center p-2 bg-gradient-to-b from-[#140f26] via-[#0d091a] to-[#07050e]">
                                         <div className="w-16 h-16 rounded-full bg-gray-800 border-2 border-pink-500/80 flex items-center justify-center overflow-hidden shadow-2xl mb-1.5 relative">
                                           {activeHost.avatar ? (
-                                            <img src={activeHost.avatar} className="w-full h-full object-cover" alt={hostAName} />
+                                            <img src={activeHost.avatar || DEFAULT_USER.avatar} className="w-full h-full object-cover" alt={hostAName} />
                                           ) : (
                                             <span className="text-xl font-black text-white">S</span>
                                           )}
@@ -12407,7 +12442,7 @@ export default function App() {
                                       <div className="w-1/2 h-full relative flex flex-col justify-center items-center p-2 bg-gradient-to-b from-[#101328] via-[#0a0d1d] to-[#07050e]">
                                         <div className="w-16 h-16 rounded-full bg-gray-800 border-2 border-cyan-400/80 flex items-center justify-center overflow-hidden shadow-2xl mb-1.5 relative">
                                           {hostBAvatar ? (
-                                            <img src={hostBAvatar} className="w-full h-full object-cover" alt={hostBName} />
+                                            <img src={hostBAvatar || DEFAULT_USER.avatar} className="w-full h-full object-cover" alt={hostBName} />
                                           ) : (
                                             <span className="text-xl font-black text-white">C</span>
                                           )}
@@ -12829,7 +12864,7 @@ export default function App() {
                                         <div className="relative">
                                           {seat.avatar ? (
                                             <div className="w-10 h-10 rounded-full border-2 border-[#7b2cbf] p-0.5 relative">
-                                              <img src={seat.avatar} className="w-full h-full rounded-full object-cover" alt="avatar" />
+                                              <img src={seat.avatar || DEFAULT_USER.avatar} className="w-full h-full rounded-full object-cover" alt="avatar" />
                                             </div>
                                           ) : (
                                             <div className="w-10 h-10 rounded-full border border-dashed border-gray-500 flex items-center justify-center bg-[#1e1e2d]">
@@ -12864,7 +12899,7 @@ export default function App() {
                                   {/* Host Profile Picture */}
                                   <div className="relative shrink-0">
                                     <img
-                                      src={activeHost.avatar || activeHost.hostAvatar || liveBroadcasterAvatar}
+                                      src={activeHost.avatar || activeHost.hostAvatar || liveBroadcasterAvatar || DEFAULT_USER.avatar}
                                       className="w-8.5 h-8.5 rounded-full border-2 border-pink-500 object-cover shadow"
                                       alt={activeHost.name || "Host"}
                                     />
@@ -13044,7 +13079,7 @@ export default function App() {
                                       {(pkHostASupporters.length > 0 ? pkHostASupporters : liveRoomTopGifters.slice(0, 3)).map((sup, idx) => (
                                         <div key={sup.id || idx} className="relative bg-transparent">
                                           {idx === 0 && <span className="absolute -top-3 left-1/2 -translate-x-1/2 text-[9px] animate-bounce z-20">👑</span>}
-                                          <img src={sup.avatar} className="w-5 h-5 rounded-full border border-amber-400 object-cover" title={sup.username} />
+                                          <img src={sup.avatar || DEFAULT_USER.avatar} className="w-5 h-5 rounded-full border border-amber-400 object-cover" title={sup.username} />
                                         </div>
                                       ))}
                                     </div>
@@ -13056,7 +13091,7 @@ export default function App() {
                                       ]).map((sup, idx) => (
                                         <div key={sup.id || idx} className="relative bg-transparent">
                                           {idx === 0 && <span className="absolute -top-3 left-1/2 -translate-x-1/2 text-[9px] animate-bounce z-20">👑</span>}
-                                          <img src={sup.avatar} className="w-5 h-5 rounded-full border border-blue-400 object-cover" title={sup.username} />
+                                          <img src={sup.avatar || DEFAULT_USER.avatar} className="w-5 h-5 rounded-full border border-blue-400 object-cover" title={sup.username} />
                                         </div>
                                       ))}
                                     </div>
@@ -13567,7 +13602,7 @@ export default function App() {
                                 <div className="space-y-3.5 animate-fade-in bg-transparent">
                                   <div className="flex items-center space-x-3 bg-transparent">
                                     <div className="relative bg-transparent">
-                                      <img src={seat.avatar || ""} className="w-11 h-11 rounded-full object-cover border-2 border-purple-500/80 shadow-md shadow-purple-500/20" />
+                                      <img src={seat.avatar || DEFAULT_USER.avatar} className="w-11 h-11 rounded-full object-cover border-2 border-purple-500/80 shadow-md shadow-purple-500/20" />
                                       {seat.isModerator && (
                                         <span className="absolute -bottom-1 -right-1 bg-blue-500 text-white rounded-full p-0.5 text-[5px] border border-black font-bold">🛡️</span>
                                       )}
@@ -13976,6 +14011,16 @@ export default function App() {
                               )}
                             </button>
 
+                            {/* 👥 Switch Account Fast Button */}
+                            <button
+                              type="button"
+                              onClick={() => setShowAccountSwitcherModal(true)}
+                              className="p-1.5 rounded-full bg-black/50 hover:bg-black/70 border border-pink-500/40 text-pink-300 hover:text-white backdrop-blur-md transition-all shadow-lg hover:scale-105 active:scale-95 cursor-pointer shrink-0"
+                              title="Switch Account (Multi-Device Login)"
+                            >
+                              <Users className="w-4 h-4" />
+                            </button>
+
                             {/* ⚙️ Platform Settings Gear Icon (PROFILE SCREEN UI ONLY) */}
                             <button
                               type="button"
@@ -13996,7 +14041,7 @@ export default function App() {
                             onChange={handleCoverPhotoUpload}
                           />
 
-                          <img src={user.coverPhoto} className="w-full h-36 object-cover" alt="cover" />
+                          <img src={user.coverPhoto || DEFAULT_USER.coverPhoto} className="w-full h-36 object-cover" alt="cover" />
                           
                           {/* LARGER PROFILE PICTURE WITH STORIES RINGS AND ACTION BUTTONS */}
                           {(() => {
@@ -14031,7 +14076,7 @@ export default function App() {
                                       showLevelBadge={true}
                                     >
                                       <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-full overflow-hidden border-2 border-[#12121a] bg-[#1a1a24] relative shadow-lg">
-                                        <img src={user.avatar} className="w-full h-full object-cover" alt="avatar" />
+                                        <img src={user.avatar || DEFAULT_USER.avatar} className="w-full h-full object-cover" alt="avatar" />
                                       </div>
                                     </VipAnimatedFrame>
                                   </div>
@@ -14087,7 +14132,6 @@ export default function App() {
                                         setEditDob(user.dob || "1998-05-15");
                                         setEditGender(user.gender);
                                         setEditPhoneNumber(user.phoneNumber || "+92 300 4567890");
-                                        setEditBio(user.bio || "");
                                         setIsEditingProfile(true);
                                       }
                                     }}
@@ -14135,34 +14179,27 @@ export default function App() {
                                     />
                                   </div>
                                   <div>
-                                    <label className="text-[8px] uppercase tracking-wider text-pink-400 block mb-1 font-bold flex items-center justify-between">
-                                      <span>🔒 Username</span>
-                                      <span className="text-[7px] text-gray-400 font-normal">Permanent</span>
-                                    </label>
+                                    <label className="text-[8px] uppercase tracking-wider text-gray-400 block mb-1 font-bold">Username</label>
                                     <input
                                       type="text"
-                                      value={`@${user.username}`}
+                                      value={user.username}
                                       readOnly
                                       aria-readonly="true"
-                                      className="w-full bg-[#12121a]/70 border border-pink-500/20 rounded px-2.5 py-1.5 text-xs text-pink-200 cursor-not-allowed focus:outline-none font-mono"
-                                      title="Username is your permanent account identity and cannot be edited"
+                                      className="w-full bg-[#12121a]/70 border border-[#303040] rounded px-2.5 py-1.5 text-xs text-gray-400 cursor-not-allowed focus:outline-none"
+                                      title="Username is your permanent account identity"
                                     />
                                   </div>
                                 </div>
 
-                                <div>
-                                  <label className="text-[8px] uppercase tracking-wider text-pink-400 block mb-1 font-bold flex items-center justify-between">
-                                    <span>🔒 Pardais ID</span>
-                                    <span className="text-[7px] text-gray-400 font-normal">Permanent</span>
-                                  </label>
-                                  <input
-                                    type="text"
-                                    value={user.uniqueId || user.customPardaisId || "PRD-USER"}
-                                    readOnly
-                                    aria-readonly="true"
-                                    className="w-full bg-[#12121a]/70 border border-pink-500/20 rounded px-2.5 py-1.5 text-xs text-pink-200 cursor-not-allowed focus:outline-none font-mono"
-                                    title="Pardais ID is your unique non-editable identifier"
-                                  />
+                                {/* Permanent Pardais ID Indicator */}
+                                <div className="bg-[#12121a] p-2 rounded-xl border border-pink-500/30 flex items-center justify-between">
+                                  <div className="flex items-center space-x-1.5">
+                                    <span className="text-[9px] text-pink-400 font-bold uppercase tracking-wider">🔒 Permanent Pardais ID:</span>
+                                    <span className="text-xs font-mono font-black text-[#00f5ff]">{user.uniqueId || "PARDAIS_1001"}</span>
+                                  </div>
+                                  <span className="text-[8px] bg-pink-500/20 text-pink-300 px-1.5 py-0.5 rounded font-mono font-bold">
+                                    Permanent & Locked
+                                  </span>
                                 </div>
 
                                 <div>
@@ -14174,7 +14211,7 @@ export default function App() {
                                     {/* Current avatar preview thumbnail */}
                                     <div className="relative w-12 h-12 rounded-full overflow-hidden border-2 border-[#ff007f] shrink-0 bg-black shadow-md">
                                       <img
-                                        src={editAvatar}
+                                        src={editAvatar || DEFAULT_USER.avatar}
                                         alt="Avatar Preview"
                                         className="w-full h-full object-cover"
                                         onError={(e) => {
@@ -14338,12 +14375,13 @@ export default function App() {
                                 </div>
 
                                 <div>
-                                  <label className="text-[8px] uppercase tracking-wider text-gray-400 block mb-1 font-bold">Bio / Status</label>
+                                  <label className="text-[8px] uppercase tracking-wider text-gray-400 block mb-1 font-bold">Bio / About Me</label>
                                   <textarea
                                     value={editBio}
                                     onChange={(e) => setEditBio(e.target.value)}
+                                    placeholder="Tell the community about yourself..."
                                     rows={2}
-                                    placeholder="Write something about yourself..."
+                                    maxLength={250}
                                     className="w-full bg-[#12121a] border border-[#303040] rounded px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-[#ff007f] resize-none"
                                   />
                                 </div>
@@ -14400,13 +14438,27 @@ export default function App() {
                                 </div>
 
                                 <div className="grid grid-cols-2 gap-y-1.5 gap-x-3 text-[10px] text-gray-400 border-t border-[#303040]/50 pt-2.5 font-mono">
-                                  <div className="flex items-center space-x-1">
-                                    <span className="text-gray-500">Admin ID:</span>
-                                    <span className="text-[#66fcf1] font-bold">{user.uniqueId}</span>
+                                  <div className="flex items-center space-x-1.5">
+                                    <span className="text-gray-400 font-semibold">Pardais ID:</span>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        const id = user.uniqueId || "PARDAIS_1001";
+                                        if (navigator?.clipboard?.writeText) {
+                                          navigator.clipboard.writeText(id).catch(() => {});
+                                        }
+                                        alert(`📋 Copied Permanent Pardais ID: ${id}`);
+                                      }}
+                                      className="flex items-center space-x-1 bg-black/40 hover:bg-black/70 px-1.5 py-0.5 rounded border border-cyan-500/30 hover:border-cyan-400 transition-all text-[#66fcf1] font-bold active:scale-95 group cursor-pointer"
+                                      title="Click to copy permanent Pardais ID"
+                                    >
+                                      <span>{user.uniqueId || "PARDAIS_1001"}</span>
+                                      <Copy className="w-2.5 h-2.5 text-cyan-400 opacity-60 group-hover:opacity-100" />
+                                    </button>
                                   </div>
                                   <div className="flex items-center space-x-1">
                                     <span className="text-gray-500">Region:</span>
-                                    <span className="text-green-400 font-bold">Region PK</span>
+                                    <span className="text-green-400 font-bold">Region PK 🇵🇰</span>
                                   </div>
                                 </div>
                               </div>
@@ -14671,7 +14723,7 @@ export default function App() {
                                       <div className="shrink-0 my-1">
                                         <VipAnimatedFrame frameId={frame.id} showLevelBadge={false}>
                                           <div className="w-8 h-8 rounded-full overflow-hidden bg-gray-900 border border-black/80 flex items-center justify-center text-[11px] shadow">
-                                            <img src={user.avatar} className="w-full h-full object-cover" alt="preview" />
+                                            <img src={user.avatar || DEFAULT_USER.avatar} className="w-full h-full object-cover" alt="preview" />
                                           </div>
                                         </VipAnimatedFrame>
                                       </div>
@@ -16236,7 +16288,7 @@ export default function App() {
                               <div className="p-3 bg-gradient-to-b from-black/90 to-transparent flex items-center justify-between z-10">
                                 <div className="flex items-center space-x-2">
                                   <div className="w-6 h-6 rounded-full overflow-hidden border border-[#ff007f]">
-                                    <img src={user.avatar} className="w-full h-full object-cover" alt="avatar" />
+                                    <img src={user.avatar || DEFAULT_USER.avatar} className="w-full h-full object-cover" alt="avatar" />
                                   </div>
                                   <div>
                                     <div className="flex items-center space-x-1 bg-transparent">
@@ -16262,7 +16314,7 @@ export default function App() {
                                 {selectedProfileReel.videoUrl ? (
                                   <video
                                     key={selectedProfileReel.id}
-                                    src={normalizeReelUrl(selectedProfileReel.videoUrl)}
+                                    src={normalizeReelUrl(selectedProfileReel?.videoUrl || "") || "https://assets.mixkit.co/videos/preview/mixkit-girl-in-neon-sign-1232-large.mp4"}
                                     className="w-full h-full object-contain bg-black"
                                     controls
                                     playsInline
@@ -16798,7 +16850,7 @@ export default function App() {
                                 {/* Profile Avatar & Follow Button */}
                                 <div className="relative group flex flex-col items-center">
                                   <div className="w-10 h-10 rounded-full border-2 border-[#ff007f] overflow-hidden bg-[#1e1e2d] shadow-xl transition-all hover:scale-105 active:scale-95">
-                                    <img src={currentReel.avatar} className="w-full h-full object-cover" alt="creator" />
+                                    <img src={currentReel.avatar || DEFAULT_USER.avatar} className="w-full h-full object-cover" alt="creator" />
                                   </div>
                                   
                                   {/* Follow Toggle badge */}
@@ -17100,7 +17152,7 @@ export default function App() {
                                           {/* Main Comment */}
                                           <div className="flex items-start space-x-2">
                                             <img
-                                              src={comment.userAvatar}
+                                              src={comment.userAvatar || DEFAULT_USER.avatar}
                                               className="w-7 h-7 rounded-full border border-white/10 shrink-0"
                                               alt="user"
                                             />
@@ -17156,7 +17208,7 @@ export default function App() {
                                               {comment.replies.map((reply: any) => (
                                                 <div key={reply.id} className="flex items-start space-x-2">
                                                   <img
-                                                    src={reply.userAvatar}
+                                                    src={reply.userAvatar || DEFAULT_USER.avatar}
                                                     className="w-5.5 h-5.5 rounded-full border border-white/10 shrink-0"
                                                     alt="user-reply"
                                                   />
@@ -17592,7 +17644,7 @@ export default function App() {
                               >
                                 {prepCoverPhoto ? (
                                   <>
-                                    <img src={prepCoverPhoto} className="w-full h-full object-cover group-hover:scale-105 transition-transform" alt="Stream Cover" />
+                                    <img src={prepCoverPhoto || DEFAULT_USER.coverPhoto} className="w-full h-full object-cover group-hover:scale-105 transition-transform" alt="Stream Cover" />
                                     <div className="absolute inset-0 bg-black/40 group-hover:bg-black/20 flex items-center justify-center transition-colors">
                                       <div className="w-5 h-5 rounded-full bg-pink-600 text-white flex items-center justify-center shadow-md">
                                         <Plus className="w-3.5 h-3.5" />
@@ -18165,7 +18217,7 @@ export default function App() {
                                   <div className="flex items-center space-x-2 bg-black/40 backdrop-blur-md px-2 py-1 rounded-full border border-white/10 shadow-lg">
                                     <div className="relative">
                                       <img
-                                        src={liveBroadcasterAvatar}
+                                        src={liveBroadcasterAvatar || DEFAULT_USER.avatar}
                                         className="w-8 h-8 rounded-full border border-pink-500 object-cover"
                                       />
                                       <span className="absolute bottom-0 right-0 bg-blue-500 text-white rounded-full p-0.5 text-[5px] flex items-center justify-center border border-white">
@@ -18188,7 +18240,7 @@ export default function App() {
                                   <div className="flex items-center space-x-1.5">
                                     {liveRoomTopGifters.map((viewer, idx) => (
                                       <div key={viewer.id || idx} className="flex flex-col items-center bg-transparent">
-                                        <img src={viewer.avatar} className="w-6.5 h-6.5 rounded-full border border-white/20 object-cover shadow" title={viewer.username} />
+                                        <img src={viewer.avatar || DEFAULT_USER.avatar} className="w-6.5 h-6.5 rounded-full border border-white/20 object-cover shadow" title={viewer.username} />
                                         <span className="text-[7px] text-gray-200 font-black font-mono scale-90 mt-0.5">
                                           {viewer.coinsContributed >= 1000 ? `${(viewer.coinsContributed / 1000).toFixed(1)}K` : viewer.coinsContributed}
                                         </span>
@@ -18266,7 +18318,7 @@ export default function App() {
                                   <div className="absolute inset-x-2 top-16 z-40 pointer-events-none flex flex-col items-center justify-center space-y-1.5 animate-fade-in">
                                     {userLiveGiftToasts.map(toast => (
                                       <div key={toast.id} className="bg-gradient-to-r from-purple-900/95 via-pink-900/95 to-black/95 backdrop-blur-md border border-pink-400/50 px-3 py-1.5 rounded-2xl shadow-2xl animate-pop-gift flex items-center space-x-2">
-                                        <img src={toast.avatar || user.avatar} className="w-6 h-6 rounded-full object-cover border border-yellow-400" />
+                                        <img src={toast.avatar || user.avatar || DEFAULT_USER.avatar} className="w-6 h-6 rounded-full object-cover border border-yellow-400" />
                                         <div className="flex flex-col text-left">
                                           <span className="text-[8.5px] font-black text-white flex items-center space-x-1">
                                             <span className="text-yellow-300">@{toast.username}</span>
@@ -18293,7 +18345,7 @@ export default function App() {
                                             {!pinnedGuest.isCamMuted ? (
                                               <>
                                                 <img
-                                                  src={pinnedGuest.avatar || ""}
+                                                  src={pinnedGuest.avatar || DEFAULT_USER.avatar}
                                                   className="w-full h-full object-cover"
                                                   alt="Pinned guest portrait"
                                                 />
@@ -18365,7 +18417,7 @@ export default function App() {
                                           <div className="w-full h-full relative flex items-center justify-center bg-[#0d0918]">
                                             {userLiveShowCoverPhoto && userLiveCoverPhoto ? (
                                               <img
-                                                src={userLiveCoverPhoto}
+                                                src={userLiveCoverPhoto || DEFAULT_USER.coverPhoto}
                                                 className="w-full h-full object-cover transition-all duration-300"
                                                 alt="Host Frame Photo"
                                               />
@@ -18474,7 +18526,7 @@ export default function App() {
                                             {!seat.isCamMuted ? (
                                               <>
                                                 <img 
-                                                  src={seat.avatar || ""} 
+                                                  src={seat.avatar || DEFAULT_USER.avatar} 
                                                   style={{ transform: `rotate(${seat.rotation || 0}deg)`, transition: "transform 0.3s ease" }}
                                                   className="absolute inset-0 w-full h-full object-cover opacity-85" 
                                                   alt="guest avatar" 
@@ -18482,7 +18534,7 @@ export default function App() {
                                                 <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/10 to-transparent"></div>
                                                 {Number(seat.vipLevel || 0) > 0 && (() => {
                                                   const vipFrame = VIP_FRAMES_LIST.find(f => f.vipLevel === Number(seat.vipLevel) && f.isActive);
-                                                  if (!vipFrame) return null;
+                                                  if (!vipFrame || !vipFrame.asset) return null;
                                                   return (
                                                     <img
                                                       src={vipFrame.asset}
@@ -18952,7 +19004,7 @@ export default function App() {
                                                       <span className="absolute -top-3.5 left-1/2 -translate-x-1/2 text-[10px] animate-bounce z-20">👑</span>
                                                     )}
                                                     <img 
-                                                      src={sup.avatar} 
+                                                      src={sup.avatar || DEFAULT_USER.avatar} 
                                                       className={`w-6 h-6 rounded-full object-cover shadow-md bg-black/40 ${isMVP ? 'border-2 border-yellow-400' : 'border border-white/20'}`} 
                                                       alt={sup.name} 
                                                     />
@@ -19043,7 +19095,7 @@ export default function App() {
                                                       <span className="absolute -top-3.5 left-1/2 -translate-x-1/2 text-[10px] animate-bounce z-20">👑</span>
                                                     )}
                                                     <img 
-                                                      src={sup.avatar} 
+                                                      src={sup.avatar || DEFAULT_USER.avatar} 
                                                       className={`w-6 h-6 rounded-full object-cover shadow-md bg-black/40 ${isMVP ? 'border-2 border-yellow-400' : 'border border-white/20'}`} 
                                                       alt={(sup as any).name || sup.username} 
                                                     />
@@ -19190,7 +19242,7 @@ export default function App() {
                                         key={toast.id}
                                         className="bg-black/80 backdrop-blur-sm border border-white/5 p-0.5 rounded-full flex items-center space-x-1.5 pr-2 animate-slide-in shadow text-left"
                                       >
-                                        <img src={toast.avatar} className="w-6 h-6 rounded-full border border-pink-500/30 object-cover shrink-0" />
+                                        <img src={toast.avatar || DEFAULT_USER.avatar} className="w-6 h-6 rounded-full border border-pink-500/30 object-cover shrink-0" />
                                         <div className="flex-1 min-w-0">
                                           <p className="text-[7.5px] text-white font-black truncate">{toast.username}</p>
                                           <p className="text-[6px] text-pink-300 font-bold truncate">sent {toast.giftName}</p>
@@ -19491,7 +19543,7 @@ export default function App() {
                               <div className="flex items-center space-x-2 bg-black/40 backdrop-blur-md px-2 py-1 rounded-full border border-white/10 shadow-lg">
                                 <div className="relative">
                                   <img
-                                    src={liveBroadcasterAvatar}
+                                    src={liveBroadcasterAvatar || DEFAULT_USER.avatar}
                                     className="w-8 h-8 rounded-full border border-pink-500 object-cover"
                                   />
                                   <span className="absolute bottom-0 right-0 bg-blue-500 text-white rounded-full p-0.5 text-[5px] flex items-center justify-center border border-white">
@@ -19528,7 +19580,7 @@ export default function App() {
                                 ) : (
                                   liveRoomTopGifters.map((viewer, idx) => (
                                     <div key={viewer.id || idx} className="flex flex-col items-center bg-transparent shrink-0">
-                                      <img src={viewer.avatar} className="w-6.5 h-6.5 rounded-full border border-white/20 object-cover shadow" title={viewer.username} />
+                                      <img src={viewer.avatar || DEFAULT_USER.avatar} className="w-6.5 h-6.5 rounded-full border border-white/20 object-cover shadow" title={viewer.username} />
                                       <span className="text-[7px] text-gray-200 font-black font-mono scale-90 mt-0.5">
                                         {viewer.coinsContributed >= 1000 ? `${(viewer.coinsContributed / 1000).toFixed(1)}K` : viewer.coinsContributed}
                                       </span>
@@ -19780,7 +19832,7 @@ export default function App() {
                                     <div className="flex items-center space-x-1 bg-transparent">
                                       <div className="flex -space-x-1.5 bg-transparent shrink-0">
                                         {pkHostASupporters.map((sup) => (
-                                          <img key={sup.id} src={sup.avatar} className="w-4.5 h-4.5 rounded-full border border-red-500/50 object-cover" alt={sup.username} title={sup.username} />
+                                          <img key={sup.id} src={sup.avatar || DEFAULT_USER.avatar} className="w-4.5 h-4.5 rounded-full border border-red-500/50 object-cover" alt={sup.username} title={sup.username} />
                                         ))}
                                       </div>
                                       {pkHostASupporters.length > 0 && (
@@ -19807,7 +19859,7 @@ export default function App() {
                                       )}
                                       <div className="flex -space-x-1.5 bg-transparent shrink-0">
                                         {pkHostBSupporters.map((sup) => (
-                                          <img key={sup.id} src={sup.avatar} className="w-4.5 h-4.5 rounded-full border border-blue-500/50 object-cover" alt={sup.username} title={sup.username} />
+                                          <img key={sup.id} src={sup.avatar || DEFAULT_USER.avatar} className="w-4.5 h-4.5 rounded-full border border-blue-500/50 object-cover" alt={sup.username} title={sup.username} />
                                         ))}
                                       </div>
                                     </div>
@@ -19843,7 +19895,7 @@ export default function App() {
                                         <span className="text-pink-400 font-black">{pkHostASupporters.length}x</span>
                                         <div className="flex -space-x-1">
                                           {pkHostASupporters.slice(0, 3).map((sup) => (
-                                            <img key={sup.id} src={sup.avatar} className="w-3.5 h-3.5 rounded-full border border-pink-500/50 object-cover" alt={sup.username} />
+                                            <img key={sup.id} src={sup.avatar || DEFAULT_USER.avatar} className="w-3.5 h-3.5 rounded-full border border-pink-500/50 object-cover" alt={sup.username} />
                                           ))}
                                         </div>
                                       </>
@@ -19861,7 +19913,7 @@ export default function App() {
                                         <span className="text-blue-400 font-black">{pkHostBSupporters.length}x</span>
                                         <div className="flex -space-x-1">
                                           {pkHostBSupporters.slice(0, 3).map((sup) => (
-                                            <img key={sup.id} src={sup.avatar} className="w-3.5 h-3.5 rounded-full border border-blue-500/50 object-cover" alt={sup.username} />
+                                            <img key={sup.id} src={sup.avatar || DEFAULT_USER.avatar} className="w-3.5 h-3.5 rounded-full border border-blue-500/50 object-cover" alt={sup.username} />
                                           ))}
                                         </div>
                                       </>
@@ -20096,7 +20148,7 @@ export default function App() {
                                     <button
                                       onClick={async () => {
                                         setUserLiveShowOutgoingPkRequest(false);
-                                        const ch = userLivePkChannelName || `pk_room_${[user.username.toLowerCase(), (userLiveCoHost?.username || "opponent").toLowerCase()].sort().join("_")}`;
+                                        const ch = userLivePkChannelName || `pk_room_${[(user.username || "host").toLowerCase(), (userLiveCoHost?.username || "opponent").toLowerCase()].sort().join("_")}`;
                                         setUserLivePkChannelName(ch);
                                         const targetUsername = userLiveCoHost?.username || "opponent";
                                         setUserLiveInvitedHostId(targetUsername);
@@ -20493,7 +20545,7 @@ export default function App() {
                                         }}
                                         className="p-3 rounded-xl bg-pink-900/40 hover:bg-pink-800/50 border border-pink-500/30 flex flex-col items-center space-y-2 transition-all cursor-pointer text-center"
                                       >
-                                        <img src={selectedPkMatch.hostA.avatar} className="w-10 h-10 rounded-full border-2 border-pink-500 object-cover" />
+                                        <img src={selectedPkMatch.hostA.avatar || DEFAULT_USER.avatar} className="w-10 h-10 rounded-full border-2 border-pink-500 object-cover" />
                                         <div className="text-center bg-transparent">
                                           <span className="text-[8.5px] font-black text-white block truncate w-24">{selectedPkMatch.hostA.username}</span>
                                           <span className="text-[7.5px] text-pink-300 font-bold block mt-0.5">Host A</span>
@@ -20519,7 +20571,7 @@ export default function App() {
                                         }}
                                         className="p-3 rounded-xl bg-blue-900/40 hover:bg-blue-800/50 border border-blue-500/30 flex flex-col items-center space-y-2 transition-all cursor-pointer text-center"
                                       >
-                                        <img src={selectedPkMatch.hostB.avatar} className="w-10 h-10 rounded-full border-2 border-blue-500 object-cover" />
+                                        <img src={selectedPkMatch.hostB.avatar || DEFAULT_USER.avatar} className="w-10 h-10 rounded-full border-2 border-blue-500 object-cover" />
                                         <div className="text-center bg-transparent">
                                           <span className="text-[8.5px] font-black text-white block truncate w-24">{selectedPkMatch.hostB.username}</span>
                                           <span className="text-[7.5px] text-blue-300 font-bold block mt-0.5">Host B</span>
@@ -20601,7 +20653,7 @@ export default function App() {
                                         className="p-2 rounded-xl bg-white/3 hover:bg-white/8 border border-white/5 hover:border-pink-500/25 flex flex-col text-left space-y-1.5 transition-all cursor-pointer"
                                       >
                                         <div className="flex items-center space-x-1.5 bg-transparent">
-                                          <img src={host.avatar} className="w-5 h-5 rounded-full object-cover border border-pink-500/20" />
+                                          <img src={host.avatar || DEFAULT_USER.avatar} className="w-5 h-5 rounded-full object-cover border border-pink-500/20" />
                                           <div className="min-w-0 flex-1 bg-transparent">
                                             <span className="text-[8px] font-black text-white block truncate">{host.name}</span>
                                             <span className="text-[6.5px] text-gray-400 font-mono block">Lvl {host.level}</span>
@@ -20770,7 +20822,7 @@ export default function App() {
                                     ].map((req, idx) => (
                                       <div key={idx} className="flex justify-between items-center bg-white/5 p-2 rounded-lg border border-white/5">
                                         <div className="flex items-center space-x-1.5 bg-transparent">
-                                          <img src={req.avatar} className="w-5 h-5 rounded-full object-cover shrink-0" />
+                                          <img src={req.avatar || DEFAULT_USER.avatar} className="w-5 h-5 rounded-full object-cover shrink-0" />
                                           <div className="bg-transparent">
                                             <p className="font-bold text-white text-[8px]">{req.username}</p>
                                             <p className="text-[7px] text-gray-400">{req.type}</p>
@@ -20821,7 +20873,7 @@ export default function App() {
                                     {userLiveGuestRequests.map(req => (
                                       <div key={req.id} className="flex items-center justify-between bg-white/3 p-2 rounded-xl border border-white/5">
                                         <div className="flex items-center space-x-2">
-                                          <img src={req.avatar} className="w-7 h-7 rounded-full object-cover border border-purple-500/20" />
+                                          <img src={req.avatar || DEFAULT_USER.avatar} className="w-7 h-7 rounded-full object-cover border border-purple-500/20" />
                                           <div className="flex flex-col">
                                             <span className="text-[9px] font-black text-white">{req.username}</span>
                                             <span className="text-[7px] text-purple-400 font-mono">Level {req.level}</span>
@@ -20903,7 +20955,7 @@ export default function App() {
                                     return (
                                       <div key={idx} className="flex items-center justify-between bg-white/3 p-2 rounded-xl border border-white/5">
                                         <div className="flex items-center space-x-2">
-                                          <img src={viewer.avatar} className="w-7 h-7 rounded-full object-cover" />
+                                          <img src={viewer.avatar || DEFAULT_USER.avatar} className="w-7 h-7 rounded-full object-cover" />
                                           <div className="flex flex-col">
                                             <span className="text-[9px] font-black text-white">{viewer.username}</span>
                                             <span className="text-[7px] text-indigo-400 font-mono">Level {viewer.level}</span>
@@ -21120,7 +21172,7 @@ export default function App() {
                                       <div className="flex items-center justify-between bg-white/3 p-2.5 rounded-xl border border-white/5">
                                         <div className="flex items-center space-x-2.5 bg-transparent">
                                           <div className="relative">
-                                            <img src={seat.avatar || ""} className="w-11 h-11 rounded-full object-cover border-2 border-purple-500 shadow-lg" />
+                                            <img src={seat.avatar || DEFAULT_USER.avatar} className="w-11 h-11 rounded-full object-cover border-2 border-purple-500 shadow-lg" />
                                             {(seat as any).isModerator && (
                                               <span className="absolute -bottom-1 -right-1 bg-blue-600 text-[6px] text-white px-1 rounded-full font-black border border-[#0c0919]">🛡️</span>
                                             )}
@@ -21435,7 +21487,7 @@ export default function App() {
                                     >
                                       {userLiveShowCoverPhoto && userLiveCoverPhoto ? (
                                         <>
-                                          <img src={userLiveCoverPhoto} className="w-full h-full object-cover group-hover:scale-105 transition-transform" alt="Current Cover" />
+                                          <img src={userLiveCoverPhoto || DEFAULT_USER.coverPhoto} className="w-full h-full object-cover group-hover:scale-105 transition-transform" alt="Current Cover" />
                                           <div className="absolute inset-0 bg-black/40 group-hover:bg-black/20 flex items-center justify-center">
                                             <div className="w-6 h-6 rounded-full bg-pink-600 text-white flex items-center justify-center shadow-lg">
                                               <Plus className="w-4 h-4" />
@@ -21755,7 +21807,7 @@ export default function App() {
                                       >
                                         <div className="flex items-center space-x-3 min-w-0 bg-transparent">
                                           <div className="relative shrink-0 bg-transparent">
-                                            <img src={track.cover} className="w-9 h-9 rounded-lg object-cover" alt="cover" />
+                                            <img src={track.cover || "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=100"} className="w-9 h-9 rounded-lg object-cover" alt="cover" />
                                             {isActive && userLiveMusicPlaying && (
                                               <div className="absolute inset-0 bg-black/40 rounded-lg flex items-center justify-center">
                                                 <Disc className="w-4 h-4 text-white animate-spin" />
@@ -21793,7 +21845,7 @@ export default function App() {
                                   <div className="bg-[#150f24] border border-white/5 rounded-2xl p-3 space-y-2.5 shrink-0 animate-fade-in">
                                     <div className="flex items-center justify-between bg-transparent">
                                       <div className="flex items-center space-x-2.5 min-w-0 bg-transparent">
-                                        <img src={userLiveActiveTrack.cover} className="w-8 h-8 rounded-md object-cover border border-white/5" alt="cover" />
+                                        <img src={userLiveActiveTrack.cover || "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=100"} className="w-8 h-8 rounded-md object-cover border border-white/5" alt="cover" />
                                         <div className="min-w-0 flex flex-col items-start bg-transparent">
                                           <span className="text-[7px] text-[#ff007f] font-mono font-bold uppercase tracking-wider">Broadcasting Background</span>
                                           <p className="text-[9.5px] font-black text-white truncate leading-tight w-36">{userLiveActiveTrack.title}</p>
@@ -21996,7 +22048,7 @@ export default function App() {
                                         >
                                           <div className="flex items-center space-x-2.5 text-left bg-transparent">
                                             <div className="relative shrink-0">
-                                              <img src={host.avatar} className="w-8 h-8 rounded-full object-cover border border-purple-500/30" />
+                                              <img src={host.avatar || DEFAULT_USER.avatar} className="w-8 h-8 rounded-full object-cover border border-purple-500/30" />
                                               <span className="absolute bottom-0 right-0 w-2 h-2 bg-green-500 rounded-full border border-black animate-pulse"></span>
                                             </div>
                                             <div className="flex flex-col bg-transparent">
@@ -23052,7 +23104,7 @@ export default function App() {
                             <>
                               <div className="flex items-center space-x-2.5">
                                 <div className="w-10 h-10 rounded-lg overflow-hidden border border-yellow-500">
-                                  <img src={familiesList[0].avatar} className="w-full h-full object-cover" alt="fam" />
+                                  <img src={familiesList[0].avatar || DEFAULT_USER.avatar} className="w-full h-full object-cover" alt="fam" />
                                 </div>
                                 <div>
                                   <p className="text-xs font-black text-white">{familiesList[0].name}</p>
@@ -23144,8 +23196,8 @@ export default function App() {
                                     </span>
                                     
                                     <div className="flex -space-x-2.5 relative items-center">
-                                      <img src={couple.avatar1} className="w-7 h-7 rounded-full object-cover border border-amber-400" alt="p1" referrerPolicy="no-referrer" />
-                                      <img src={couple.avatar2} className="w-7 h-7 rounded-full object-cover border border-yellow-500" alt="p2" referrerPolicy="no-referrer" />
+                                      <img src={couple.avatar1 || DEFAULT_USER.avatar} className="w-7 h-7 rounded-full object-cover border border-amber-400" alt="p1" referrerPolicy="no-referrer" />
+                                      <img src={couple.avatar2 || DEFAULT_USER.avatar} className="w-7 h-7 rounded-full object-cover border border-yellow-500" alt="p2" referrerPolicy="no-referrer" />
                                     </div>
 
                                     <div>
@@ -23244,28 +23296,29 @@ export default function App() {
                                           };
                                           
                                           const conversationId = [user.username, u.username].sort().join("_");
-                                          const convRef = doc(db, "conversations", conversationId);
-                                          
-                                          try {
-                                            const convSnap = await getDoc(convRef);
-                                            if (!convSnap.exists()) {
-                                              await setDoc(convRef, {
-                                                id: conversationId,
-                                                participants: [user.username, u.username],
-                                                createdAt: new Date().toISOString(),
-                                                updatedAt: new Date().toISOString(),
-                                                lastMessage: "",
-                                                lastMessageType: "text",
-                                                lastMessageAt: new Date().toISOString(),
-                                                lastSenderId: "",
-                                                unreadCounts: {
-                                                  [user.username]: 0,
-                                                  [u.username]: 0
-                                                }
-                                              });
+                                          if (db) {
+                                            try {
+                                              const convRef = doc(db, "conversations", conversationId);
+                                              const convSnap = await getDoc(convRef);
+                                              if (!convSnap.exists()) {
+                                                await setDoc(convRef, {
+                                                  id: conversationId,
+                                                  participants: [user.username, u.username],
+                                                  createdAt: new Date().toISOString(),
+                                                  updatedAt: new Date().toISOString(),
+                                                  lastMessage: "",
+                                                  lastMessageType: "text",
+                                                  lastMessageAt: new Date().toISOString(),
+                                                  lastSenderId: "",
+                                                  unreadCounts: {
+                                                    [user.username]: 0,
+                                                    [u.username]: 0
+                                                  }
+                                                });
+                                              }
+                                            } catch (err) {
+                                              console.warn("Error creating DM conversation:", err);
                                             }
-                                          } catch (err) {
-                                            console.error("Error creating DM conversation:", err);
                                           }
 
                                           setActiveChatContact(contact);
@@ -23359,7 +23412,7 @@ export default function App() {
                                           }}
                                           title="View profile photo"
                                         >
-                                          <img src={otherUser.avatar} className="w-full h-full object-cover" alt="avatar" referrerPolicy="no-referrer" />
+                                          <img src={otherUser.avatar || DEFAULT_USER.avatar} className="w-full h-full object-cover" alt="avatar" referrerPolicy="no-referrer" />
                                           {otherUser.isOnline && (
                                             <span className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-green-500 rounded-full border border-[#141008]" />
                                           )}
@@ -23507,7 +23560,7 @@ export default function App() {
                                   className="w-8.5 h-8.5 rounded-full overflow-hidden border-2 border-amber-400 mr-2 shrink-0 cursor-pointer hover:scale-105 active:scale-95 transition-transform shadow-[0_0_10px_rgba(245,158,11,0.4)]"
                                   title="View Photo"
                                 >
-                                  <img src={activeChatContact.avatar} className="w-full h-full object-cover" alt="avatar" />
+                                  <img src={activeChatContact.avatar || DEFAULT_USER.avatar} className="w-full h-full object-cover" alt="avatar" />
                                 </div>
 
                                 {/* Visit Profile Trigger */}
@@ -23738,12 +23791,14 @@ export default function App() {
                                                   type="button"
                                                   onClick={async () => {
                                                     try {
-                                                      const otherUsername = activeChatContact.username || activeChatContact.name;
-                                                      const conversationId = [user.username, otherUsername].sort().join("_");
-                                                      const msgRef = doc(db, "conversations", conversationId, "messages", msg.id);
-                                                      await updateDoc(msgRef, {
-                                                        deletedForEveryone: true
-                                                      });
+                                                      if (db) {
+                                                        const otherUsername = activeChatContact.username || activeChatContact.name;
+                                                        const conversationId = [user.username, otherUsername].sort().join("_");
+                                                        const msgRef = doc(db, "conversations", conversationId, "messages", msg.id);
+                                                        await updateDoc(msgRef, {
+                                                          deletedForEveryone: true
+                                                        });
+                                                      }
                                                       setChatSelectedMessageId(null);
                                                     } catch (err) {
                                                       console.error("Error deleting message for everyone:", err);
@@ -23986,7 +24041,7 @@ export default function App() {
                             <div className="max-w-xs w-full bg-[#1a1a24] border border-[#ff007f] rounded-2xl p-4 text-center shadow-2xl relative" onClick={(e) => e.stopPropagation()}>
                               <h3 className="text-xs font-black text-white mb-2.5 font-mono text-center">{showActiveChatDPModal.name}</h3>
                               <div className="w-full aspect-square rounded-xl overflow-hidden border border-[#303040] mb-3.5">
-                                <img src={showActiveChatDPModal.avatar} className="w-full h-full object-cover" alt="Full profile photo" referrerPolicy="no-referrer" />
+                                <img src={showActiveChatDPModal.avatar || DEFAULT_USER.avatar} className="w-full h-full object-cover" alt="Full profile photo" referrerPolicy="no-referrer" />
                               </div>
                               <button
                                 type="button"
@@ -24019,7 +24074,7 @@ export default function App() {
                                   setShowActiveChatDPModal({ name: showActiveChatProfileModal.name, avatar: showActiveChatProfileModal.avatar });
                                   setShowActiveChatProfileModal(null);
                                 }}>
-                                  <img src={showActiveChatProfileModal.avatar} className="w-full h-full object-cover" alt="Profile pic" referrerPolicy="no-referrer" />
+                                  <img src={showActiveChatProfileModal.avatar || DEFAULT_USER.avatar} className="w-full h-full object-cover" alt="Profile pic" referrerPolicy="no-referrer" />
                                 </div>
                                 <h4 className="text-xs font-black text-white">{showActiveChatProfileModal.name}</h4>
                                 <span className="text-[8px] bg-[#ff007f]/20 text-[#ff007f] px-2 py-0.5 rounded-full font-bold font-mono mt-1">Verified Creator Badge ✔</span>
@@ -24277,7 +24332,7 @@ export default function App() {
                                           <div className="flex flex-col items-center w-[30%] text-center animate-fade-in">
                                             <div className="relative">
                                               <Crown className="w-5 h-5 text-gray-300 absolute -top-4 left-1/2 -translate-x-1/2 drop-shadow-md" />
-                                              <img src={r2.avatar} className="w-11 h-11 rounded-full border-2 border-gray-400 object-cover shadow-lg" alt="silver" />
+                                              <img src={r2.avatar || DEFAULT_USER.avatar} className="w-11 h-11 rounded-full border-2 border-gray-400 object-cover shadow-lg" alt="silver" />
                                               <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 bg-gray-400 text-black text-[7px] font-black rounded-full px-1.5 py-0.2 leading-none font-mono">2nd</span>
                                             </div>
                                             <p className="text-[9px] font-black text-white mt-2 truncate w-full leading-tight">{r2.name}</p>
@@ -24298,7 +24353,7 @@ export default function App() {
                                             <div className="relative">
                                               <Crown className="w-6 h-6 text-yellow-400 absolute -top-5 left-1/2 -translate-x-1/2 drop-shadow-lg animate-bounce" />
                                               <div className="p-0.5 bg-gradient-to-tr from-yellow-400 via-amber-300 to-yellow-500 rounded-full animate-pulse shadow-xl">
-                                                <img src={r1.avatar} className="w-13 h-13 rounded-full border border-black object-cover" alt="gold" />
+                                                <img src={r1.avatar || DEFAULT_USER.avatar} className="w-13 h-13 rounded-full border border-black object-cover" alt="gold" />
                                               </div>
                                               <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 bg-yellow-400 text-black text-[7.5px] font-black rounded-full px-2 py-0.2 leading-none font-mono shadow-md border border-black/10">1st</span>
                                             </div>
@@ -24319,7 +24374,7 @@ export default function App() {
                                           <div className="flex flex-col items-center w-[30%] text-center animate-fade-in">
                                             <div className="relative">
                                               <Crown className="w-5 h-5 text-amber-600 absolute -top-4 left-1/2 -translate-x-1/2 drop-shadow-md" />
-                                              <img src={r3.avatar} className="w-11 h-11 rounded-full border-2 border-amber-600 object-cover shadow-lg" alt="bronze" />
+                                              <img src={r3.avatar || DEFAULT_USER.avatar} className="w-11 h-11 rounded-full border-2 border-amber-600 object-cover shadow-lg" alt="bronze" />
                                               <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 bg-amber-600 text-white text-[7px] font-black rounded-full px-1.5 py-0.2 leading-none font-mono">3rd</span>
                                             </div>
                                             <p className="text-[9px] font-black text-white mt-2 truncate w-full leading-tight">{r3.name}</p>
@@ -24354,7 +24409,7 @@ export default function App() {
 
                                           {/* Avatar with optional live ring */}
                                           <div className="relative shrink-0">
-                                            <img src={item.avatar} className="w-8.5 h-8.5 rounded-full object-cover border border-white/10" alt="avatar" />
+                                            <img src={item.avatar || DEFAULT_USER.avatar} className="w-8.5 h-8.5 rounded-full object-cover border border-white/10" alt="avatar" />
                                             {item.isLive && (
                                               <span className="absolute -bottom-0.5 -right-0.5 bg-red-500 text-white text-[5.5px] font-black px-1 rounded-full border border-black animate-pulse font-mono scale-90">LIVE</span>
                                             )}
@@ -24531,7 +24586,7 @@ export default function App() {
                           >
                             <div className="relative shrink-0">
                               <div className="w-9 h-9 rounded-full overflow-hidden border border-[#2a2a3a]">
-                                <img src={avatar} className="w-full h-full object-cover" alt="avatar" referrerPolicy="no-referrer" />
+                                <img src={avatar || DEFAULT_USER.avatar} className="w-full h-full object-cover" alt="avatar" referrerPolicy="no-referrer" />
                               </div>
                               <span className={`absolute -bottom-1 -right-1 text-[10px] w-4 h-4 rounded-full flex items-center justify-center border border-[#0e0e15] ${badgeStyle} p-0.5`}>
                                 {icon}
@@ -25408,7 +25463,7 @@ export default function App() {
                               )}
 
                               {/* Real Local Video Preview */}
-                              {recordedVideoUrl && (
+                              {recordedVideoUrl && recordedVideoUrl.trim() && (
                                 <div className="space-y-1 bg-black/40 p-2 rounded-xl border border-white/5">
                                   <label className="text-[7.5px] uppercase tracking-wider text-gray-400 block font-bold font-mono">🎬 Video Clip Preview</label>
                                   <div className="relative aspect-[9/13] max-w-[120px] mx-auto rounded-lg overflow-hidden border border-[#ff007f]/40 shadow-lg">
@@ -25729,7 +25784,7 @@ export default function App() {
                                     {/* User metadata */}
                                     <div className="min-w-0 flex-1 z-10 bg-transparent">
                                       <div className="flex items-center space-x-1 border-b border-[#303040]/50 pb-1.5 bg-transparent">
-                                        <img src={viewingUser.avatar || user.avatar} className="w-5 h-5 rounded-full object-cover border border-[#ff007f]" alt="av" />
+                                        <img src={viewingUser.avatar || user.avatar || DEFAULT_USER.avatar} className="w-5 h-5 rounded-full object-cover border border-[#ff007f]" alt="av" />
                                         <p className="text-xs font-black text-white truncate max-w-[120px] bg-transparent">{viewingUser.fullName || viewingUser.username}</p>
                                         {currentVip > 0 && (
                                           <span className="text-[7.5px] bg-amber-500/20 text-amber-300 border border-amber-400/50 px-1 py-0.5 rounded-full font-black ml-1">
@@ -25892,6 +25947,154 @@ export default function App() {
                               <span>Pardais Party Settings</span>
                             </h4>
                             <p className="text-[8px] text-gray-400">Manage account privacy, wallet & coins, WhatsApp support, themes & options</p>
+                          </div>
+
+                          {/* 👥 SWITCH / MULTI-ACCOUNT CENTER */}
+                          <div className="bg-gradient-to-br from-[#1e102e] via-[#151224] to-[#251030] p-3 rounded-xl border-2 border-pink-500/40 space-y-2.5 shadow-xl relative overflow-hidden">
+                            <div className="flex justify-between items-center text-[10px]">
+                              <span className="font-black text-pink-300 flex items-center font-mono uppercase tracking-wider">
+                                <Users className="w-4 h-4 text-[#ff007f] mr-1.5" />
+                                <span>Switch / Multi-Account</span>
+                              </span>
+                              {(() => {
+                                const list = getSavedAccounts();
+                                return (
+                                  <span className="text-[7.5px] bg-[#ff007f]/20 text-pink-300 border border-[#ff007f]/30 px-1.5 py-0.2 rounded font-black font-mono">
+                                    {Math.max(1, list.length)} ON DEVICE
+                                  </span>
+                                );
+                              })()}
+                            </div>
+                            
+                            <p className="text-[8px] text-gray-300 leading-tight">
+                              Log in with your 2nd, 3rd, or 4th account. All accounts on this device stay connected for instant 1-tap switching!
+                            </p>
+
+                            {/* Active Account Card */}
+                            <div className="p-2 rounded-xl bg-black/40 border border-[#ff007f]/40 flex items-center justify-between">
+                              <div className="flex items-center space-x-2 min-w-0 flex-1">
+                                <div className="relative shrink-0">
+                                  <img 
+                                    src={user.avatar || DEFAULT_USER.avatar} 
+                                    className="w-8 h-8 rounded-full object-cover border border-pink-500/60 shadow" 
+                                    alt="Active" 
+                                  />
+                                  {user.vipLevel > 0 && (
+                                    <span className="absolute -bottom-1 -right-1 bg-gradient-to-r from-purple-600 to-pink-600 text-white text-[6px] font-black px-1 rounded-full border border-black shadow">
+                                      V{user.vipLevel}
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="min-w-0 flex-1 text-left">
+                                  <div className="flex items-center space-x-1">
+                                    <span className="text-white text-[9.5px] font-black truncate">
+                                      {user.fullName || user.username}
+                                    </span>
+                                    <span className="bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-[6.5px] font-black font-mono px-1 rounded flex items-center">
+                                      ACTIVE
+                                    </span>
+                                  </div>
+                                  <p className="text-[7.5px] text-gray-400 font-mono truncate">
+                                    @{user.username} • <span className="text-yellow-400 font-bold">{user.coins.toLocaleString()} Coins</span>
+                                  </p>
+                                </div>
+                              </div>
+                              <div className="w-5 h-5 rounded-full bg-[#ff007f] text-white flex items-center justify-center shrink-0 shadow">
+                                <Check className="w-3 h-3 stroke-[3]" />
+                              </div>
+                            </div>
+
+                            {/* Secondary / Other Saved Accounts List */}
+                            {(() => {
+                              const savedList = getSavedAccounts().filter(acc => 
+                                acc.username !== user.username && 
+                                acc.uniqueId !== user.uniqueId &&
+                                acc.uid !== user.uid
+                              );
+                              if (savedList.length === 0) return null;
+                              return (
+                                <div className="space-y-1.5 border-t border-white/5 pt-2">
+                                  <div className="flex justify-between items-center text-[7.5px] text-gray-400 font-mono">
+                                    <span>Other Accounts on this Device:</span>
+                                    <span className="text-pink-400 font-bold">{savedList.length} Available</span>
+                                  </div>
+                                  <div className="space-y-1.5 max-h-36 overflow-y-auto scrollbar-none pr-0.5">
+                                    {savedList.map((acc, idx) => (
+                                      <div 
+                                        key={acc.uid || acc.uniqueId || idx}
+                                        className="flex items-center justify-between p-1.5 rounded-lg bg-black/30 hover:bg-black/50 border border-white/5 hover:border-pink-500/30 transition-all text-left"
+                                      >
+                                        <div className="flex items-center space-x-2 min-w-0 flex-1">
+                                          <img 
+                                            src={acc.avatar || DEFAULT_USER.avatar} 
+                                            className="w-7 h-7 rounded-full object-cover border border-white/10" 
+                                            alt={acc.username}
+                                          />
+                                          <div className="min-w-0 flex-1">
+                                            <p className="text-white text-[8.5px] font-bold truncate">
+                                              {acc.fullName || acc.username}
+                                            </p>
+                                            <p className="text-[7px] text-gray-400 font-mono truncate">
+                                              @{acc.username} • <span className="text-yellow-400 font-mono">{(acc.coins ?? acc.userProfile?.coins ?? 0).toLocaleString()} Coins</span>
+                                            </p>
+                                          </div>
+                                        </div>
+
+                                        <div className="flex items-center space-x-1 shrink-0 ml-1">
+                                          <button
+                                            type="button"
+                                            onClick={() => handleSwitchAccount(acc)}
+                                            className="bg-gradient-to-r from-[#ff007f] to-purple-600 hover:from-[#ff007f]/90 hover:to-purple-500 text-white text-[7.5px] font-black uppercase px-2 py-1 rounded shadow active:scale-95 transition-all cursor-pointer flex items-center space-x-0.5"
+                                          >
+                                            <LogIn className="w-2.5 h-2.5" />
+                                            <span>Switch</span>
+                                          </button>
+                                          <button
+                                            type="button"
+                                            title="Remove account from device"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              removeAccountFromDevice(acc.uid || acc.uniqueId || acc.username);
+                                              // force render update
+                                              setUser({ ...user });
+                                            }}
+                                            className="p-1 rounded bg-white/5 hover:bg-red-500/20 text-gray-500 hover:text-red-400 transition-all cursor-pointer"
+                                          >
+                                            <Trash2 className="w-2.5 h-2.5" />
+                                          </button>
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              );
+                            })()}
+
+                            {/* Actions Buttons */}
+                            <div className="grid grid-cols-2 gap-1.5 pt-1">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setShowAccountSwitcherModal(true);
+                                  setShowSettingsDrawer(false);
+                                }}
+                                className="w-full bg-gradient-to-r from-[#ff007f] to-purple-600 hover:from-[#ff007f]/90 hover:to-purple-500 text-white font-black text-[8.5px] uppercase py-2 rounded-xl transition-all shadow-md active:scale-95 flex items-center justify-center space-x-1 cursor-pointer"
+                              >
+                                <Plus className="w-3 h-3 text-white" />
+                                <span>+ Add Account</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setShowAccountSwitcherModal(true);
+                                  setShowSettingsDrawer(false);
+                                }}
+                                className="w-full bg-[#1e1e2d] hover:bg-[#28283d] border border-white/10 text-pink-300 hover:text-white font-black text-[8.5px] uppercase py-2 rounded-xl transition-all shadow-md active:scale-95 flex items-center justify-center space-x-1 cursor-pointer"
+                              >
+                                <Users className="w-3 h-3 text-pink-400" />
+                                <span>Manage All</span>
+                              </button>
+                            </div>
                           </div>
 
                           {/* 🪙 WALLET & COINS CENTER */}
@@ -26344,7 +26547,7 @@ export default function App() {
                                       return (
                                         <div key={host.id} className="flex items-center justify-between bg-black/20 p-1 rounded border border-white/5">
                                           <div className="flex items-center space-x-1.5 bg-transparent">
-                                            <img src={host.avatar} className="w-4 h-4 rounded-full object-cover" />
+                                            <img src={host.avatar || DEFAULT_USER.avatar} className="w-4 h-4 rounded-full object-cover" />
                                             <span className="text-[9px] text-white font-medium">{host.name}</span>
                                           </div>
                                           <button
@@ -26839,19 +27042,19 @@ export default function App() {
                             </div>
                           </div>
 
-                          {/* Account deletion: 30-day recoverable soft delete */}
+                          {/* 30-Day Account Deletion / Management */}
                           <div className="pt-1">
                             <button
                               type="button"
-                              onClick={handleDeleteAccount}
-                              className="w-full bg-red-950/40 hover:bg-red-700/80 border border-red-500/50 hover:border-red-400 text-red-300 hover:text-white py-1.5 rounded-xl text-[10px] font-black transition-all flex items-center justify-center space-x-1"
+                              onClick={() => {
+                                setShowDeletionModal(true);
+                                setShowSettingsDrawer(false);
+                              }}
+                              className="w-full bg-orange-950/30 hover:bg-orange-600/30 border border-orange-500/40 text-orange-300 hover:text-white py-1.5 rounded-xl text-[10px] font-black transition-all flex items-center justify-center space-x-1 cursor-pointer"
                             >
                               <Trash2 className="w-3.5 h-3.5" />
-                              <span>Delete Account (30-Day Recovery)</span>
+                              <span>Delete Account (30-Day Grace Period)</span>
                             </button>
-                            <p className="text-[8px] text-gray-500 text-center mt-1 px-2">
-                              Your account can be restored for 30 days. After that it is permanently deleted.
-                            </p>
                           </div>
 
                           {/* Quick Logout option */}
@@ -26862,7 +27065,7 @@ export default function App() {
                                 handleLogout();
                                 setShowSettingsDrawer(false);
                               }}
-                              className="w-full bg-red-600/20 hover:bg-red-600 border border-red-500/40 hover:text-white text-red-400 py-1.5 rounded-xl text-[10px] font-black transition-all flex items-center justify-center space-x-1"
+                              className="w-full bg-red-600/20 hover:bg-red-600 border border-red-500/40 hover:text-white text-red-400 py-1.5 rounded-xl text-[10px] font-black transition-all flex items-center justify-center space-x-1 cursor-pointer"
                             >
                               <LogOut className="w-3.5 h-3.5" />
                               <span>Disconnect Account & Logout</span>
@@ -29221,7 +29424,7 @@ export default function App() {
                             <div className="flex justify-between items-center bg-transparent">
                               <div className="flex items-center space-x-2.5 bg-transparent">
                                 <div className="w-9 h-9 rounded-full p-[1.5px] bg-gradient-to-tr from-[#ff007f] via-purple-600 to-amber-400">
-                                  <img src={currentStory.avatar} className="w-full h-full rounded-full object-cover border border-black" alt={currentStory.fullName} />
+                                  <img src={currentStory.avatar || DEFAULT_USER.avatar} className="w-full h-full rounded-full object-cover border border-black" alt={currentStory.fullName} />
                                 </div>
                                 <div className="bg-transparent leading-none">
                                   <h4 className="text-[10px] font-black text-white tracking-wide flex items-center space-x-1.5 bg-transparent">
@@ -29290,7 +29493,7 @@ export default function App() {
 
                               {currentStory.type === "photo" && (
                                 <img 
-                                  src={currentStory.content} 
+                                  src={currentStory.content || "https://images.unsplash.com/photo-1516450360452-9312f5e86fc7?w=600"} 
                                   className="max-w-full max-h-full object-contain pointer-events-none" 
                                   alt="Story photo"
                                   referrerPolicy="no-referrer" 
@@ -29299,7 +29502,7 @@ export default function App() {
 
                               {currentStory.type === "video" && (
                                 <video 
-                                  src={currentStory.content} 
+                                  src={currentStory.content || "https://images.unsplash.com/photo-1516450360452-9312f5e86fc7?w=600"} 
                                   className="max-w-full max-h-full object-contain" 
                                   autoPlay 
                                   loop 
@@ -29384,7 +29587,7 @@ export default function App() {
                                 ) : (
                                   currentStory.replies.map((reply) => (
                                     <div key={reply.id} className="flex space-x-2 bg-white/5 p-1.5 rounded-xl border border-white/5 align-top">
-                                      <img src={reply.avatar} className="w-5 h-5 rounded-full object-cover shrink-0" alt={reply.fullName} />
+                                      <img src={reply.avatar || DEFAULT_USER.avatar} className="w-5 h-5 rounded-full object-cover shrink-0" alt={reply.fullName} />
                                       <div className="bg-transparent flex-1 text-left">
                                         <div className="flex justify-between items-baseline bg-transparent">
                                           <span className="text-[7.5px] font-black text-pink-400">@{reply.username}</span>
@@ -30605,7 +30808,7 @@ export default function App() {
               {/* Header Profile Section */}
               <div className="flex items-center space-x-3 pb-3 border-b border-white/10">
                 <div className="w-14 h-14 rounded-full border-2 border-cyan-400 overflow-hidden shadow-lg shrink-0">
-                  <img src={coHostAvatar} className="w-full h-full object-cover" alt={coHostName} />
+                  <img src={coHostAvatar || DEFAULT_USER.avatar} className="w-full h-full object-cover" alt={coHostName} />
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center space-x-1.5">
@@ -30736,7 +30939,7 @@ export default function App() {
                       className="flex items-center justify-between p-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/5 cursor-pointer hover:border-purple-500/30 transition-all group text-left"
                     >
                       <div className="flex items-center space-x-2.5 bg-transparent">
-                        <img src={avatar} className="w-8 h-8 rounded-full object-cover border border-white/10 shrink-0" referrerPolicy="no-referrer" />
+                        <img src={avatar || DEFAULT_USER.avatar} className="w-8 h-8 rounded-full object-cover border border-white/10 shrink-0" referrerPolicy="no-referrer" />
                         <div className="bg-transparent">
                           <div className="flex items-center space-x-1 bg-transparent">
                             <span className="text-[10px] font-black text-white group-hover:text-pink-400 transition-colors">@{name}</span>
@@ -30781,879 +30984,11 @@ export default function App() {
                   <span className="text-gray-100 font-medium"> sent </span>
                   <span className="text-yellow-200 font-black">{globalGiftBanner.giftName} {globalGiftBanner.giftIcon}</span>
                   <span className="text-amber-200 font-black ml-1">🪙 {Number(globalGiftBanner.totalCost || 0).toLocaleString()}</span>
-<span className="text-gray-100 font-medium"> to </span>
+                  <span className="text-gray-100 font-medium"> to </span>
                   <span className="text-[#ff007f] font-black">@{globalGiftBanner.recipient}</span>
                 </p>
               </div>
             </div>
-            <span className="text-sm animate-spin-slow shrink-0 relative z-10 ml-1">{globalGiftBanner.giftIcon}</span>
-          </div>
-        </div>
-      )}
-
-      {/* 🔴 STREAM ENDED BROADCAST CARD OVERLAY */}
-      {showStreamEndedCard && (
-        <div className="fixed inset-0 z-[9999] bg-black/85 backdrop-blur-md flex items-center justify-center p-4 animate-fade-in select-none">
-          <div className="bg-[#12101e] border-2 border-pink-500/60 rounded-3xl p-6 text-center max-w-xs w-full shadow-[0_0_50px_rgba(255,0,127,0.4)] space-y-3 animate-pop-gift">
-            <div className="w-16 h-16 rounded-full bg-gradient-to-tr from-pink-600 to-purple-600 border-2 border-pink-400 flex items-center justify-center mx-auto text-2xl shadow-lg animate-bounce">
-              📺
-            </div>
-            <h3 className="text-base font-black text-white uppercase tracking-wider">Stream Ended</h3>
-            <p className="text-xs text-gray-300 font-medium">The host has completed this live broadcast.</p>
-            <div className="inline-flex items-center space-x-1 bg-pink-500/20 text-pink-300 px-3 py-1 rounded-full text-[10px] font-mono font-bold border border-pink-500/30 animate-pulse">
-              <span>🔄 Redirecting to Streams Feed...</span>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 🎡 PARTY GAMES MODAL */}
-      {showPartyGamesModal && (
-        <PartyGamesModal
-          user={user}
-          setUser={setUser}
-          onClose={() => setShowPartyGamesModal(false)}
-          setTransactions={setTransactions}
-          onSendRoomMessage={(msg: string) => {
-            if (activePartyId) {
-              fetch(`/api/v1/parties/${activePartyId}/comments`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ message: msg, username: user.username, avatar: user.avatar })
-              }).catch(() => {});
-            } else if (activeHost?.id) {
-              fetch(`/api/v1/hosts/${activeHost.id}/comments`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ message: msg, username: user.username, avatar: user.avatar })
-              }).catch(() => {});
-            }
-          }}
-        />
-      )}
-
-      {/* 🎙️ CREATE PARTY ROOM MODAL */}
-      {showCreatePartyModal && (
-        <div className="fixed inset-0 bg-black/85 flex items-center justify-center z-999 p-4 animate-fade-in select-none">
-          <div className="bg-[#120a24]/95 border-2 border-pink-500 rounded-3xl p-5 w-full max-w-sm shadow-2xl relative animate-pop-gift text-left max-h-[90vh] overflow-y-auto scrollbar-thin">
-            <button
-              onClick={() => setShowCreatePartyModal(false)}
-              className="absolute top-4 right-4 text-gray-400 hover:text-white transition-colors cursor-pointer w-6 h-6 flex items-center justify-center rounded-full bg-white/5"
-            >
-              ✕
-            </button>
-
-            <div className="border-b border-white/10 pb-3 flex items-center space-x-2 bg-transparent">
-              <span className="text-xl">🎙️</span>
-              <div className="bg-transparent">
-                <h3 className="text-xs font-black text-white uppercase tracking-wider font-mono">Create Your Audio Lounge</h3>
-                <p className="text-[8.5px] text-pink-400 font-mono uppercase tracking-widest">Start a 12 or 25-seat Party Room</p>
-              </div>
-            </div>
-
-            <div className="mt-4 space-y-4 bg-transparent">
-              {/* Seat capacity */}
-              <div className="space-y-2 bg-transparent">
-                <label className="text-[8.5px] font-black uppercase text-gray-300 font-mono">Party Seat Capacity</label>
-                <div className="grid grid-cols-2 gap-2">
-                  {[12, 25].map((count) => (
-                    <button
-                      key={count}
-                      type="button"
-                      onClick={() => setPartyFormSeatCount(count as 12 | 25)}
-                      className={`py-2.5 rounded-xl border text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer ${
-                        partyFormSeatCount === count
-                          ? "bg-gradient-to-r from-pink-500 to-purple-600 text-white border-pink-400 shadow-lg"
-                          : "bg-[#221a36] text-gray-400 border-white/10 hover:border-pink-400/40"
-                      }`}
-                    >
-                      {count === 12 ? "🎙️ 12 Seats" : "🎙️ 25 Seats"}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Room name */}
-              <div className="space-y-1 bg-transparent">
-                <label className="text-[8.5px] font-black uppercase text-gray-300 font-mono">Room Name (Title) *</label>
-                <input
-                  type="text"
-                  value={partyFormName}
-                  onChange={(e) => setPartyFormName(e.target.value)}
-                  placeholder="e.g. Pardais Night Mehfil 🎙️"
-                  className="w-full bg-black/40 border border-white/10 focus:border-pink-500 rounded-xl px-3 py-2 text-xs text-white focus:outline-none"
-                />
-              </div>
-
-              {/* Category & Language in grid */}
-              <div className="grid grid-cols-2 gap-3 bg-transparent">
-                <div className="space-y-1 bg-transparent">
-                  <label className="text-[8.5px] font-black uppercase text-gray-300 font-mono">Category</label>
-                  <select
-                    value={partyFormCategory}
-                    onChange={(e) => setPartyFormCategory(e.target.value)}
-                    className="w-full bg-black/40 border border-white/10 focus:border-pink-500 rounded-xl px-2 py-2 text-xs text-white focus:outline-none cursor-pointer"
-                  >
-                    <option value="Music" className="bg-[#120a24]">🎵 Music</option>
-                    <option value="Chat" className="bg-[#120a24]">💬 Chat</option>
-                    <option value="Gaming" className="bg-[#120a24]">🎮 Gaming</option>
-                    <option value="Poetry" className="bg-[#120a24]">📜 Poetry</option>
-                    <option value="Dating" className="bg-[#120a24]">❤️ Dating</option>
-                    <option value="Debate" className="bg-[#120a24]">🔥 Debate</option>
-                  </select>
-                </div>
-
-                <div className="space-y-1 bg-transparent">
-                  <label className="text-[8.5px] font-black uppercase text-gray-300 font-mono">Language</label>
-                  <select
-                    value={partyFormLanguage}
-                    onChange={(e) => setPartyFormLanguage(e.target.value)}
-                    className="w-full bg-black/40 border border-white/10 focus:border-pink-500 rounded-xl px-2 py-2 text-xs text-white focus:outline-none cursor-pointer"
-                  >
-                    <option value="Urdu" className="bg-[#120a24]">Urdu</option>
-                    <option value="Hindi" className="bg-[#120a24]">Hindi</option>
-                    <option value="English" className="bg-[#120a24]">English</option>
-                    <option value="Punjabi" className="bg-[#120a24]">Punjabi</option>
-                    <option value="Sindhi" className="bg-[#120a24]">Sindhi</option>
-                  </select>
-                </div>
-              </div>
-
-              {/* Description */}
-              <div className="space-y-1 bg-transparent">
-                <label className="text-[8.5px] font-black uppercase text-gray-300 font-mono">Room Tagline / Description</label>
-                <input
-                  type="text"
-                  value={partyFormDescription}
-                  onChange={(e) => setPartyFormDescription(e.target.value)}
-                  placeholder="Welcome rules, descriptions etc..."
-                  className="w-full bg-black/40 border border-white/10 focus:border-pink-500 rounded-xl px-3 py-2 text-xs text-white focus:outline-none"
-                />
-              </div>
-
-              {/* Privacy option */}
-              <div className="space-y-2 bg-transparent">
-                <div className="flex items-center justify-between bg-transparent">
-                  <label className="text-[8.5px] font-black uppercase text-gray-300 font-mono">Privacy Status</label>
-                  <div className="flex items-center space-x-2 bg-transparent">
-                    <button
-                      type="button"
-                      onClick={() => setPartyFormIsPublic(true)}
-                      className={`text-[9px] font-black uppercase px-2.5 py-1 rounded-lg transition-all cursor-pointer ${
-                        partyFormIsPublic ? "bg-emerald-500 text-black" : "bg-[#221a36] text-gray-400 hover:text-white"
-                      }`}
-                    >
-                      Public
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setPartyFormIsPublic(false)}
-                      className={`text-[9px] font-black uppercase px-2.5 py-1 rounded-lg transition-all cursor-pointer ${
-                        !partyFormIsPublic ? "bg-red-500 text-white" : "bg-[#221a36] text-gray-400 hover:text-white"
-                      }`}
-                    >
-                      Private
-                    </button>
-                  </div>
-                </div>
-
-                {!partyFormIsPublic && (
-                  <div className="space-y-1 bg-transparent animate-slide-up">
-                    <label className="text-[8px] font-bold uppercase text-red-400 font-mono">Set Room Password</label>
-                    <input
-                      type="password"
-                      value={partyFormPassword}
-                      onChange={(e) => setPartyFormPassword(e.target.value)}
-                      placeholder="Enter room password..."
-                      className="w-full bg-black/40 border border-red-500/30 focus:border-red-500 rounded-xl px-3 py-2 text-xs text-white focus:outline-none"
-                    />
-                  </div>
-                )}
-              </div>
-
-              {/* Submit action */}
-              <button
-                onClick={handleCreateParty}
-                className="w-full py-3 bg-gradient-to-r from-pink-500 to-purple-600 hover:opacity-90 text-white text-[10.5px] font-black uppercase tracking-wider rounded-xl transition-all shadow-lg active:scale-95 cursor-pointer font-sans text-center"
-              >
-                🚀 Create Your Party Lounge
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ⚔️ GLOBAL INCOMING CO-HOST / PK INVITE NOTIFICATION MODAL (Applies across all views) */}
-      {userLiveShowIncomingPkRequest && incoming1v1Invite && (
-        <div className="fixed inset-0 z-[99999] bg-black/85 backdrop-blur-md flex items-center justify-center p-4 animate-fade-in select-none">
-          <div className="bg-[#0f0e15] border border-purple-500/50 rounded-2xl p-5 w-full max-w-[300px] text-center space-y-4 shadow-[0_0_35px_rgba(168,85,247,0.35)] animate-scale-in text-left">
-            <div className="flex flex-col items-center space-y-2 text-center bg-transparent">
-              <div className="w-16 h-16 rounded-full overflow-hidden border-2 border-purple-500 flex items-center justify-center shadow-lg relative bg-purple-950">
-                <img 
-                  src={incoming1v1Invite.inviterAvatar || incoming1v1Invite.fromAvatar || "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=100&q=80"} 
-                  className="w-full h-full object-cover"
-                  alt={incoming1v1Invite.inviterName || incoming1v1Invite.fromUsername || "Host"}
-                />
-              </div>
-              <h4 className="text-[14px] font-black text-white uppercase tracking-wider font-mono">
-                ⚔️ PK Request Received!
-              </h4>
-              <p className="text-[9.5px] text-gray-200 font-sans leading-relaxed">
-                <strong className="text-purple-400">@{incoming1v1Invite.inviterName || incoming1v1Invite.fromUsername || "Live Host"}</strong> {incoming1v1Invite.isPkBattle || incoming1v1Invite.inviteType === "pk_battle" ? "challenged you to a 1v1 PK Battle!" : "invited you to join their Live as Co-Host."}
-              </p>
-              <div className="flex items-center space-x-1.5 bg-purple-950/60 border border-purple-500/30 px-3 py-1 rounded-full text-[8.5px] font-mono text-purple-300">
-                <span className="w-2 h-2 rounded-full bg-purple-400 animate-ping" />
-                <span>
-                  Expires in {Math.max(0, Math.ceil(((incoming1v1Invite.expiresAt || (incoming1v1Invite.createdAt + 20000)) - Date.now()) / 1000))}s
-                </span>
-              </div>
-            </div>
-
-            <div className="flex space-x-2 bg-transparent">
-              <button
-                type="button"
-                onClick={async () => {
-                  setUserLiveShowIncomingPkRequest(false);
-                  if (incoming1v1Invite?.id) {
-                    try {
-                      const res = await fetch(`/api/v1/pk/invite/${incoming1v1Invite.id}/respond`, {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({
-                          action: "accept",
-                          username: user.username,
-                          userId: user.uid || user.username,
-                          avatar: user.avatar,
-                          level: user.userLevel || 1,
-                          fans: user.fans || "10K fans"
-                        })
-                      });
-                      const data = await res.json();
-                      if (data.session) {
-                        setClientView("user-live");
-                        setUserLivePkConnected(true);
-                        setUserLivePkChannelName(data.session.channelName);
-                        if (incoming1v1Invite.isPkBattle || incoming1v1Invite.inviteType === "pk_battle" || data.session.pkActive) {
-                          setUserLivePkActive(true);
-                          setUserLivePkScoreMy(0);
-                          setUserLivePkScoreOther(0);
-                          setUserLivePkTimer(data.session.timer !== undefined ? data.session.timer : 300);
-                        }
-                        setUserLiveCoHost({
-                          username: incoming1v1Invite.inviterName || incoming1v1Invite.fromUsername,
-                          userId: incoming1v1Invite.inviterUserId || incoming1v1Invite.fromUserId,
-                          avatar: incoming1v1Invite.inviterAvatar || incoming1v1Invite.fromAvatar || "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=100&q=80",
-                          level: incoming1v1Invite.fromLevel || 1,
-                          fans: incoming1v1Invite.fromFans || "10K fans"
-                        });
-                      }
-                    } catch (err) {
-                      console.error("Error accepting invite:", err);
-                    }
-                  }
-                  setIncoming1v1Invite(null);
-                }}
-                className="flex-1 bg-gradient-to-r from-emerald-600 to-green-600 hover:scale-105 active:scale-95 text-white font-black py-2.5 rounded-xl text-[9.5px] uppercase tracking-wide transition-all shadow-md flex items-center justify-center space-x-1 cursor-pointer"
-              >
-                <span>⚔️</span>
-                <span>Accept PK</span>
-              </button>
-              <button
-                type="button"
-                onClick={async () => {
-                  setUserLiveShowIncomingPkRequest(false);
-                  if (incoming1v1Invite?.id) {
-                    try {
-                      await fetch(`/api/v1/pk/invite/${incoming1v1Invite.id}/respond`, {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({
-                          action: "reject",
-                          username: user.username,
-                          userId: user.uid || user.username
-                        })
-                      });
-                    } catch (err) {
-                      console.error("Error rejecting co-host invite:", err);
-                    }
-                  }
-                  setIncoming1v1Invite(null);
-                }}
-                className="flex-1 bg-gradient-to-r from-red-600 to-pink-600 hover:scale-105 active:scale-95 text-white font-black py-2.5 rounded-xl text-[9.5px] uppercase tracking-wide transition-all shadow-md flex items-center justify-center space-x-1 cursor-pointer"
-              >
-                <span>❌</span>
-                <span>Reject</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 🚪 SYSTEM EXIT APP CONFIRMATION MODAL (Android Style, Highly polished) */}
-      {showExitConfirmDialog && (
-        <div className="fixed inset-0 bg-black/85 backdrop-blur-sm z-[9999] flex items-center justify-center p-4 animate-fade-in select-none">
-          <div className="bg-[#12121e] border border-[#ff007f]/30 rounded-3xl p-5 w-full max-w-sm shadow-[0_0_25px_rgba(255,0,127,0.15)] relative animate-pop-gift text-left space-y-4">
-            <div className="flex items-center space-x-3 border-b border-[#303040]/50 pb-3 bg-transparent">
-              <span className="text-2xl">🚪</span>
-              <div className="bg-transparent">
-                <h3 className="text-xs font-black text-white uppercase tracking-wider font-mono">Exit App / Bahar Niklein</h3>
-                <p className="text-[7.5px] text-pink-500 font-mono uppercase tracking-widest">Pardais Party Confirmation</p>
-              </div>
-            </div>
-
-            <div className="space-y-1 bg-transparent">
-              <p className="text-[10px] text-gray-200 font-sans font-semibold leading-relaxed">
-                Are you sure you want to exit the app?
-              </p>
-              <p className="text-[9px] text-gray-400 font-sans leading-relaxed">
-                Kya aap yaqeenan Pardais Party band karna chahte hain? Aapki live conversations aur status disconnect ho jayenge.
-              </p>
-            </div>
-
-            <div className="flex space-x-2 pt-2 bg-transparent">
-              <button
-                type="button"
-                onClick={() => setShowExitConfirmDialog(false)}
-                className="flex-1 bg-white/5 hover:bg-white/10 text-gray-300 font-black text-[9.5px] py-2.5 rounded-xl transition-all cursor-pointer uppercase tracking-wider border border-white/5 text-center"
-              >
-                No / Cancel
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setShowExitConfirmDialog(false);
-                  setIsAppExited(true);
-                  window.close();
-                }}
-                className="flex-1 bg-gradient-to-r from-pink-600 via-[#ff007f] to-purple-600 text-white font-black text-[9.5px] py-2.5 rounded-xl hover:scale-103 active:scale-97 transition-all cursor-pointer uppercase tracking-wider text-center shadow-lg shadow-pink-500/20"
-              >
-                Yes / Exit
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 🌟 APP EXITED SPLASH SCREEN (Perfect fallback for window.close blocked by browser) */}
-      {isAppExited && (
-        <div className="fixed inset-0 bg-[#0e0720] z-[10000] flex flex-col items-center justify-center p-6 text-center select-none animate-fade-in">
-          <div className="space-y-6 max-w-xs bg-transparent">
-            {/* Glowing Icon */}
-            <div className="w-16 h-16 rounded-3xl bg-gradient-to-tr from-[#ff007f] via-purple-600 to-cyan-400 p-[2px] mx-auto shadow-[0_0_30px_rgba(255,0,127,0.3)] animate-pulse">
-              <div className="w-full h-full rounded-3xl bg-[#0e0720] flex items-center justify-center">
-                <span className="text-3xl">🎙️</span>
-              </div>
-            </div>
-
-            <div className="space-y-2 bg-transparent">
-              <h2 className="text-sm font-black text-white uppercase tracking-widest font-mono">
-                Pardais Party
-              </h2>
-              <p className="text-[10px] text-gray-300 leading-relaxed font-sans">
-                App successfully closed. Thank you for hanging out on Pardais Party!
-              </p>
-              <p className="text-[9px] text-[#ff007f] font-mono uppercase tracking-wider">
-                Mubarak! Aap app se bahar aa chuke hain.
-              </p>
-            </div>
-
-            <p className="text-[8px] text-gray-500 font-sans italic pt-4">
-              You can now safely close this window or tap anywhere to reload the app.
-            </p>
-            
-            <button
-              onClick={() => {
-                setIsAppExited(false);
-                setClientView("feed");
-              }}
-              className="mt-2 w-full py-2.5 bg-[#1a0f30] border border-pink-500/20 hover:border-pink-500 text-pink-400 font-bold text-[9px] uppercase tracking-widest rounded-xl transition-all cursor-pointer text-center"
-            >
-              🔄 Re-Launch Pardais Party
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* 📷 LIVE CAMERA CAPTURE MODAL FOR AVATAR PROFILE PHOTO */}
-      {showAvatarCameraModal && (
-        <div className="fixed inset-0 bg-black/90 backdrop-blur-md z-[9999] flex items-center justify-center p-4 animate-fade-in select-none">
-          <div className="bg-[#12121e] border border-[#ff007f]/40 rounded-3xl p-4 w-full max-w-sm text-center space-y-3.5 shadow-[0_0_30px_rgba(255,0,127,0.25)] relative">
-            <div className="flex items-center justify-between border-b border-[#303040] pb-2 text-left">
-              <div>
-                <h4 className="text-xs font-black text-white uppercase tracking-wider font-mono flex items-center space-x-1.5">
-                  <Camera className="w-3.5 h-3.5 text-[#ff007f]" />
-                  <span>Take Profile Photo / Tasveer Lein</span>
-                </h4>
-                <p className="text-[8px] text-gray-400">Position your face in center & tap Snap Photo</p>
-              </div>
-              <button
-                type="button"
-                onClick={stopAvatarCamera}
-                className="w-6 h-6 rounded-full bg-white/10 hover:bg-white/20 text-white text-xs font-black flex items-center justify-center transition-all cursor-pointer"
-              >
-                ✕
-              </button>
-            </div>
-
-            {/* Video preview container */}
-            <div className="relative w-56 h-56 mx-auto rounded-full overflow-hidden border-4 border-[#ff007f] bg-black shadow-inner flex items-center justify-center">
-              <video
-                ref={avatarVideoRef}
-                autoPlay
-                playsInline
-                muted
-                className="w-full h-full object-cover transform scale-x-[-1]"
-              />
-              <div className="absolute inset-0 border-2 border-dashed border-white/30 rounded-full pointer-events-none"></div>
-            </div>
-
-            <div className="space-y-2 pt-1">
-              <button
-                type="button"
-                onClick={captureAvatarFromCamera}
-                className="w-full bg-gradient-to-r from-[#ff007f] via-purple-600 to-pink-600 hover:scale-102 active:scale-97 text-white font-black py-2.5 rounded-xl text-xs uppercase tracking-wider transition-all shadow-lg flex items-center justify-center space-x-2 cursor-pointer"
-              >
-                <Camera className="w-4 h-4 text-white" />
-                <span>📸 Snap & Save Photo</span>
-              </button>
-
-              <div className="flex justify-between items-center text-[8.5px] text-gray-400 pt-1">
-                <button
-                  type="button"
-                  onClick={() => {
-                    stopAvatarCamera();
-                    document.getElementById("avatar-camera-file-input")?.click();
-                  }}
-                  className="hover:text-white underline cursor-pointer"
-                >
-                  Or use device camera app
-                </button>
-                <button
-                  type="button"
-                  onClick={stopAvatarCamera}
-                  className="hover:text-red-400 cursor-pointer"
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 📱 ANDROID APP CONVERSION & PWA INSTALL MODAL */}
-      {showAndroidInstallModal && (
-        <div className="fixed inset-0 bg-black/90 backdrop-blur-md z-[99999] flex items-center justify-center p-4 animate-fade-in select-none">
-          <div className="bg-[#12121e] border-2 border-[#00e676]/60 rounded-3xl p-5 w-full max-w-sm text-center space-y-3.5 shadow-[0_0_35px_rgba(0,230,118,0.35)] relative">
-            
-            {/* Modal Header */}
-            <div className="flex items-center justify-between border-b border-[#303040] pb-2.5 text-left">
-              <div className="flex items-center space-x-2.5">
-                <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-[#00e676] via-emerald-600 to-teal-400 p-0.5 shadow-md flex items-center justify-center shrink-0">
-                  <div className="w-full h-full bg-[#09090e] rounded-[14px] flex items-center justify-center">
-                    <Smartphone className="w-5 h-5 text-[#00e676]" />
-                  </div>
-                </div>
-                <div>
-                  <h3 className="text-xs font-black text-white uppercase tracking-wider font-mono flex items-center space-x-1">
-                    <span>Pardais Live Android App</span>
-                  </h3>
-                  <p className="text-[8.5px] text-emerald-400 font-bold font-mono">Package: com.PardaisLive</p>
-                </div>
-              </div>
-
-              <button
-                type="button"
-                onClick={() => setShowAndroidInstallModal(false)}
-                className="w-7 h-7 rounded-full bg-white/10 hover:bg-white/20 text-white text-xs font-black flex items-center justify-center transition-all cursor-pointer"
-              >
-                ✕
-              </button>
-            </div>
-
-            {/* App Preview Card */}
-            <div className="bg-gradient-to-br from-[#1a1a2a] to-[#0f0f18] p-3 rounded-2xl border border-white/10 text-left space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-[10px] font-black text-white flex items-center space-x-1">
-                  <span>📱 Google Play Store Official App</span>
-                </span>
-                <span className="px-2 py-0.5 bg-[#00e676]/20 border border-[#00e676]/50 text-[#00e676] text-[8px] font-black rounded-full uppercase font-mono">
-                  Live on Play Store
-                </span>
-              </div>
-              <p className="text-[9.5px] text-gray-200 leading-relaxed font-sans">
-                Aap Android phone par <strong className="text-[#00e676]">Pardais Live</strong> ko Google Play Store se direct install kar sakte hain!
-              </p>
-            </div>
-
-            {/* Installation Action Buttons */}
-            <div className="space-y-2 pt-0.5">
-              {/* 1. Official Google Play Store Button */}
-              <a
-                href="https://play.google.com/store/apps/details?id=com.PardaisLive"
-                target="_blank"
-                rel="noopener noreferrer"
-                onClick={() => setShowAndroidInstallModal(false)}
-                className="w-full bg-gradient-to-r from-[#00e676] via-emerald-400 to-teal-400 hover:scale-102 active:scale-97 text-black font-black py-3 rounded-2xl text-xs uppercase tracking-wider transition-all shadow-[0_0_22px_rgba(0,230,118,0.5)] flex items-center justify-center space-x-2 cursor-pointer border border-emerald-300"
-              >
-                <Download className="w-4 h-4 text-black" />
-                <span>▶ Install from Google Play Store</span>
-              </a>
-
-              {/* 2. Download Android Project Package Button */}
-              <a
-                href="/api/v1/download-apk"
-                download="PardaisParty-v1.0.0-Package.zip"
-                onClick={() => {
-                  setTimeout(() => setShowAndroidInstallModal(false), 2000);
-                }}
-                className="w-full bg-[#1e1e2f] hover:bg-[#28283d] active:scale-97 text-white border border-white/20 font-extrabold py-2.5 rounded-2xl text-[10.5px] uppercase tracking-wider transition-all flex items-center justify-center space-x-2 cursor-pointer shadow-md block text-center"
-              >
-                <Download className="w-4 h-4 text-cyan-400" />
-                <span>📦 Download Android App Package Zip</span>
-              </a>
-
-              {/* 2. Open in Chrome / New Browser Tab if in iframe */}
-              {typeof window !== "undefined" && window.self !== window.top && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    window.open(window.location.href, "_blank");
-                  }}
-                  className="w-full bg-gradient-to-r from-cyan-600 to-blue-600 hover:scale-102 active:scale-97 text-white font-extrabold py-2 rounded-2xl text-[10px] uppercase tracking-wider transition-all shadow-md flex items-center justify-center space-x-2 cursor-pointer border border-cyan-300/40"
-                >
-                  <ExternalLink className="w-3.5 h-3.5 text-white" />
-                  <span>🌐 Open Full Screen Tab to Install</span>
-                </button>
-              )}
-            </div>
-
-            {/* Step-by-step visual install guide in Roman Urdu */}
-            <div className="bg-black/60 p-3 rounded-2xl border border-white/10 text-left text-[9px] text-gray-300 space-y-1.5">
-              <p className="text-white font-black uppercase tracking-wider text-[9.5px] flex items-center space-x-1">
-                <span className="text-[#00e676]">💡 Chrome Badge Hatane Aur Pure App Icon Ke Liye:</span>
-              </p>
-              <div className="grid grid-cols-1 gap-1 text-[8.5px] leading-tight">
-                <div className="flex items-start space-x-1.5 bg-white/5 p-1.5 rounded-lg border border-white/5">
-                  <span className="font-bold text-[#00e676] shrink-0">1.</span>
-                  <span>Purana <strong>Pardais Party (Chrome Badge)</strong> icon Home Screen se Delete / Remove karein.</span>
-                </div>
-                <div className="flex items-start space-x-1.5 bg-white/5 p-1.5 rounded-lg border border-white/5">
-                  <span className="font-bold text-cyan-400 shrink-0">2.</span>
-                  <span>Direct Chrome Browser main URL kholein aur Chrome Menu (<strong>⋮</strong>) par tap karein.</span>
-                </div>
-                <div className="flex items-start space-x-1.5 bg-white/5 p-1.5 rounded-lg border border-white/5">
-                  <span className="font-bold text-amber-400 shrink-0">3.</span>
-                  <span><strong>"Install app"</strong> / <strong>"Install Pardais Party"</strong> par tap karein. Android WebAPK bina kisi Chrome badge ke bilkul Real App ki tarha install ho jaye ga!</span>
-                </div>
-              </div>
-            </div>
-
-            <button
-              type="button"
-              onClick={() => setShowAndroidInstallModal(false)}
-              className="text-[9px] text-gray-400 hover:text-white underline cursor-pointer pt-0.5 block mx-auto"
-            >
-              Close / Baad Mein Karein
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* 💳 Online Payment Checkout Modal (Google Pay, Cards, EasyPaisa, JazzCash, Bank) */}
-      {showCardPaymentModal && (
-        (() => {
-          const currentPkg = selectedPaymentPackage || (onlinePackages && onlinePackages.length > 0 ? onlinePackages[0] : { id: 'pkg-1', coins: 1000, originalPrice: 100, discount: 0 });
-          const safeCountry = selectedCurrencyCountry || COUNTRIES_CURRENCIES[0];
-          const costObj = getCoinsCostInCurrency(currentPkg.coins || 0, safeCountry, currentPkg.discount || 0);
-
-          return (
-            <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-[9999] flex items-center justify-center p-4 overflow-y-auto animate-fadeIn">
-              <div className="bg-[#12121a] border border-[#ff007f]/30 rounded-2xl p-5 w-full max-w-sm text-center relative shadow-2xl space-y-4 my-auto">
-                <button
-                  type="button"
-                  onClick={() => setShowCardPaymentModal(false)}
-                  className="absolute top-3 right-3 text-gray-400 hover:text-white p-1 rounded-full bg-white/5 hover:bg-white/10 transition-all cursor-pointer"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-
-                <div className="space-y-1 pt-1">
-                  <div className="w-10 h-10 rounded-full bg-gradient-to-r from-yellow-500 to-amber-500 text-black flex items-center justify-center mx-auto shadow-lg shadow-yellow-500/20 font-black">
-                    <CreditCard className="w-5 h-5" />
-                  </div>
-                  <h3 className="text-sm font-black text-white uppercase tracking-wider">Online Coin Recharge Gateway</h3>
-                  <p className="text-[10px] text-gray-400 font-mono">Secure Server-Side Payment Authorization</p>
-                </div>
-
-                {/* Package details */}
-                <div className="bg-[#1e1e2d] border border-[#303040] rounded-xl p-3 text-left space-y-2">
-                  <div className="flex justify-between items-center border-b border-[#303040] pb-2">
-                    <div>
-                      <span className="text-xs font-black text-yellow-400 font-mono flex items-center space-x-1">
-                        <Coins className="w-3.5 h-3.5 text-yellow-400 inline mr-1" />
-                        {currentPkg.coins.toLocaleString()} Coins
-                      </span>
-                      <p className="text-[9px] text-gray-400 font-mono">Country: {safeCountry.flag} {safeCountry.name}</p>
-                    </div>
-                    <div className="text-right">
-                      <span className="text-xs font-black text-green-400 font-mono">{costObj.formattedWithCode}</span>
-                      <p className="text-[8px] text-gray-400 font-mono">Base: ₨{costObj.pkrBase}</p>
-                    </div>
-                  </div>
-
-                  {/* Payment Method Selector Tabs */}
-                  <div className="grid grid-cols-2 gap-1.5 pt-1">
-                    <button
-                      type="button"
-                      onClick={() => setActivePaymentMethodTab('card')}
-                      className={`py-1.5 px-2 rounded-lg text-[10px] font-bold font-mono transition-all ${
-                        activePaymentMethodTab === 'card'
-                          ? 'bg-yellow-500 text-black shadow-md'
-                          : 'bg-[#12121a] text-gray-400 hover:text-white border border-[#303040]'
-                      }`}
-                    >
-                      Credit/Debit Card
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setActivePaymentMethodTab('gpay')}
-                      className={`py-1.5 px-2 rounded-lg text-[10px] font-bold font-mono transition-all ${
-                        activePaymentMethodTab === 'gpay'
-                          ? 'bg-blue-600 text-white shadow-md'
-                          : 'bg-[#12121a] text-gray-400 hover:text-white border border-[#303040]'
-                      }`}
-                    >
-                      Google Pay
-                    </button>
-                  </div>
-                </div>
-
-                {paymentErrorModalMsg && (
-                  <div className="p-2.5 bg-red-950/50 border border-red-500/40 rounded-xl text-[10px] text-red-200 text-left font-mono flex items-start space-x-2 animate-bounce">
-                    <AlertTriangle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
-                    <span>{paymentErrorModalMsg}</span>
-                  </div>
-                )}
-
-                {/* TAB 1: CREDIT / DEBIT CARD FORM */}
-                {activePaymentMethodTab === 'card' && (
-                  <div className="space-y-3 pt-1 text-left animate-fadeIn">
-                    <div className="space-y-2.5 bg-[#1e1e2d]/60 border border-[#303040] p-3 rounded-xl">
-                      <div className="space-y-1">
-                        <label className="text-[8px] uppercase tracking-widest text-gray-400 font-mono font-bold block">Cardholder Name</label>
-                        <input
-                          type="text"
-                          placeholder="Name on Card"
-                          value={cardFormHolder}
-                          onChange={(e) => setCardFormHolder(e.target.value)}
-                          className="w-full bg-[#12121a] border border-[#303040] rounded-lg p-2 text-white font-mono text-xs focus:outline-none focus:border-[#ff007f]"
-                        />
-                      </div>
-
-                      <div className="space-y-1">
-                        <label className="text-[8px] uppercase tracking-widest text-gray-400 font-mono font-bold block">Card Number</label>
-                        <input
-                          type="text"
-                          placeholder="4000 0000 0000 0000"
-                          maxLength={19}
-                          value={cardFormNumber}
-                          onChange={(e) => {
-                            const val = e.target.value.replace(/\D/g, '');
-                            const formatted = val.match(/.{1,4}/g)?.join(' ') || val;
-                            setCardFormNumber(formatted);
-                          }}
-                          className="w-full bg-[#12121a] border border-[#303040] rounded-lg p-2 text-white font-mono text-xs tracking-widest focus:outline-none focus:border-[#ff007f]"
-                        />
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-2">
-                        <div className="space-y-1">
-                          <label className="text-[8px] uppercase tracking-widest text-gray-400 font-mono font-bold block">Expiry Date</label>
-                          <input
-                            type="text"
-                            placeholder="MM/YY"
-                            maxLength={5}
-                            value={cardFormExpiry}
-                            onChange={(e) => {
-                              const val = e.target.value.replace(/\D/g, '');
-                              if (val.length >= 3) {
-                                setCardFormExpiry(val.slice(0, 2) + '/' + val.slice(2, 4));
-                              } else {
-                                setCardFormExpiry(val);
-                              }
-                            }}
-                            className="w-full bg-[#12121a] border border-[#303040] rounded-lg p-2 text-white font-mono tracking-widest text-xs focus:outline-none focus:border-[#ff007f]"
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <label className="text-[8px] uppercase tracking-widest text-gray-400 font-mono font-bold block">CVV Code</label>
-                          <input
-                            type="password"
-                            placeholder="•••"
-                            maxLength={3}
-                            value={cardFormCvv}
-                            onChange={(e) => setCardFormCvv(e.target.value.replace(/\D/g, ''))}
-                            className="w-full bg-[#12121a] border border-[#303040] rounded-lg p-2 text-white font-mono tracking-widest text-xs focus:outline-none focus:border-[#ff007f]"
-                          />
-                        </div>
-                      </div>
-
-                      {isProcessingCard ? (
-                        <div className="py-3 text-center space-y-1.5 bg-[#12121a] rounded-xl border border-yellow-500/30">
-                          <div className="w-6 h-6 border-2 border-yellow-400 border-t-transparent rounded-full animate-spin mx-auto" />
-                          <p className="text-[10px] font-mono font-bold text-yellow-400">Verifying Card Authorization Server-Side...</p>
-                        </div>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={async () => {
-                            if (!cardFormHolder.trim() || cardFormNumber.replace(/\D/g, '').length < 15 || !cardFormExpiry || cardFormCvv.length < 3) {
-                              alert('Please enter full card details correctly (Holder Name, 16-Digit Card Number, Expiry, and CVV)!');
-                              return;
-                            }
-                            setIsProcessingCard(true);
-                            setPaymentErrorModalMsg('');
-
-                            const orderId = `CARD-${Math.floor(100000 + Math.random() * 900000)}`;
-                            const cardMethod = `Credit/Debit Card (Visa/MC **** ${cardFormNumber.slice(-4)})`;
-
-                            try {
-                              const token = localStorage.getItem('pardais_user_token');
-                              const endpoint = resolveApiUrl('/api/v1/payments/process');
-                              const res = await fetch(endpoint, {
-                                method: 'POST',
-                                headers: {
-                                  'Content-Type': 'application/json',
-                                  ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-                                },
-                                body: JSON.stringify({
-                                  orderId,
-                                  username: user?.username || 'Pardais_User',
-                                  userId: user?.uniqueId || user?.uid,
-                                  amount: currentPkg?.price || costObj.pkrBase || 10,
-                                  coins: currentPkg?.coins || 10000,
-                                  paymentMethod: cardMethod
-                                })
-                              });
-                              if (res.ok) {
-                                const paymentData = await res.json().catch(() => ({}));
-                                setUser(prev => ({
-                                  ...prev,
-                                  coins: typeof paymentData.newCoinBalance === 'number' ? paymentData.newCoinBalance : prev.coins
-                                }));
-                                alert('Card Payment Approved!');
-                                setShowCardPaymentModal(false);
-                              } else {
-                                setPaymentErrorModalMsg('Card payment gateway authorization failed. Please try again.');
-                              }
-                            } catch (err) {
-                              setPaymentErrorModalMsg('Card transaction error. Please try again.');
-                            } finally {
-                              setIsProcessingCard(false);
-                            }
-                          }}
-                          className='w-full bg-gradient-to-r from-yellow-500 to-amber-600 hover:from-yellow-400 hover:to-amber-500 text-black font-black text-xs uppercase py-3 rounded-xl transition-all shadow-lg cursor-pointer'
-                        >
-                          Pay & Recharge Now
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-          );
-        })()
-      )}
-
-      {/* ========================================= */}
-      {/* GOOGLE / INITIAL PROFILE COMPLETION */}
-      {showProfileSetupModal && String(user?.authProvider || "").toLowerCase() === "google" && !user?.usernameLockedAt && (
-        <div className="fixed inset-0 bg-black/85 z-[10000] flex items-center justify-center p-4 backdrop-blur-md">
-          <div className="bg-gradient-to-b from-[#1c082b] via-[#100a1c] to-[#0a0a12] border border-[#ff007f]/50 rounded-3xl w-full max-w-[400px] p-5 shadow-[0_0_40px_rgba(255,0,127,0.3)] text-white space-y-4 max-h-[92vh] overflow-y-auto">
-            <div className="text-center space-y-1">
-              <div className="w-12 h-12 rounded-2xl bg-white mx-auto flex items-center justify-center shadow-lg">
-                <span className="text-2xl font-black">G</span>
-              </div>
-              <h3 className="text-xl font-black">Complete Your Profile</h3>
-              <p className="text-xs text-gray-400">Your Google account is verified. Complete these details to create your permanent Pardais account.</p>
-            </div>
-
-            <div className="bg-[#151520] border border-[#303040] rounded-xl p-3 space-y-1">
-              <p className="text-[10px] uppercase tracking-wider text-gray-500">Pardais ID</p>
-              <p className="text-sm font-black text-cyan-300 tracking-wider">{user?.uniqueId || "Generating…"}</p>
-              <p className="text-[9px] text-gray-500">Assigned by Pardais and locked permanently.</p>
-            </div>
-
-            <div className="space-y-3">
-              <div>
-                <label className="text-[10px] uppercase tracking-wider text-gray-400 block mb-1">Full Name</label>
-                <input value={setupFullName} onChange={e=>setSetupFullName(e.target.value)} className="w-full bg-[#1e1e2d] border border-[#303040] rounded-xl px-3 py-3 text-white text-sm" autoComplete="name" />
-              </div>
-              <div>
-                <label className="text-[10px] uppercase tracking-wider text-gray-400 block mb-1">Choose Username</label>
-                <input value={setupUsername} onChange={e=>setSetupUsername(e.target.value.replace(/[^a-zA-Z0-9_]/g, ""))} placeholder="your_username" className="w-full bg-[#1e1e2d] border border-[#303040] rounded-xl px-3 py-3 text-white text-sm" autoComplete="username" />
-                <p className="text-[9px] text-gray-500 mt-1">You can edit this now. After completing your profile, it will be locked.</p>
-              </div>
-              <div>
-                <label className="text-[10px] uppercase tracking-wider text-gray-400 block mb-1">Email</label>
-                <input value={user?.email || ""} readOnly className="w-full bg-[#151520] border border-[#303040] rounded-xl px-3 py-3 text-gray-400 text-sm" />
-              </div>
-              <div className="relative">
-                <label className="text-[10px] uppercase tracking-wider text-gray-400 block mb-1">Create Password</label>
-                <input value={setupPassword} onChange={e=>setSetupPassword(e.target.value)} type={setupShowPassword ? "text" : "password"} placeholder="6+ characters" className="w-full bg-[#1e1e2d] border border-[#303040] rounded-xl px-3 py-3 pr-12 text-white text-sm" autoComplete="new-password" />
-                <button type="button" onClick={()=>setSetupShowPassword(v=>!v)} className="absolute right-2 bottom-1 w-9 h-9 flex items-center justify-center text-lg" aria-label={setupShowPassword ? "Hide password" : "Show password"}>{setupShowPassword ? "🙈" : "👁️"}</button>
-              </div>
-              <div className="relative">
-                <label className="text-[10px] uppercase tracking-wider text-gray-400 block mb-1">Confirm Password</label>
-                <input value={setupConfirmPassword} onChange={e=>setSetupConfirmPassword(e.target.value)} type={setupShowConfirmPassword ? "text" : "password"} placeholder="Repeat password" className="w-full bg-[#1e1e2d] border border-[#303040] rounded-xl px-3 py-3 pr-12 text-white text-sm" autoComplete="new-password" />
-                <button type="button" onClick={()=>setSetupShowConfirmPassword(v=>!v)} className="absolute right-2 bottom-1 w-9 h-9 flex items-center justify-center text-lg" aria-label={setupShowConfirmPassword ? "Hide confirm password" : "Show confirm password"}>{setupShowConfirmPassword ? "🙈" : "👁️"}</button>
-              </div>
-            </div>
-
-            {loginError && <p className="text-red-300 text-xs bg-red-950/30 border border-red-500/50 rounded-xl p-3">{loginError}</p>}
-            <button type="button" onClick={(e)=>handleCompleteProfileSetup(e as any)} className="w-full bg-gradient-to-r from-[#ff007f] to-[#7b2cbf] text-white py-3 rounded-xl font-bold">Complete Profile & Enter Pardais</button>
-          </div>
-        </div>
-      )}
-
-      {/* AUTHENTICATION REQUIRED MODAL — persistent Email/Password + Signup + OTP + Recovery */}
-      {showAuthModal && (
-        <div className="fixed inset-0 bg-black/85 z-[9999] flex items-center justify-center p-4 backdrop-blur-md animate-fade-in safe-padding-top safe-padding-bottom">
-          <div className="bg-gradient-to-b from-[#1c082b] via-[#100a1c] to-[#0a0a12] border border-[#ff007f]/50 rounded-3xl w-full max-w-[400px] p-5 shadow-[0_0_40px_rgba(255,0,127,0.3)] text-white relative max-h-[90vh] overflow-y-auto">
-            <button
-              type="button"
-              onClick={() => { setShowAuthModal(false); setPendingAuthCallback(null); setLoginError(""); }}
-              className="absolute top-3.5 right-3.5 w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-gray-300 hover:text-white transition-all cursor-pointer z-10"
-              aria-label="Close authentication"
-            >
-              <X className="w-4 h-4" />
-            </button>
-
-            <div className="text-center space-y-2 pt-1 pb-4">
-              <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-[#ff007f] via-[#7b2cbf] to-[#00f5ff] p-0.5 mx-auto shadow-lg flex items-center justify-center">
-                <div className="w-full h-full bg-[#0a0a12] rounded-[14px] flex items-center justify-center">
-                  <Lock className="w-6 h-6 text-[#00f5ff]" />
-                </div>
-              </div>
-              <h3 className="text-base font-black text-white tracking-wide uppercase font-mono">Pardais Party</h3>
-              <p className="text-[11px] text-pink-200 leading-snug px-2">Login to your account or create a new one.</p>
-            </div>
-
-            <AuthScreen
-              onAuthenticated={handleAuthAuthenticated}
-              onGoogleSignIn={handleGoogleSignIn}
-              initialMode="login"
-            />
-
-            <button
-              type="button"
-              onClick={() => { setShowAuthModal(false); setPendingAuthCallback(null); }}
-              className="w-full mt-3 py-2 bg-white/5 hover:bg-white/10 text-gray-300 font-bold text-xs rounded-xl border border-white/10 transition-all cursor-pointer text-center"
-            >
-              Continue Browsing as Guest 👁️
-            </button>
           </div>
         </div>
       )}

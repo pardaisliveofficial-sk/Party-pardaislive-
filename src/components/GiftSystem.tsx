@@ -1447,7 +1447,7 @@ export const GiftAnimationEngine: React.FC<GiftAnimationEngineProps> = ({
   const isPlayableVideoUrl = !videoError && Boolean(videoSource && (isVideoFormat || isVideoUrl));
 
   // Detect whether source is an Animated GIF
-  const isGif = !isPlayableVideoUrl && (
+  const isGif = !isPlayableVideoUrl && Boolean(videoSource) && (
     format === "gif" || 
     (typeof rawVideoUrl === "string" && (rawVideoUrl.endsWith(".gif") || rawVideoUrl.startsWith("data:image/gif")))
   );

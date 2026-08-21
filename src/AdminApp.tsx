@@ -1389,7 +1389,7 @@ export default function AdminApp() {
                     {db.hosts.map((host: any) => (
                       <div key={host.id} className="flex items-center justify-between p-2.5 rounded-xl bg-black/35 border border-white/5">
                         <div className="flex items-center space-x-2.5 bg-transparent">
-                          <img src={host.avatar} className="w-9 h-9 rounded-full object-cover border border-white/10" />
+                          <img src={host.avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100"} className="w-9 h-9 rounded-full object-cover border border-white/10" />
                           <div className="bg-transparent text-left">
                             <p className="text-[11px] font-black text-white leading-tight">{host.name}</p>
                             <span className="text-[7.5px] bg-[#ff007f]/10 text-[#ff007f] border border-[#ff007f]/20 px-1 py-0.2 rounded uppercase font-black tracking-widest font-mono mt-1 inline-block">
@@ -1546,7 +1546,7 @@ export default function AdminApp() {
                       return (
                         <div key={i} className="p-3 bg-black/40 border border-white/5 rounded-xl flex items-center justify-between">
                           <div className="flex items-center space-x-2.5">
-                            <img src={u.avatar} className="w-8 h-8 rounded-full object-cover border border-white/10" />
+                            <img src={u.avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100"} className="w-8 h-8 rounded-full object-cover border border-white/10" />
                             <div>
                               <p className="text-xs font-bold text-white">@{u.username}</p>
                               <p className="text-[9px] text-gray-400 font-mono">{userEmail}</p>
@@ -1881,7 +1881,7 @@ export default function AdminApp() {
                             {/* Broadcaster */}
                             <td className="py-4 pl-2 font-sans">
                               <div className="flex items-center space-x-2.5">
-                                <img src={host.avatar} className="w-9 h-9 rounded-full object-cover border border-white/10" />
+                                <img src={host.avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100"} className="w-9 h-9 rounded-full object-cover border border-white/10" />
                                 <div>
                                   <p className="font-bold text-white leading-snug">{host.name}</p>
                                   <span className="text-[9px] text-pink-400 font-mono">@{host.username || host.name.toLowerCase().replace(/\s+/g, "_")}</span>
@@ -2390,7 +2390,7 @@ export default function AdminApp() {
                       <div key={fam.id} className="p-4 rounded-xl bg-black/45 border border-white/5 flex flex-col justify-between space-y-3.5 text-left">
                         <div className="flex justify-between items-start bg-transparent">
                           <div className="flex items-center space-x-3 bg-transparent">
-                            <img src={fam.avatar} className="w-12 h-12 rounded-xl object-cover border border-white/10" />
+                            <img src={fam.avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100"} className="w-12 h-12 rounded-xl object-cover border border-white/10" />
                             <div className="bg-transparent text-left">
                               <h5 className="text-xs font-black text-white leading-normal uppercase">{fam.name}</h5>
                               <p className="text-[10px] text-gray-400 font-bold">Leader: <strong className="text-pink-500">@{fam.leader}</strong></p>
@@ -2503,10 +2503,14 @@ export default function AdminApp() {
                       <div className="space-y-1.5">
                         <span className="text-[10px] font-mono text-gray-500 uppercase font-black block">Front Document Image</span>
                         <div 
-                          onClick={() => setKycDocViewerModal(req.idFront)}
+                          onClick={() => req.idFront && setKycDocViewerModal(req.idFront)}
                           className="border border-white/10 rounded-xl overflow-hidden aspect-video bg-black flex items-center justify-center relative cursor-pointer group hover:border-pink-500 transition-all"
                         >
-                          <img src={req.idFront} className="w-full h-full object-cover group-hover:scale-105 transition-all" />
+                          {req.idFront ? (
+                            <img src={req.idFront} className="w-full h-full object-cover group-hover:scale-105 transition-all" alt="ID Front" />
+                          ) : (
+                            <span className="text-gray-500 text-xs font-mono">No Front Image</span>
+                          )}
                           <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-all">
                             <span className="text-white text-xs font-bold font-mono">🔍 Click to Enlarge</span>
                           </div>
@@ -2515,10 +2519,14 @@ export default function AdminApp() {
                       <div className="space-y-1.5">
                         <span className="text-[10px] font-mono text-gray-500 uppercase font-black block">Back / Face Verification Frame</span>
                         <div 
-                          onClick={() => setKycDocViewerModal(req.idBack)}
+                          onClick={() => req.idBack && setKycDocViewerModal(req.idBack)}
                           className="border border-white/10 rounded-xl overflow-hidden aspect-video bg-black flex items-center justify-center relative cursor-pointer group hover:border-pink-500 transition-all"
                         >
-                          <img src={req.idBack} className="w-full h-full object-cover group-hover:scale-105 transition-all" />
+                          {req.idBack ? (
+                            <img src={req.idBack} className="w-full h-full object-cover group-hover:scale-105 transition-all" alt="ID Back" />
+                          ) : (
+                            <span className="text-gray-500 text-xs font-mono">No Back Image</span>
+                          )}
                           <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-all">
                             <span className="text-white text-xs font-bold font-mono">🔍 Click to Enlarge</span>
                           </div>
@@ -2924,7 +2932,7 @@ export default function AdminApp() {
                         return (
                           <div key={i} className="p-2.5 bg-black/30 border border-white/5 rounded-xl flex items-center justify-between">
                             <div className="flex items-center space-x-2">
-                              <img src={u.avatar} className="w-7 h-7 rounded-full object-cover border border-white/10" />
+                              <img src={u.avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100"} className="w-7 h-7 rounded-full object-cover border border-white/10" />
                               <span className="text-xs font-bold text-white truncate max-w-[100px]">@{u.username}</span>
                             </div>
                             {isMod ? (
@@ -2997,7 +3005,7 @@ export default function AdminApp() {
                         <span className="text-[9px] text-gray-400 font-mono">{host.category || "video"}</span>
                       </div>
                       <div className="flex items-center space-x-2.5">
-                        <img src={host.avatar} className="w-8 h-8 rounded-full object-cover border border-white/10" />
+                        <img src={host.avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100"} className="w-8 h-8 rounded-full object-cover border border-white/10" />
                         <div className="truncate">
                           <p className="text-xs font-bold text-white truncate">@{host.hostUsername || host.name}</p>
                           <p className="text-[10px] text-gray-400 truncate">{host.statusText || "Live Broadcast"}</p>
@@ -3280,7 +3288,7 @@ export default function AdminApp() {
                   {db.configurations.banners.map((banner: any) => (
                     <div key={banner.id} className="p-4 rounded-xl bg-black/40 border border-white/5 flex flex-col md:flex-row md:items-center justify-between gap-4">
                       <div className="flex items-center space-x-4 bg-transparent text-left">
-                        <img src={banner.image} className="w-20 h-12 object-cover rounded-lg border border-white/10" />
+                        <img src={banner.image || "https://images.unsplash.com/photo-1511512578047-dfb367046420?w=300"} className="w-20 h-12 object-cover rounded-lg border border-white/10" />
                         <div className="bg-transparent">
                           <p className="text-xs font-black text-white">{banner.title}</p>
                           <span className="text-[8px] text-gray-500 font-mono font-bold block mt-1">ID: {banner.id}</span>
@@ -3754,7 +3762,7 @@ export default function AdminApp() {
                                     key={uIdx}
                                     className="bg-black/60 border border-white/10 px-3 py-1.5 rounded-xl flex items-center space-x-2"
                                   >
-                                    <img src={u.avatar} className="w-5 h-5 rounded-full object-cover border border-white/20" />
+                                    <img src={u.avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100"} className="w-5 h-5 rounded-full object-cover border border-white/20" />
                                     <div className="text-[10px]">
                                       <span className="font-bold text-white">@{u.username}</span>
                                       <span className="text-gray-400 font-mono ml-1.5">(ID #{u.uniqueId || "N/A"})</span>
@@ -3826,7 +3834,7 @@ export default function AdminApp() {
                     </div>
 
                     <p className="text-[9.5px] text-gray-400 leading-normal">
-                      Pardais Party ke sabhi viewers aur users is Official Channel Link par tap karke instant announcements aur tournament updates join karte hain.
+                      Pardais Party ke sabhi viewers aur users is Official Channel Link par tap karke instant announcements, free coin giveaways, aur tournament updates join karte hain.
                     </p>
 
                     <div className="space-y-2">

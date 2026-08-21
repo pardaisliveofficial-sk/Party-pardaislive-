@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { emailStatus, sendEmailOtp, verifyEmailOtp, emailPasswordLogin, createEmailPassword, requestPasswordReset, resetEmailPassword } from "../lib/apiClient";
+import { emailStatus, sendEmailOtp, verifyEmailOtp, emailPasswordLogin, createEmailPassword, requestPasswordReset, resetEmailPassword, createAccount } from "../lib/apiClient";
 import { resolveApiUrl } from "../lib/apiClient";
 
 type Props = { onAuthenticated: (payload: any) => void; onGoogleSignIn?: () => void | Promise<void>; };
@@ -31,15 +31,7 @@ export default function PersistentEmailAuth({ onAuthenticated, onGoogleSignIn }:
 
   const continueEmail = async () => {
     const clean = email.trim().toLowerCase();
-    if (!clean) { setError("Enter your email or username."); return; }
-    // Username/ID login goes directly to the password step. Signup still requires
-    // a real email because the new-account flow verifies ownership by OTP.
-    if (!clean.includes("@")) {
-      setError("");
-      setExistingNeedsPassword(true);
-      setStep("password");
-      return;
-    }
+    if (!clean || !clean.includes("@")) { setError("Enter a valid email address."); return; }
     setError(""); setBusy(true);
     try {
       const status = await emailStatus(clean);
@@ -96,9 +88,6 @@ export default function PersistentEmailAuth({ onAuthenticated, onGoogleSignIn }:
   };
 
   const saveProfile = async () => {
-    // Read the verified signup session from state first, then durable sessionStorage.
-    // This fixes the case where the profile screen survives but the in-memory
-    // React token has been cleared/remounted before Create Account is pressed.
     let verifiedToken = String(token || "").trim();
     if (!verifiedToken) {
       try { verifiedToken = String(sessionStorage.getItem("pardais_signup_token") || "").trim(); } catch {}
@@ -109,28 +98,12 @@ export default function PersistentEmailAuth({ onAuthenticated, onGoogleSignIn }:
     if (!name.trim()) { setError("Enter your name."); return; }
     setError(""); setBusy(true);
     try {
-      // OTP verification is already complete. Do NOT call the legacy
-      // set-password + setup-profile pair here: that split flow can leave a
-      // half-created account and can also reject the verified session.
-      // The backend's create-account route performs the complete transition
-      // (password + profile + registration state) in one operation.
-      const response = await fetch(resolveApiUrl("/api/v1/auth/create-account"), {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${verifiedToken}`
-        },
-        body: JSON.stringify({
-          fullName: name.trim(),
-          username: username.trim().replace(/^@/, ""),
-          password,
-          verificationToken: verifiedToken
-        })
+      const data = await createAccount({
+        fullName: name.trim(),
+        username: username.trim().replace(/^@/, ""),
+        password,
+        verificationToken: verifiedToken
       });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok || !data?.success) {
-        throw new Error(data?.error || "Could not create account.");
-      }
       onAuthenticated({
         success: true,
         token: data.token || verifiedToken,
@@ -174,7 +147,7 @@ export default function PersistentEmailAuth({ onAuthenticated, onGoogleSignIn }:
       </button>}
     </>}
     {step === "password" && <>
-      <input value={email} readOnly type="text" className="w-full bg-[#1e1e2d] border border-[#303040] rounded-xl px-3 py-3 text-white text-sm" />
+      <input value={email} readOnly type="email" className="w-full bg-[#1e1e2d] border border-[#303040] rounded-xl px-3 py-3 text-white text-sm" />
       <div className="relative w-full">
         <input value={password} onChange={e=>setPassword(e.target.value)} type={showPassword ? "text" : "password"} placeholder="Password" className="w-full bg-[#1e1e2d] border border-[#303040] rounded-xl px-3 py-3 pr-12 text-white text-sm" autoComplete="current-password" />
         <button type="button" onClick={()=>setShowPassword(v=>!v)} className="mt-1 inline-flex items-center gap-1 rounded-md border border-white/10 bg-white/5 px-2 py-1 text-[10px] text-gray-300 hover:bg-white/10" aria-label={showPassword ? "Hide password" : "Show password"}>{showPassword ? "🙈 Hide Password" : "👁 Show Password"}</button>

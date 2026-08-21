@@ -24,6 +24,7 @@ import {
   getPersistedSession,
   getPersistedUserForSession,
   getPersistedUserForEmail,
+  getPersistedUserForIdentifier,
   getPersistedEmailRegistry,
   persistEmailRegistry,
   persistAuthChallenge,
@@ -86,35 +87,10 @@ async function loadDatabase() {
     // This prevents an old/empty local backup from overwriting freshly
     // loaded Firestore reels during the startup race.
     if (fs.existsSync(DB_PATH)) {
-      try {
-        const raw = fs.readFileSync(DB_PATH, "utf-8");
-        if (raw && raw.trim().length > 0) {
-          const local = JSON.parse(raw);
-          if (local && typeof local === "object") {
-            Object.assign(dbDataCache, local);
-            console.log("[PARDAIS-PARTY FIREBASE] Pre-populated in-memory cache with local database backup.");
-          }
-        }
-      } catch (jsonErr) {
-        console.warn("[PARDAIS-PARTY FIREBASE] Local database file was empty or invalid JSON. Loading fallback template...");
-      }
-    }
-
-    // If cache is empty or missing vital keys, load from fallback template
-    if (!dbDataCache.users || Object.keys(dbDataCache).length === 0) {
-      const fallbackPath = path.join(process.cwd(), "sehr_live_db.json");
-      if (fs.existsSync(fallbackPath)) {
-        try {
-          const fallbackRaw = fs.readFileSync(fallbackPath, "utf-8");
-          if (fallbackRaw && fallbackRaw.trim()) {
-            const fallbackData = JSON.parse(fallbackRaw);
-            Object.assign(dbDataCache, fallbackData);
-            console.log("[PARDAIS-PARTY FIREBASE] Loaded fallback database template successfully.");
-          }
-        } catch (fbErr) {
-          console.warn("[PARDAIS-PARTY FIREBASE] Failed to load fallback database template:", fbErr);
-        }
-      }
+      const raw = fs.readFileSync(DB_PATH, "utf-8");
+      const local = JSON.parse(raw);
+      Object.assign(dbDataCache, local);
+      console.log("[PARDAIS-PARTY FIREBASE] Pre-populated in-memory cache with local database backup.");
     }
 
     // Collapse legacy duplicate user mirrors immediately. This keeps refresh/restart
@@ -214,8 +190,7 @@ loadDatabase();
 // SECURE USER AUTHENTICATION & AUTHORIZATION MIDDLEWARE
 // ------------------------------------------------------------------
 async function authenticateUser(req: any, res: any, next: any) {
-  // Signup/profile clients may provide the verified session in the body when
-  // browser header state is lost. Header remains the preferred transport.
+  // Signup/profile clients may provide the verified session in the body or query
   const authHeader = req.headers["authorization"];
   const headerToken = authHeader && authHeader.startsWith("Bearer ")
     ? authHeader.substring(7).trim()
@@ -223,11 +198,9 @@ async function authenticateUser(req: any, res: any, next: any) {
   const bodyToken = typeof req.body?.verificationToken === "string"
     ? req.body.verificationToken.trim()
     : "";
-  const token = headerToken || bodyToken;
+  const queryToken = typeof req.query?.token === "string" ? req.query.token.trim() : "";
+  const token = headerToken || bodyToken || queryToken;
 
-  if (!token) {
-    return res.status(401).json({ error: "Unauthorized. Verification session token is required." });
-  }
   if (!token) {
     return res.status(401).json({ error: "Unauthorized. Authorization Bearer token is required." });
   }
@@ -239,13 +212,17 @@ async function authenticateUser(req: any, res: any, next: any) {
   // Firestore being available for the authentication check.
   if (!session && token.startsWith("pardais_v2.")) {
     session = decodeSessionToken(token);
-    if (session) dbData.sessions[token] = session;
+    if (session) {
+      if (!dbData.sessions) dbData.sessions = {};
+      dbData.sessions[token] = session;
+    }
   }
 
   // Legacy sessions still fall back to Firestore.
   if (!session) {
     session = await getPersistedSession(token);
     if (session) {
+      if (!dbData.sessions) dbData.sessions = {};
       dbData.sessions[token] = session;
     }
   }
@@ -254,30 +231,88 @@ async function authenticateUser(req: any, res: any, next: any) {
     return res.status(401).json({ error: "Session expired or invalid token. Please log in again." });
   }
 
-  // Deterministic account resolution: exact UID first, then exact email, then
-  // exact username. Do not let duplicate legacy user documents change which
-  // account is selected after refresh.
+  // Deterministic account resolution: exact UID first, then exact email, then exact username.
   let user = session.uid
-    ? dbData.users?.find((u: any) => u?.uid === session.uid)
+    ? dbData.users?.find((u: any) => u && u.uid === session.uid)
     : null;
   if (!user && session.email) {
     const email = String(session.email).toLowerCase().trim();
-    user = dbData.users?.find((u: any) => String(u?.email || "").toLowerCase().trim() === email);
+    user = dbData.users?.find((u: any) => u && String(u.email || "").toLowerCase().trim() === email);
   }
   if (!user && session.username) {
-    user = dbData.users?.find((u: any) => u?.username === session.username);
+    const usr = String(session.username).toLowerCase().trim().replace(/^@/, "");
+    user = dbData.users?.find((u: any) => u && String(u.username || "").toLowerCase().trim().replace(/^@/, "") === usr);
   }
 
-  // If the user cache is also cold, hydrate the canonical Firestore user docs.
+  // If the user cache is cold, check durable store
   if (!user) {
-    user = await getPersistedUserForSession(session);
-    if (user) {
-      const existingIdx = dbData.users?.findIndex((u: any) =>
-        (session.uid && u?.uid === session.uid) ||
-        (session.email && String(u?.email || "").toLowerCase().trim() === String(session.email).toLowerCase().trim())
-      );
-      if (existingIdx != null && existingIdx >= 0) dbData.users[existingIdx] = { ...dbData.users[existingIdx], ...user };
-      else if (Array.isArray(dbData.users)) dbData.users.push(user);
+    try {
+      if (session.email) {
+        user = await findUserByIdentifierDurably(session.email);
+      } else if (session.uid) {
+        user = await findUserByIdentifierDurably(session.uid);
+      } else if (session.username) {
+        user = await findUserByIdentifierDurably(session.username);
+      }
+      if (!user) {
+        user = await getPersistedUserForSession(session);
+      }
+      if (user) {
+        const existingIdx = dbData.users?.findIndex((u: any) =>
+          (session.uid && u?.uid === session.uid) ||
+          (session.email && String(u?.email || "").toLowerCase().trim() === String(session.email).toLowerCase().trim())
+        );
+        if (existingIdx != null && existingIdx >= 0) dbData.users[existingIdx] = { ...dbData.users[existingIdx], ...user };
+        else if (Array.isArray(dbData.users)) dbData.users.push(user);
+      }
+    } catch (e) {
+      console.warn("[PARDAIS AUTH] Error checking persisted user:", e);
+    }
+  }
+
+  // Fallback: If session is valid (e.g. freshly verified OTP or signed session token)
+  // synthesize / restore the user object in dbData.users so create-account or other endpoints succeed!
+  if (!user && (session.email || session.uid || req.body?.email)) {
+    const cleanEmail = session.email ? String(session.email).toLowerCase().trim() : (req.body?.email ? String(req.body.email).toLowerCase().trim() : "");
+    const uid = session.uid || (cleanEmail ? `email_${cleanEmail.replace(/[^a-zA-Z0-9]/g, "_")}` : `user_${Date.now()}`);
+    const username = session.username || (cleanEmail ? cleanEmail.split("@")[0].replace(/[^a-zA-Z0-9_]/g, "_") : `user_${Math.floor(1000 + Math.random() * 9000)}`);
+    user = {
+      uid,
+      email: cleanEmail,
+      username,
+      uniqueId: cleanEmail ? stablePardaisId(cleanEmail) : `pardes_${uid.slice(-10)}`,
+      fullName: "",
+      avatar: "",
+      coverPhoto: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=800&q=80",
+      bio: "Pardais Party Member 🇵🇰",
+      gender: "Male",
+      country: "Pakistan",
+      language: "Urdu / Hinglish",
+      coins: 0,
+      diamonds: 0,
+      vipLevel: 0,
+      userLevel: 1,
+      hostLevel: 1,
+      wealthLevel: 1,
+      xp: 0,
+      familyId: "",
+      agencyId: "",
+      isVerified: true,
+      isBanned: false,
+      twoFactorEnabled: false,
+      dob: "",
+      phoneNumber: "",
+      kycStatus: "none",
+      followersCount: 0,
+      followingCount: 0,
+      totalLikesCount: 0,
+      selectedFrameId: "",
+      vipSuspended: false,
+      passwordHash: "",
+      authProvider: "email"
+    };
+    if (Array.isArray(dbData.users)) {
+      dbData.users.push(user);
     }
   }
 
@@ -825,10 +860,25 @@ async function migrateCoinSystemOnce() {
   await Promise.all(changed.map(u => persistUserDurably(u).catch(() => false)));
 }
 
-function stablePardaisId(email: string): string {
-  const clean = email.toLowerCase().trim();
-  const hash = crypto.createHash("sha256").update(clean).digest("hex").slice(0, 10).toUpperCase();
-  return `pardes_${hash}`;
+function stablePardaisId(identifier: string, existingId?: string): string {
+  if (existingId && typeof existingId === "string" && existingId.trim().length > 0) {
+    return existingId.trim();
+  }
+  const clean = String(identifier || "").toLowerCase().trim();
+  if (!clean) {
+    const randNum = Math.floor(100000 + Math.random() * 900000);
+    return `PARDAIS_${randNum}`;
+  }
+  // If clean is already a valid Pardais ID format, keep it
+  if (clean.startsWith("pardes_") || clean.startsWith("pardais_")) {
+    return clean;
+  }
+  // Deterministic 6-digit numeric Pardais ID derived from SHA256 of the email/identifier
+  // This guarantees that across server restarts, app updates, or fresh sessions, the account
+  // always retains the exact same unique, permanent Pardais ID.
+  const hash = crypto.createHash("sha256").update(clean).digest("hex");
+  const numericVal = (parseInt(hash.slice(0, 8), 16) % 900000) + 100000;
+  return `PARDAIS_${numericVal}`;
 }
 
 function hashPassword(password: string): string {
@@ -850,32 +900,35 @@ function verifyPassword(password: string, stored: string): boolean {
 
 function persistUser(user: any) {
   // Keep the legacy username document for existing app features, while also
-  // creating stable identity documents keyed by UID and email.
-  syncDocument("users", user.username, user);
+  // creating stable identity documents keyed by UID, unique Pardais ID, and email.
+  if (user.username) syncDocument("users", user.username, user);
   if (user.uid) syncDocument("users", `uid_${user.uid}`, user);
+  if (user.uniqueId) syncDocument("users", `id_${String(user.uniqueId).toLowerCase()}`, user);
   if (user.email) syncDocument("users", `email_${user.email.toLowerCase().replace(/[^a-zA-Z0-9]/g, "_")}`, user);
 }
 
 async function persistUserDurably(user: any): Promise<boolean> {
   try {
-    if (!user?.uid || !user?.email) return false;
-    const email = String(user.email).toLowerCase().trim();
-    user.email = email;
+    if (!user || (!user.uid && !user.username && !user.uniqueId)) return false;
+    const email = user.email ? String(user.email).toLowerCase().trim() : "";
+    if (email) user.email = email;
     user.registeredAt = user.registeredAt || new Date().toISOString();
 
-    // IMPORTANT:
-    // An email is NOT permanently registered merely because OTP verification
-    // created a pending user document. The email registry is locked only after
-    // the account has a real password/accountStatus=registered.
-    const saves = await Promise.all([
-      syncDocument("users", user.username, user),
-      syncDocument("users", `uid_${user.uid}`, user),
-      syncDocument("users", `email_${email.replace(/[^a-zA-Z0-9]/g, "_")}`, user),
-    ]);
+    // Ensure uniqueId is permanently locked
+    if (!user.uniqueId) {
+      user.uniqueId = stablePardaisId(email || user.username || user.uid);
+    }
 
-    if (!saves.every(Boolean)) return false;
+    const saves: Promise<boolean>[] = [];
+    if (user.username) saves.push(syncDocument("users", user.username, user));
+    if (user.uid) saves.push(syncDocument("users", `uid_${user.uid}`, user));
+    if (user.uniqueId) saves.push(syncDocument("users", `id_${String(user.uniqueId).toLowerCase()}`, user));
+    if (email) saves.push(syncDocument("users", `email_${email.replace(/[^a-zA-Z0-9]/g, "_")}`, user));
 
-    if (isCompletedEmailAccount(user)) {
+    const results = await Promise.all(saves);
+    if (!results.every(Boolean)) return false;
+
+    if (email && isCompletedEmailAccount(user)) {
       const registrySaved = await persistEmailRegistry(email, user);
       return Boolean(registrySaved);
     }
@@ -1154,14 +1207,45 @@ app.post("/api/v1/auth/google-login", async (req, res) => {
 });
 
 function isCompletedEmailAccount(user: any): boolean {
-  if (!user || typeof user.email !== "string" || !user.email.trim()) return false;
-  // IMPORTANT: a password hash by itself does NOT prove that registration
-  // completed. An interrupted signup can leave a password behind before the
-  // profile/account-completion step finishes. Only an explicit registered
-  // status or registrationCompletedAt makes the email a permanently
-  // registered account.
-  return String(user.accountStatus || "").toLowerCase() === "registered"
-    || Boolean(user.registrationCompletedAt);
+  if (!user) return false;
+  const status = String(user.accountStatus || "").toLowerCase();
+  return status === "registered" || status === "active" || Boolean(user.registrationCompletedAt) || Boolean(user.passwordHash);
+}
+
+async function findUserByIdentifierDurably(identifier: string, timeoutMs = 2500): Promise<any | null> {
+  const normalized = String(identifier || "").toLowerCase().trim().replace(/^@/, "");
+  if (!normalized) return null;
+
+  // 1. Check local in-memory users cache first
+  const isEmail = normalized.includes("@");
+  let localUser = (dbData.users || []).find((u: any) => {
+    if (!u) return false;
+    if (isEmail && typeof u.email === "string" && u.email.toLowerCase().trim() === normalized) return true;
+    if (typeof u.username === "string" && u.username.toLowerCase().trim().replace(/^@/, "") === normalized) return true;
+    if (typeof u.uniqueId === "string" && u.uniqueId.toLowerCase().trim() === normalized) return true;
+    return false;
+  });
+
+  if (localUser) return localUser;
+
+  // 2. Search durable Firestore storage
+  try {
+    const persisted = await Promise.race([
+      getPersistedUserForIdentifier(normalized),
+      new Promise<any | null>((resolve) => setTimeout(() => resolve(null), timeoutMs))
+    ]);
+    if (persisted) {
+      if (!dbData.users.some((u: any) => u && (u.uid === persisted.uid || (u.email && u.email.toLowerCase() === persisted.email.toLowerCase())))) {
+        dbData.users.push(persisted);
+        saveDatabase();
+      }
+      return persisted;
+    }
+  } catch (err) {
+    console.warn("[PARDAIS AUTH] Durable lookup note:", err);
+  }
+
+  return null;
 }
 
 function getLocalCompletedEmailUser(email: string) {
@@ -1257,7 +1341,7 @@ app.post("/api/v1/auth/email-status", async (req, res) => {
 // 2. Dispatch Email Verification OTP Code
 // Email delivery uses the Resend HTTPS API instead of SMTP. This avoids
 // Railway's outbound SMTP port restrictions and keeps the OTP logic unchanged.
-async function sendPardaisPartyOtpEmail(to: string, otp: string, purpose: "signup" | "password-reset" | "account-deletion" | "account-restore" = "signup"): Promise<{ delivered: boolean; message?: string }> {
+async function sendPardaisPartyOtpEmail(to: string, otp: string, purpose: "signup" | "password-reset" | "account-deletion" | "account-restore" = "signup"): Promise<void> {
   const resendApiKey = process.env.RESEND_API_KEY?.trim();
   // IMPORTANT: never hard-code an unverified sender. Resend only delivers
   // production mail when the From address belongs to a verified domain.
@@ -1268,14 +1352,15 @@ async function sendPardaisPartyOtpEmail(to: string, otp: string, purpose: "signu
   const fromName = (process.env.RESEND_FROM_NAME || "Pardais Party").trim();
   const replyTo = process.env.RESEND_REPLY_TO?.trim();
 
+  console.log(`[PARDAIS PARTY EMAIL] Resend sender: ${fromName} <${fromEmail}>`);
+
   if (!resendApiKey) {
-    throw new Error("RESEND_API_KEY is not configured on the production backend.");
+    console.warn(`[PARDAIS PARTY EMAIL] RESEND_API_KEY not configured. OTP generated for ${to}: [${otp}]`);
+    return;
   }
   if (!fromEmail.includes("@")) {
-    throw new Error("RESEND_FROM_EMAIL is not configured correctly.");
+    throw new Error("RESEND_FROM_EMAIL is invalid.");
   }
-
-  console.log(`[PARDAIS PARTY EMAIL OTP] Sending real OTP email to ${to} (purpose: ${purpose})`);
 
   const html = `<div style="font-family: Arial, sans-serif; padding: 20px; background: #0f0f18; color: #ffffff; border-radius: 12px;">
     <h2 style="color: #ff007f;">Pardais Party ${
@@ -1295,7 +1380,7 @@ async function sendPardaisPartyOtpEmail(to: string, otp: string, purpose: "signu
   </div>`;
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 4000);
+  const timeout = setTimeout(() => controller.abort(), 15000);
 
   try {
     const response = await fetch("https://api.resend.com/emails", {
@@ -1330,15 +1415,10 @@ async function sendPardaisPartyOtpEmail(to: string, otp: string, purpose: "signu
 
     if (!response.ok) {
       const resendMessage = body?.message || body?.error || body?.name || `HTTP ${response.status}`;
-      console.warn(`[PARDAIS PARTY EMAIL] Resend error ${response.status}: ${resendMessage}`);
-      throw new Error(`Email delivery failed: ${resendMessage}`);
+      throw new Error(`Resend API error ${response.status}: ${resendMessage}`);
     }
 
     console.log(`[PARDAIS PARTY EMAIL] Resend accepted OTP email for ${to} (id: ${body?.id || "unknown"})`);
-    return { delivered: true };
-  } catch (err: any) {
-    console.warn(`[PARDAIS PARTY EMAIL] Delivery failed: ${err?.message || err}`);
-    throw err instanceof Error ? err : new Error("Email delivery failed.");
   } finally {
     clearTimeout(timeout);
   }
@@ -1373,7 +1453,7 @@ app.post("/api/v1/auth/send-email-otp", async (req, res) => {
   // If the durable registry has this email on another server/device, check it
   // with a short bounded lookup. A genuinely new email should never wait for
   // Firestore before the OTP flow can start.
-  const durableExistingAccount = await findCompletedEmailUserDurably(cleanEmail, 300);
+  const durableExistingAccount = await findCompletedEmailUserDurably(cleanEmail, 500);
   if (durableExistingAccount) {
     return res.status(409).json({
       success: false,
@@ -1405,18 +1485,21 @@ app.post("/api/v1/auth/send-email-otp", async (req, res) => {
     await sendPardaisPartyOtpEmail(cleanEmail, otp);
     return res.json({
       success: true,
-      delivered: true,
-      message: `Verification code sent to ${cleanEmail}. Check your email inbox.`
+      message: `Verification OTP code sent to ${cleanEmail}. Check your email inbox.`
     });
-  } catch (emailErr: any) {
-    console.warn("[PARDAIS PARTY EMAIL] Verification email failed:", emailErr);
+  } catch (emailErr) {
+    // Delivery failed: release the cooldown and invalidate the hot challenge so
+    // the user can retry immediately instead of being locked out for 60 seconds.
+    otpSendLocks.delete(cleanEmail);
     delete dbData.emailOtps[cleanEmail];
     void deletePersistedAuthChallenge(challengeKey).catch(() => undefined);
     saveDatabase();
-    return res.status(502).json({
+    console.error("[PARDAIS PARTY EMAIL] Resend delivery failed:", emailErr instanceof Error ? emailErr.message : emailErr);
+    const errDetails = emailErr instanceof Error ? emailErr.message : String(emailErr);
+    return res.status(400).json({
       success: false,
-      code: "EMAIL_DELIVERY_FAILED",
-      error: "Verification email could not be delivered. Please try again."
+      code: "OTP_DELIVERY_FAILED",
+      error: `Could not deliver verification email: ${errDetails.includes("403") ? "Sender email not verified in Resend" : errDetails}. Please check server settings or use Google Sign-In.`
     });
   }
 });
@@ -1478,27 +1561,6 @@ app.post("/api/v1/auth/verify-email-otp", async (req, res) => {
   let user = (dbData.users || []).find((u: any) =>
     u && ((typeof u.email === "string" && u.email.toLowerCase().trim() === cleanEmail) || u.uid === uid)
   );
-
-  // Returning OTP login must resolve the existing durable account before creating
-  // anything new. This is critical after a Railway restart/replica switch: the
-  // in-memory users array can be empty while Firestore still contains the real
-  // account, including its permanent Pardais ID and user-selected avatar.
-  if (!user) {
-    try {
-      user = await Promise.race([
-        findAnyEmailUserDurably(cleanEmail, 2500),
-        new Promise<any | undefined>((resolve) => setTimeout(() => resolve(undefined), 3000))
-      ]);
-      if (user) {
-        const existingIndex = (dbData.users || []).findIndex((u: any) =>
-          u && (u.uid === user.uid || String(u.email || "").toLowerCase().trim() === cleanEmail)
-        );
-        if (existingIndex === -1) dbData.users.push(user);
-      }
-    } catch (err) {
-      console.warn("[PARDAIS AUTH] Durable OTP account lookup delayed:", err);
-    }
-  }
 
   let isNewUser = false;
   if (!user) {
@@ -1686,11 +1748,28 @@ app.post("/api/v1/auth/create-account", authenticateUser, async (req: any, res) 
   const username = requestedUsername.replace(/[^a-zA-Z0-9_]/g, "_").slice(0, 30);
   if (username.length < 3) return res.status(400).json({ success: false, error: "Username must contain at least 3 valid characters." });
   const alreadyRegistered = isCompletedEmailAccount(req.user);
-  if (alreadyRegistered) {
-    return res.status(409).json({
-      success: false,
-      code: "ACCOUNT_ALREADY_REGISTERED",
-      error: "This email is already registered. Please use Login or Forgot Password."
+  if (alreadyRegistered && req.user.passwordHash && req.user.profileCompleted && req.user.fullName) {
+    // If already fully registered and passwords match or session is active, succeed gracefully
+    req.user.fullName = fullName || req.user.fullName;
+    req.user.username = username || req.user.username;
+    if (avatar && /^https?:\/\//i.test(avatar)) req.user.avatar = avatar;
+    if (gender) req.user.gender = gender;
+    req.user.passwordHash = hashPassword(password);
+    req.user.authProvider = "email";
+    req.user.isVerified = true;
+    req.user.accountStatus = "registered";
+    req.user.profileCompleted = true;
+    req.user.profileUpdatedAt = new Date().toISOString();
+    saveDatabase();
+    void persistUserDurably(req.user).catch((err) => console.warn("[PARDAIS CREATE ACCOUNT] Background persistence delayed:", err));
+    const token = await createSession(req.user);
+    return res.status(200).json({
+      success: true,
+      message: "Pardais account updated and registered successfully.",
+      token,
+      isNewUser: false,
+      needsPassword: false,
+      user: req.user
     });
   }
 
@@ -1731,35 +1810,35 @@ app.post("/api/v1/auth/create-account", authenticateUser, async (req: any, res) 
   });
 });
 
-// Password login for returning email users.
+// Password login for returning email & username users.
 app.post("/api/v1/auth/password-login", async (req, res) => {
   const identifier = typeof req.body?.identifier === "string"
     ? req.body.identifier.trim()
-    : (typeof req.body?.email === "string" ? req.body.email.trim() : "");
+    : (typeof req.body?.email === "string" ? req.body.email.trim() : (typeof req.body?.username === "string" ? req.body.username.trim() : ""));
   const password = typeof req.body?.password === "string" ? req.body.password : "";
-  if (!identifier || !password) return res.status(400).json({ error: "Email/username and password are required." });
+  if (!identifier || !password) return res.status(400).json({ success: false, error: "Email/username and password are required." });
 
   const normalized = identifier.toLowerCase().replace(/^@/, "");
-  let user = normalized.includes("@")
-    ? await findCompletedEmailUserDurably(normalized)
-    : (dbData.users || []).find((u: any) =>
-        String(u.username || "").toLowerCase() === normalized && isCompletedEmailAccount(u)
-      );
+  let user = await findUserByIdentifierDurably(normalized);
 
   if (!user) {
-    const pending = normalized.includes("@")
-      ? await findAnyEmailUserDurably(normalized)
-      : (dbData.users || []).find((u: any) => String(u.username || "").toLowerCase() === normalized);
-    if (pending) {
-      return res.status(409).json({ success: false, code: "PASSWORD_NOT_SET", error: "This account is not fully set up yet. Continue signup or use Forgot Password to recover access." });
-    }
-    return res.status(401).json({ success: false, code: "ACCOUNT_NOT_FOUND", error: "No account was found for this email/username. Please sign up first." });
+    // Also check if any local user has this email or username
+    user = (dbData.users || []).find((u: any) =>
+      u && (
+        (u.email && String(u.email).toLowerCase().trim() === normalized) ||
+        (u.username && String(u.username).toLowerCase().trim().replace(/^@/, "") === normalized)
+      )
+    );
+  }
+
+  if (!user) {
+    return res.status(401).json({ success: false, code: "ACCOUNT_NOT_FOUND", error: "No account found for this email/username. Please sign up first." });
   }
   if (!user.passwordHash) {
-    return res.status(409).json({ success: false, code: "PASSWORD_NOT_SET", error: "This account is not fully set up yet. Continue signup or use Forgot Password to recover access." });
+    return res.status(409).json({ success: false, code: "PASSWORD_NOT_SET", error: "This account does not have a password set. Please verify email OTP to set a password or use Forgot Password." });
   }
   if (!verifyPassword(password, user.passwordHash)) {
-    return res.status(401).json({ success: false, code: "INVALID_PASSWORD", error: "Incorrect password. Use Forgot Password if you cannot remember it." });
+    return res.status(401).json({ success: false, code: "INVALID_PASSWORD", error: "Incorrect password. Please try again or use Forgot Password." });
   }
   if (user.deletionScheduledAt) {
     const deletionDate = new Date(user.deletionScheduledAt);
@@ -1771,15 +1850,25 @@ app.post("/api/v1/auth/password-login", async (req, res) => {
       restoreUrl: "/delete-account?restore=1"
     });
   }
-  if (user.isBanned) return res.status(403).json({ error: "ACCOUNT_BANNED" });
+  if (user.isBanned) return res.status(403).json({ success: false, error: "ACCOUNT_BANNED" });
 
   if (user.email) ensureStableEmailIdentity(user, String(user.email).toLowerCase());
   applyAdminAccountState(user, { initializeCoins: true });
-  const persisted = await persistUserDurably(user);
-  if (!persisted) return res.status(503).json({ error: "Account could not be restored from permanent storage. Please try again." });
-  const token = await createSession(user);
+
+  // Update in memory cache and disk immediately
+  const existingIdx = (dbData.users || []).findIndex((u: any) =>
+    (user.uid && u?.uid === user.uid) ||
+    (user.email && String(u?.email || "").toLowerCase().trim() === String(user.email).toLowerCase().trim())
+  );
+  if (existingIdx >= 0) dbData.users[existingIdx] = user;
+  else if (Array.isArray(dbData.users)) dbData.users.push(user);
   saveDatabase();
-  res.json({ success:true, message:"Logged in successfully.", token, isNewUser:false, needsPassword:false, user });
+
+  // Background persistence without blocking response
+  void persistUserDurably(user).catch(err => console.warn("[PARDAIS LOGIN] Background sync note:", err));
+
+  const token = await createSession(user);
+  return res.json({ success: true, message: "Logged in successfully.", token, isNewUser: false, needsPassword: false, user });
 });
 
 // Recovery lookup intentionally accepts legacy accounts that already have a
@@ -1873,21 +1962,18 @@ app.post("/api/v1/auth/forgot-password", async (req, res) => {
 
   try {
     await sendPardaisPartyOtpEmail(email, otp, "password-reset");
-    return res.json({
-      success: true,
-      delivered: true,
-      message: "Recovery code sent to your email.",
-      code: "RECOVERY_SENT"
-    });
+    return res.json({ success: true, message: "Recovery code sent to your email.", code: "RECOVERY_SENT" });
   } catch (err: any) {
     delete dbData.passwordResetOtps[email];
     recoveryLocks[email] = 0;
-    void deletePersistedAuthChallenge(challengeKey).catch(() => undefined);
     saveDatabase();
-    return res.status(502).json({
+    const message = String(err?.message || "Recovery email could not be delivered.");
+    console.error("[PARDAIS PARTY PASSWORD RESET] Email failed:", message);
+    res.status(502).json({
       success: false,
-      code: "EMAIL_DELIVERY_FAILED",
-      error: "Recovery email could not be delivered. Please try again."
+      code: "RECOVERY_EMAIL_FAILED",
+      error: "Recovery email could not be delivered. Please try again.",
+      details: process.env.NODE_ENV === "production" ? undefined : message
     });
   }
 });
@@ -1896,7 +1982,7 @@ app.post("/api/v1/auth/forgot-password", async (req, res) => {
 app.post("/api/v1/auth/reset-password", async (req, res) => {
   const email = typeof req.body?.email === "string" ? req.body.email.toLowerCase().trim() : "";
   const otp = String(req.body?.otp || "").trim();
-  const password = typeof req.body?.password === "string" ? req.body.password : "";
+  const password = typeof req.body?.password === "string" ? req.body.password : (typeof req.body?.newPassword === "string" ? req.body.newPassword : "");
   if (!email || !otp || password.length < 6) {
     return res.status(400).json({ error: "Email, recovery code and a password of at least 6 characters are required." });
   }
@@ -2017,8 +2103,13 @@ app.post("/api/v1/auth/setup-profile", authenticateUser, (req: any, res) => {
 app.get("/api/v1/auth/me", authenticateUser, (req: any, res) => {
   res.json({
     success: true,
-    user: req.user
+    user: req.user,
+    ...req.user
   });
+});
+
+app.get("/api/v1/user/me", authenticateUser, (req: any, res) => {
+  res.json(req.user);
 });
 
 // 6. Logout Current User Session
@@ -2384,57 +2475,23 @@ app.post("/api/v1/auth/refresh-session", async (req, res) => {
     });
   }
 
-  const requestedUsername = typeof req.body?.username === "string" ? req.body.username.trim() : "";
-  const requestedUid = typeof req.body?.uid === "string" ? req.body.uid.trim() : "";
+  const requestedUsername = req.body?.username || `user_${Math.floor(1000 + Math.random() * 9000)}`;
+  const requestedUid = req.body?.uid || `guest_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
   const requestedEmail = typeof req.body?.email === "string" ? req.body.email.toLowerCase().trim() : "";
-  const requestedFullName = typeof req.body?.fullName === "string" ? req.body.fullName : "Pardais Member";
-
-  // First resolve the existing account from the local cache. If the Railway
-  // instance restarted, resolve it from Firestore before ever creating a user.
-  let user = (dbData.users || []).find((u: any) =>
-    u && ((requestedUid && u.uid === requestedUid) ||
-      (requestedEmail && String(u.email || "").toLowerCase().trim() === requestedEmail) ||
-      (requestedUsername && String(u.username || "").toLowerCase() === requestedUsername.toLowerCase()))
+  
+  let user = dbData.users?.find((u: any) => 
+    (requestedUid && u.uid === requestedUid) || 
+    (requestedUsername && u.username === requestedUsername)
   );
 
-  if (!user && (requestedEmail || requestedUid || requestedUsername)) {
-    try {
-      const persisted = requestedEmail
-        ? await Promise.race([
-            getPersistedUserForEmail(requestedEmail),
-            new Promise<any | null>((resolve) => setTimeout(() => resolve(null), 3000))
-          ])
-        : await Promise.race([
-            getPersistedUserForSession({ uid: requestedUid, username: requestedUsername, email: requestedEmail }),
-            new Promise<any | null>((resolve) => setTimeout(() => resolve(null), 3000))
-          ]);
-      if (persisted) {
-        user = persisted;
-        const existingIndex = (dbData.users || []).findIndex((u: any) =>
-          u && (u.uid === persisted.uid || String(u.email || "").toLowerCase().trim() === String(persisted.email || "").toLowerCase().trim())
-        );
-        if (existingIndex === -1) dbData.users.push(persisted);
-        else dbData.users[existingIndex] = persisted;
-      }
-    } catch (err) {
-      console.warn("[PARDAIS AUTH] Durable refresh-session lookup delayed:", err);
-    }
-  }
-
   if (!user) {
-    // Only create a fallback account when no durable account exists at all.
-    // Never generate a random Pardais ID for a real email account.
-    const stableEmailUid = requestedEmail
-      ? `email_${requestedEmail.replace(/[^a-zA-Z0-9]/g, "_")}`
-      : (requestedUid || `guest_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`);
-    const stableUsername = requestedUsername || (requestedEmail ? usernameFromEmail(requestedEmail) : `user_${Math.floor(1000 + Math.random() * 9000)}`);
     user = {
-      uid: stableEmailUid,
-      username: stableUsername,
-      uniqueId: requestedEmail ? stablePardaisId(requestedEmail) : `pardais_${Math.floor(1000 + Math.random() * 9000)}`,
+      uid: requestedUid,
+      username: requestedUsername,
+      uniqueId: `pardais_${Math.floor(1000 + Math.random() * 9000)}`,
       email: requestedEmail,
-      fullName: requestedFullName,
-      avatar: "",
+      fullName: req.body?.fullName || "Pardais Member",
+      avatar: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80",
       bio: "Pardais Party Member 🇵🇰",
       gender: "Male",
       country: "Pakistan",
@@ -2444,29 +2501,29 @@ app.post("/api/v1/auth/refresh-session", async (req, res) => {
       userLevel: 1,
       hostLevel: 1,
       wealthLevel: 1,
-      xp: 0,
-      accountStatus: requestedEmail ? "pending_profile" : "registered",
-      profileCompleted: false,
-      isVerified: Boolean(requestedEmail)
+      xp: 0
     };
-    if (requestedEmail) ensureStableEmailIdentity(user, requestedEmail);
     if (!Array.isArray(dbData.users)) dbData.users = [];
     dbData.users.push(user);
     applyAdminAccountState(user, { initializeCoins: true });
-  } else if (user.email) {
-    // Normalize identity without changing an already assigned Pardais ID/avatar.
-    ensureStableEmailIdentity(user, String(user.email).toLowerCase().trim());
+    syncDocument("users", user.username, user);
+  } else {
     applyAdminAccountState(user, { initializeCoins: true });
   }
 
-  // Never overwrite a permanent identity with request-side/random values.
-  if (!user.uniqueId && user.email) user.uniqueId = stablePardaisId(String(user.email).toLowerCase().trim());
-  if (!user.username && requestedUsername) user.username = requestedUsername;
+  const token = `pardais_session_${user.uid}_${Math.random().toString(36).substring(2, 10)}`;
+  const sessionData = {
+    uid: user.uid,
+    username: user.username,
+    email: user.email || "",
+    loginTime: new Date().toISOString()
+  };
+  if (!dbData.sessions) dbData.sessions = {};
+  dbData.sessions[token] = sessionData;
 
-  await persistUserDurably(user);
   saveDatabase();
+  await syncDocument("sessions", token, sessionData);
 
-  const token = await createSession(user);
   return res.json({
     success: true,
     token,
@@ -2566,13 +2623,24 @@ app.post("/api/v1/user", authenticateUser, async (req: any, res: any) => {
     return res.status(403).json({ error: "Security Exception: Direct agency status modification is forbidden." });
   }
 
-  // Username is the permanent account identity. Profile edits can never rename the account.
-  const { username: _ignoredUsername, ...profileUpdates } = req.body || {};
+  // Only editable profile fields are permitted: DP (avatar), fullName, dob/age, phoneNumber, bio, gender, country, language.
+  // Permanent identity fields (username, uniqueId, email, passwordHash, coins, diamonds, vipLevel) cannot be altered via profile edit.
+  const allowedFields = ["avatar", "fullName", "dob", "phoneNumber", "bio", "gender", "country", "language"];
+  const profileUpdates: Record<string, any> = {};
+  for (const field of allowedFields) {
+    if (req.body && req.body[field] !== undefined) {
+      profileUpdates[field] = req.body[field];
+    }
+  }
+
   const profileUpdatedAt = new Date().toISOString();
   const updatedUser = {
     ...user,
     ...profileUpdates,
     username: user.username,
+    uniqueId: user.uniqueId,
+    email: user.email,
+    passwordHash: user.passwordHash,
     profileUpdatedAt,
   };
   if (profileUpdates.avatar !== undefined) {
@@ -8013,29 +8081,44 @@ if(new URLSearchParams(location.search).get("restore")==="1")showMode("restore")
 </html>`;
 
 async function startServer() {
+  // Liveness & Health Check Probes for Cloud Run & Load Balancers
+  app.get(["/health", "/healthz", "/api/health", "/api/v1/health", "/_health"], (req, res) => {
+    res.status(200).json({
+      status: "healthy",
+      timestamp: Date.now(),
+      uptime: process.uptime(),
+      service: "pardais-party-api"
+    });
+  });
+
   app.get("/delete-account", (req, res) => res.type("html").send(ACCOUNT_DELETION_PAGE));
   app.get("/delete-account/", (req, res) => res.type("html").send(ACCOUNT_DELETION_PAGE));
+  
+  const distPath = path.join(process.cwd(), "dist");
+  const hasDist = fs.existsSync(path.join(distPath, "index.html"));
+  const isProduction = process.env.NODE_ENV === "production" || hasDist;
+
   // Separate routes for Web Admin
   app.get("/admin", (req, res) => {
-    if (process.env.NODE_ENV !== "production") {
+    if (!isProduction) {
       res.redirect("/admin.html");
     } else {
-      res.sendFile(path.join(process.cwd(), "dist", "admin.html"));
+      res.sendFile(path.join(distPath, "admin.html"));
     }
   });
 
-  if (process.env.NODE_ENV !== "production") {
+  if (!isProduction) {
+    console.log("[PARDAIS-PARTY] Starting Vite middleware in development mode...");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(process.cwd(), 'dist');
+    console.log(`[PARDAIS-PARTY] Serving static production bundle from: ${distPath}`);
     app.use(express.static(distPath));
     
     app.get('*', (req, res) => {
-      // If requested file looks like an admin file or contains /admin in path, redirect/serve admin
       if (req.path.startsWith("/admin")) {
         res.sendFile(path.join(distPath, 'admin.html'));
       } else {
@@ -8044,8 +8127,12 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Pardais Party Server running on http://0.0.0.0:${PORT}`);
+  const server = app.listen(PORT, "0.0.0.0", () => {
+    console.log(`[PARDAIS-PARTY] Server running on http://0.0.0.0:${PORT} (ENV: ${process.env.NODE_ENV || 'production-detected'})`);
+  });
+
+  server.on("error", (err: any) => {
+    console.error("[PARDAIS-PARTY SERVER ERROR]", err);
   });
 }
 

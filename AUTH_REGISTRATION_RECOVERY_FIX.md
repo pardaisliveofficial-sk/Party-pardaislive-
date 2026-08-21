@@ -6,8 +6,3 @@ Pardais Party auth hotfix:
 - Forgot-password challenge is written to hot storage first and durable mirror is background.
 - Recovery email has a dedicated subject/body.
 - Verification client has bounded timeout.
-
-
-## Atomic signup completion
-- Added `POST /api/v1/auth/create-account` to complete verified signup in one operation: password, name, username, registration state, persistence, and session are created together.
-- The auth gate now uses this endpoint instead of separate set-password/setup-profile calls. Login and forgot-password endpoints remain unchanged.

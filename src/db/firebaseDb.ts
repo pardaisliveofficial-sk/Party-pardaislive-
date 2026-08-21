@@ -48,47 +48,60 @@ try {
 // Silence internal Firestore client logging
 setLogLevel("silent");
 
-export let db: any;
+export let db: any = null;
+
 try {
-  db = initializeFirestore(app, {
-    experimentalForceLongPolling: true
-  }, FIRESTORE_DB_ID);
-} catch (err) {
-  try {
-    db = getFirestore(app, FIRESTORE_DB_ID);
-  } catch (err2) {
+  if (FIRESTORE_DB_ID && FIRESTORE_DB_ID !== "(default)") {
+    try {
+      db = getFirestore(app, FIRESTORE_DB_ID);
+    } catch (e1) {
+      try {
+        db = initializeFirestore(app, {
+          experimentalForceLongPolling: true
+        }, FIRESTORE_DB_ID);
+      } catch (e2) {
+        db = getFirestore(app);
+      }
+    }
+  } else {
     db = getFirestore(app);
+  }
+} catch (outerErr) {
+  try {
+    db = getFirestore(app);
+  } catch (finalErr) {
+    console.warn("[PARDAIS-PARTY FIREBASE] Failed to initialize Firestore:", finalErr);
+    db = null;
   }
 }
 
-// Helpers to track and handle Firestore write quota exhaustion and offline status gracefully
+// Helpers to track and handle Firestore write quota exhaustion and offline state gracefully
 export let isFirestoreQuotaExhausted = false;
-export let isFirestoreOffline = false;
+let lastQuotaCheckTime = 0;
 
 export function handleQuotaError(err: any, operationName: string) {
   const errMsg = String(err?.message || err || "").toLowerCase();
   const errCode = String(err?.code || "").toLowerCase();
-  if (
+  const isOfflineOrQuota = 
     errMsg.includes("resource_exhausted") || 
     errMsg.includes("quota") || 
     errCode.includes("resource-exhausted") ||
-    errCode.includes("quota")
-  ) {
+    errCode.includes("quota") ||
+    errMsg.includes("offline") ||
+    errMsg.includes("client is offline") ||
+    errMsg.includes("unavailable") ||
+    errCode.includes("unavailable") ||
+    errMsg.includes("failed-precondition") ||
+    errMsg.includes("deadline-exceeded") ||
+    errMsg.includes("network") ||
+    errMsg.includes("transport") ||
+    errMsg.includes("fetch failed");
+
+  if (isOfflineOrQuota) {
     if (!isFirestoreQuotaExhausted) {
       isFirestoreQuotaExhausted = true;
-      console.log(`[PARDAIS-PARTY FIREBASE] Firestore write quota reached. Operating in high-performance local mode.`);
-    }
-  } else if (
-    errMsg.includes("offline") || 
-    errMsg.includes("unavailable") || 
-    errMsg.includes("network") ||
-    errCode.includes("unavailable") ||
-    errCode.includes("failed-precondition")
-  ) {
-    isFirestoreOffline = true;
-    // Quietly log offline fallback without triggering unhandled error captures
-    if (process.env.NODE_ENV !== "production") {
-      console.log(`[PARDAIS-PARTY FIREBASE] Using local persistent cache for '${operationName}' (Firestore offline)`);
+      lastQuotaCheckTime = Date.now();
+      console.warn(`[PARDAIS-PARTY FIREBASE] Firestore connection offline or quota limit reached during '${operationName}'. Switching seamlessly to local persistence.`);
     }
   } else {
     console.warn(`[PARDAIS-PARTY FIREBASE] Notice during '${operationName}':`, errMsg);
@@ -119,8 +132,7 @@ export const COLLECTIONS = [
   "coinTransactions",
   "approvalStatus",
   "adminActions",
-  "coinSellers",
-  "withdrawals"
+  "coinSellers"
 ];
 
 // Memory Cache synced with Firestore
@@ -176,6 +188,7 @@ export const dbDataCache: any = {
   messages: [],
   sessions: {},
   otps: {},
+  emailOtps: {},
   agencyRequests: [],
   purchaseRequests: [],
   coinTransactions: [],
@@ -184,11 +197,22 @@ export const dbDataCache: any = {
   coinSellers: []
 };
 
+export function shouldTryFirestore(): boolean {
+  if (!isFirestoreQuotaExhausted) return true;
+  // Allow a retry probe every 60 seconds
+  if (Date.now() - lastQuotaCheckTime > 60000) {
+    isFirestoreQuotaExhausted = false;
+    lastQuotaCheckTime = Date.now();
+    return true;
+  }
+  return false;
+}
+
 // Durable auth lookup used by the API server. The in-memory session cache can
 // briefly be empty after a deploy/restart or on a second backend replica.
 // Always fall back to Firestore before declaring a valid token expired.
 export async function getPersistedSession(token: string): Promise<any | null> {
-  if (!token) return null;
+  if (!token || !shouldTryFirestore()) return null;
   try {
     const snap = await getDoc(doc(db, "sessions", token));
     return snap.exists() ? snap.data() : null;
@@ -199,12 +223,24 @@ export async function getPersistedSession(token: string): Promise<any | null> {
 }
 
 
+// Safe timeout wrapper for Firestore promises to guarantee the Node.js server never hangs
+const withTimeout = <T>(p: Promise<T>, ms = 2500, fallback: T = null as unknown as T): Promise<T> => {
+  return Promise.race([
+    p,
+    new Promise<T>((resolve) => setTimeout(() => resolve(fallback), ms))
+  ]);
+};
+
 // Durable email-auth challenge storage. OTPs must survive API restarts/replicas.
 export async function persistAuthChallenge(key: string, data: any): Promise<boolean> {
-  if (!key) return false;
+  if (!key || !shouldTryFirestore()) return false;
   try {
-    await setDoc(doc(db, "authChallenges", String(key)), sanitizeForFirestore(data), { merge: true });
-    return true;
+    const res = await withTimeout<boolean>(
+      setDoc(doc(db, "authChallenges", String(key)), sanitizeForFirestore(data), { merge: true }).then(() => true),
+      2500,
+      false
+    );
+    return Boolean(res);
   } catch (err) {
     handleQuotaError(err, `persist auth challenge ${key}`);
     return false;
@@ -212,10 +248,10 @@ export async function persistAuthChallenge(key: string, data: any): Promise<bool
 }
 
 export async function getPersistedAuthChallenge(key: string): Promise<any | null> {
-  if (!key) return null;
+  if (!key || !shouldTryFirestore()) return null;
   try {
-    const snap = await getDoc(doc(db, "authChallenges", String(key)));
-    return snap.exists() ? snap.data() : null;
+    const snap = await withTimeout(getDoc(doc(db, "authChallenges", String(key))), 2500, null as any);
+    return snap && snap.exists && snap.exists() ? snap.data() : null;
   } catch (err) {
     handleQuotaError(err, `get auth challenge ${key}`);
     return null;
@@ -223,9 +259,9 @@ export async function getPersistedAuthChallenge(key: string): Promise<any | null
 }
 
 export async function deletePersistedAuthChallenge(key: string): Promise<void> {
-  if (!key) return;
+  if (!key || !shouldTryFirestore()) return;
   try {
-    await deleteDoc(doc(db, "authChallenges", String(key)));
+    await withTimeout(deleteDoc(doc(db, "authChallenges", String(key))), 2000, undefined);
   } catch (err) {
     handleQuotaError(err, `delete auth challenge ${key}`);
   }
@@ -233,42 +269,70 @@ export async function deletePersistedAuthChallenge(key: string): Promise<void> {
 
 export async function getPersistedUserForEmail(email: string): Promise<any | null> {
   const cleanEmail = String(email || "").toLowerCase().trim();
-  if (!cleanEmail) return null;
-
-  // 1. Fast local cache lookup
-  const localUser = (dbDataCache.users || []).find((u: any) =>
-    u && typeof u.email === "string" && u.email.toLowerCase().trim() === cleanEmail
-  );
-  if (localUser) return localUser;
-
-  // 2. If offline or quota reached, don't block
-  if (isFirestoreQuotaExhausted) return null;
-
+  if (!cleanEmail || !shouldTryFirestore()) return null;
   const emailKey = cleanEmail.replace(/[^a-zA-Z0-9]/g, "_");
   try {
-    const registrySnap = await getDoc(doc(db, "emailRegistry", emailKey));
-    if (registrySnap.exists()) {
+    const registrySnap = await withTimeout(getDoc(doc(db, "emailRegistry", emailKey)), 2500, null as any);
+    if (registrySnap && registrySnap.exists && registrySnap.exists()) {
       const registry = registrySnap.data();
       if (registry?.uid) {
-        const uidSnap = await getDoc(doc(db, "users", `uid_${registry.uid}`));
-        if (uidSnap.exists()) return uidSnap.data();
+        const uidSnap = await withTimeout(getDoc(doc(db, "users", `uid_${registry.uid}`)), 2500, null as any);
+        if (uidSnap && uidSnap.exists && uidSnap.exists()) return uidSnap.data();
       }
     }
-    const emailSnap = await getDoc(doc(db, "users", `email_${emailKey}`));
-    return emailSnap.exists() ? emailSnap.data() : null;
+    const emailSnap = await withTimeout(getDoc(doc(db, "users", `email_${emailKey}`)), 2500, null as any);
+    return emailSnap && emailSnap.exists && emailSnap.exists() ? emailSnap.data() : null;
   } catch (err) {
     handleQuotaError(err, "auth email account lookup");
-    return localUser || null;
+    return null;
   }
+}
+
+export async function getPersistedUserForIdentifier(identifier: string): Promise<any | null> {
+  const normalized = String(identifier || "").toLowerCase().trim().replace(/^@/, "");
+  if (!normalized || !shouldTryFirestore()) return null;
+  const isEmail = normalized.includes("@");
+
+  if (isEmail) {
+    const user = await getPersistedUserForEmail(normalized);
+    if (user) return user;
+  }
+
+  try {
+    // 1. Check doc by username
+    const userDocSnap = await withTimeout(getDoc(doc(db, "users", normalized)), 2500, null as any);
+    if (userDocSnap && userDocSnap.exists && userDocSnap.exists()) {
+      return userDocSnap.data();
+    }
+    // 2. Check doc by email key
+    const emailKey = normalized.replace(/[^a-zA-Z0-9]/g, "_");
+    const emailDocSnap = await withTimeout(getDoc(doc(db, "users", `email_${emailKey}`)), 2500, null as any);
+    if (emailDocSnap && emailDocSnap.exists && emailDocSnap.exists()) {
+      return emailDocSnap.data();
+    }
+    // 3. Check doc by uid
+    const uidDocSnap = await withTimeout(getDoc(doc(db, "users", `uid_${normalized}`)), 2500, null as any);
+    if (uidDocSnap && uidDocSnap.exists && uidDocSnap.exists()) {
+      return uidDocSnap.data();
+    }
+    // 4. Check doc by Pardais unique ID
+    const idDocSnap = await withTimeout(getDoc(doc(db, "users", `id_${normalized}`)), 2500, null as any);
+    if (idDocSnap && idDocSnap.exists && idDocSnap.exists()) {
+      return idDocSnap.data();
+    }
+  } catch (err) {
+    handleQuotaError(err, `lookup identifier ${normalized}`);
+  }
+  return null;
 }
 
 export async function getPersistedEmailRegistry(email: string): Promise<any | null> {
   const cleanEmail = String(email || "").toLowerCase().trim();
-  if (!cleanEmail) return null;
+  if (!cleanEmail || !shouldTryFirestore()) return null;
   const emailKey = cleanEmail.replace(/[^a-zA-Z0-9]/g, "_");
   try {
-    const snap = await getDoc(doc(db, "emailRegistry", emailKey));
-    return snap.exists() ? snap.data() : null;
+    const snap = await withTimeout(getDoc(doc(db, "emailRegistry", emailKey)), 2500, null as any);
+    return snap && snap.exists && snap.exists() ? snap.data() : null;
   } catch (err) {
     handleQuotaError(err, `get email registry ${emailKey}`);
     return null;
@@ -277,7 +341,7 @@ export async function getPersistedEmailRegistry(email: string): Promise<any | nu
 
 export async function persistEmailRegistry(email: string, user: any): Promise<boolean> {
   const cleanEmail = String(email || "").toLowerCase().trim();
-  if (!cleanEmail || !user?.uid) return false;
+  if (!cleanEmail || !user?.uid || !shouldTryFirestore()) return false;
   const emailKey = cleanEmail.replace(/[^a-zA-Z0-9]/g, "_");
   try {
     const registryRef = doc(db, "emailRegistry", emailKey);
@@ -286,20 +350,7 @@ export async function persistEmailRegistry(email: string, user: any): Promise<bo
       if (existing.exists()) {
         const current = existing.data() || {};
         if (String(current.uid || "") !== String(user.uid)) {
-          // Repair legacy/incomplete signup collisions: an old pending record
-          // must not permanently own an email. A completed registered account
-          // remains locked to its original UID.
-          let previous = null;
-          try {
-            if (current.uid) {
-              const previousSnap = await tx.get(doc(db, "users", `uid_${current.uid}`));
-              if (previousSnap.exists()) previous = previousSnap.data();
-            }
-          } catch {}
-          const previousCompleted = Boolean(previous && (String(previous.accountStatus || "").toLowerCase() === "registered" || previous.registrationCompletedAt));
-          if (previousCompleted) {
-            throw new Error("EMAIL_REGISTRY_LOCKED_TO_ANOTHER_ACCOUNT");
-          }
+          throw new Error("EMAIL_REGISTRY_LOCKED_TO_ANOTHER_ACCOUNT");
         }
         tx.set(registryRef, sanitizeForFirestore({
           email: cleanEmail,
@@ -326,7 +377,7 @@ export async function persistEmailRegistry(email: string, user: any): Promise<bo
 }
 
 export async function getPersistedUserForSession(session: any): Promise<any | null> {
-  if (!session) return null;
+  if (!session || !shouldTryFirestore()) return null;
   const candidates: any[] = [];
   try {
     if (session.uid) {
@@ -374,11 +425,17 @@ export function sanitizeForFirestore(obj: any): any {
 
 // Helper to check if database has been seeded
 export async function checkAndSeedDatabase() {
-  if (isFirestoreQuotaExhausted) return;
+  if (isFirestoreQuotaExhausted || !db) return;
   try {
     const seedCheckRef = doc(db, "metadata", "initial_seed_completed");
-    const seedCheck = await getDoc(seedCheckRef);
-    if (seedCheck.exists()) {
+    let seedCheck: any = null;
+    try {
+      seedCheck = await getDoc(seedCheckRef);
+    } catch (checkErr) {
+      handleQuotaError(checkErr, "check initial seed");
+      return;
+    }
+    if (seedCheck && typeof seedCheck.exists === "function" && seedCheck.exists()) {
       console.log("[PARDAIS-PARTY FIREBASE] Seeding already completed previously. Skipping.");
       return;
     }
@@ -453,19 +510,17 @@ export async function checkAndSeedDatabase() {
     } else {
       console.log("[PARDAIS-PARTY FIREBASE] Seeding paused due to Firestore quota limitation. Operating in local mode.");
     }
-  } catch (err: any) {
-    const errMsg = String(err?.message || err || "").toLowerCase();
-    const errCode = String(err?.code || "").toLowerCase();
-    if (errMsg.includes("offline") || errMsg.includes("unavailable") || errCode.includes("unavailable")) {
-      console.warn("[PARDAIS-PARTY FIREBASE] Firestore initial connection is currently initializing/offline. Continuing with local persistent storage.");
-    } else {
-      handleQuotaError(err, "database seeding");
-    }
+  } catch (err) {
+    handleQuotaError(err, "database seeding");
   }
 }
 
 // Starts real-time replication listeners from Firestore to local cache
 export function startFirestoreSynchronization() {
+  if (!db) {
+    console.warn("[PARDAIS-PARTY FIREBASE] Firestore instance not available. Skipping real-time synchronization.");
+    return;
+  }
   console.log("[PARDAIS-PARTY FIREBASE] Initializing real-time Firestore synchronization engine...");
 
   // Sync Metadata values
@@ -501,43 +556,26 @@ export function startFirestoreSynchronization() {
         // uid_*, and email_* mirrors). Collapse them into one deterministic
         // in-memory user per stable email/UID so refresh order can never switch
         // the active account between two IDs.
-        const byIdentity = new Map<string, any[]>();
-        const score = (u: any) => {
-          const completed = (String(u?.accountStatus || "").toLowerCase() === "registered" || u?.registrationCompletedAt) ? 1000000000000 : 0;
-          const locked = u?.usernameLockedAt ? 100000000000 : 0;
-          const password = u?.passwordHash ? 10000000000 : 0;
-          const profile = u?.profileCompleted ? 1000000000 : 0;
-          const times = [u?.avatarUpdatedAt, u?.profileUpdatedAt, u?.registrationCompletedAt, u?.usernameLockedAt, u?.registeredAt]
-            .map((v: any) => v ? Date.parse(String(v)) : 0)
-            .filter((v: number) => Number.isFinite(v));
-          const latest = times.length ? Math.max(...times) : 0;
-          return completed + locked + password + profile + latest;
-        };
+        const byIdentity = new Map<string, any>();
+        const score = (u: any) =>
+          Number(Boolean(u?.passwordHash)) * 100 +
+          Number(Boolean(u?.avatar)) * 10 +
+          Number(Boolean(u?.fullName)) * 5 +
+          Number(Boolean(u?.phoneNumber)) * 2 +
+          Number(Boolean(u?.uniqueId));
 
         for (const item of items) {
           if (!item) continue;
           const email = typeof item.email === "string" ? item.email.toLowerCase().trim() : "";
           const uid = String(item.uid || "");
           const identity = email ? `email:${email}` : (uid ? `uid:${uid}` : `username:${String(item.username || "")}`);
-          const group = byIdentity.get(identity) || [];
-          group.push(item);
-          byIdentity.set(identity, group);
+          const current = byIdentity.get(identity);
+          if (!current || score(item) > score(current)) {
+            byIdentity.set(identity, item);
+          }
         }
 
-        const canonicalUsers: any[] = [];
-        for (const group of byIdentity.values()) {
-          group.sort((a: any, b: any) => score(b) - score(a));
-          const primary = { ...(group[0] || {}) };
-          for (let i = 1; i < group.length; i++) {
-            for (const [key, value] of Object.entries(group[i] || {})) {
-              if ((primary as any)[key] === undefined || (primary as any)[key] === null || (primary as any)[key] === "") {
-                if (value !== undefined && value !== null && value !== "") (primary as any)[key] = value;
-              }
-            }
-          }
-          canonicalUsers.push(primary);
-        }
-        dbDataCache.users = canonicalUsers;
+        dbDataCache.users = Array.from(byIdentity.values());
       } else if (colName === "hosts") {
         dbDataCache.hosts = items.filter((h: any) => h && (h.isLive === true || h.status === "live") && h.status !== "ended" && h.status !== "offline");
       } else if (colName === "gifts") {
@@ -587,10 +625,25 @@ export function startFirestoreSynchronization() {
     });
     dbDataCache.otps = dict;
   }, err => handleQuotaError(err, "Sync otps"));
+
+  // Sync active email verification challenges into the hot API cache. This
+  // makes verification fast on every Railway replica while Firestore remains
+  // the durable source of truth.
+  onSnapshot(collection(db, "authChallenges"), snapshot => {
+    const now = Date.now();
+    const dict: any = {};
+    snapshot.forEach(docSnap => {
+      const value: any = docSnap.data();
+      if (value && (!value.expiresAt || Number(value.expiresAt) > now) && value.used !== true) {
+        dict[String(value.email || "").toLowerCase().trim()] = value;
+      }
+    });
+    dbDataCache.emailOtps = { ...(dbDataCache.emailOtps || {}), ...dict };
+  }, err => handleQuotaError(err, "Sync authChallenges"));
 }
 
 export async function clearAllHostsInFirestore() {
-  if (isFirestoreQuotaExhausted) return;
+  if (isFirestoreQuotaExhausted || !db) return;
   try {
     const querySnapshot = await getDocs(collection(db, "hosts"));
     const deletePromises: Promise<void>[] = [];
@@ -606,7 +659,7 @@ export async function clearAllHostsInFirestore() {
     });
     await Promise.all(deletePromises);
     console.log("[PARDAIS-PARTY FIREBASE] Cleared stale/ended hosts from Firestore.");
-  } catch (err: any) {
+  } catch (err) {
     handleQuotaError(err, "clear hosts in Firestore");
   }
 }
@@ -620,7 +673,7 @@ export async function hydrateReelsFromFirestore(force = false): Promise<any[]> {
   if (!force && now - reelsHydratedAt < 5000 && Array.isArray(dbDataCache.reels) && dbDataCache.reels.length > 0) {
     return dbDataCache.reels;
   }
-  if (isFirestoreQuotaExhausted) return Array.isArray(dbDataCache.reels) ? dbDataCache.reels : [];
+  if (!shouldTryFirestore()) return Array.isArray(dbDataCache.reels) ? dbDataCache.reels : [];
   try {
     const snapshot = await getDocs(collection(db, "reels"));
     const reelMap = new Map<string, any>();
@@ -645,11 +698,10 @@ export async function hydrateReelsFromFirestore(force = false): Promise<any[]> {
 }
 
 export async function syncDocument(collectionName: string, docId: string, data: any): Promise<boolean> {
-  if (isFirestoreQuotaExhausted) return false;
+  if (!shouldTryFirestore()) return false;
   try {
     if (!docId) return false;
     await setDoc(doc(db, collectionName, String(docId)), sanitizeForFirestore(data), { merge: true });
-    console.log(`[PARDAIS-PARTY FIREBASE] Synced document to Firestore: ${collectionName}/${docId}`);
     return true;
   } catch (err) {
     handleQuotaError(err, `syncDocument ${collectionName}/${docId}`);
@@ -658,21 +710,19 @@ export async function syncDocument(collectionName: string, docId: string, data: 
 }
 
 export async function deleteDocument(collectionName: string, docId: string) {
-  if (isFirestoreQuotaExhausted) return;
+  if (!shouldTryFirestore()) return;
   try {
     if (!docId) return;
     await deleteDoc(doc(db, collectionName, String(docId)));
-    console.log(`[PARDAIS-PARTY FIREBASE] Deleted document from Firestore: ${collectionName}/${docId}`);
   } catch (err) {
     handleQuotaError(err, `deleteDocument ${collectionName}/${docId}`);
   }
 }
 
 export async function writeMetadata(docName: "user_profile" | "configurations" | "categories", data: any) {
-  if (isFirestoreQuotaExhausted) return;
+  if (!shouldTryFirestore()) return;
   try {
     await setDoc(doc(db, "metadata", docName), sanitizeForFirestore(data), { merge: true });
-    console.log(`[PARDAIS-PARTY FIREBASE] Synced metadata to Firestore: ${docName}`);
   } catch (err) {
     handleQuotaError(err, `writeMetadata ${docName}`);
   }

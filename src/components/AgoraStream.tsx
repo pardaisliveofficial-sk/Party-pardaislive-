@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import AgoraRTC, { 
+import type { 
   IAgoraRTCClient, 
   IMicrophoneAudioTrack, 
   IAgoraRTCRemoteUser 
@@ -8,8 +8,7 @@ import { Mic, MicOff, Volume2, Radio, AlertCircle } from "lucide-react";
 import { authenticatedFetch, resolveApiUrl } from "../lib/apiClient";
 import { VipAnimatedFrame } from "./VipAnimatedFrame";
 
-// Set Agora SDK log level to 1 (ERROR) to expose internal errors in console
-AgoraRTC.setLogLevel(1);
+
 
 interface AgoraStreamProps {
   channelName: string;
@@ -110,10 +109,15 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
     window.addEventListener("pointerdown", handleUserInteraction);
 
     // Register Agora autoplay failure handler
-    if (typeof (AgoraRTC as any).onAudioAutoplayFailed === "function") {
-      (AgoraRTC as any).onAudioAutoplayFailed(() => {
-        setAudioBlocked(true);
-      });
+    if (typeof window !== "undefined") {
+      import("agora-rtc-sdk-ng").then((mod) => {
+        const AgoraRTC = mod.default || mod;
+        if (typeof (AgoraRTC as any).onAudioAutoplayFailed === "function") {
+          (AgoraRTC as any).onAudioAutoplayFailed(() => {
+            setAudioBlocked(true);
+          });
+        }
+      }).catch(() => {});
     }
 
     return () => {
@@ -294,6 +298,11 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
       const targetChannel = tokenData.channelName || cleanChannel;
 
       try {
+        const agoraModule = await import("agora-rtc-sdk-ng");
+        const AgoraRTC = (agoraModule as any).default || agoraModule;
+        if (typeof (AgoraRTC as any).setLogLevel === "function") {
+          try { (AgoraRTC as any).setLogLevel(1); } catch (e) {}
+        }
         // Create client with mode "live" for host/audience broadcasting
         const agoraClient = AgoraRTC.createClient({ mode: "live", codec: "vp8" });
         activeClient = agoraClient;

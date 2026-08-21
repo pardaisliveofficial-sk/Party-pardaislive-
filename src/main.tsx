@@ -6,23 +6,15 @@ import './index.css';
 
 // Intercept and handle Firestore quota/resource-exhausted errors cleanly to prevent developer log pollution
 if (typeof window !== "undefined") {
-  // Register ServiceWorker for Android PWA / WebAPK 1-Click Installation (only when allowed and top-level)
-  try {
-    if ('serviceWorker' in navigator && window.self === window.top) {
-      window.addEventListener('load', () => {
-        try {
-          navigator.serviceWorker.register('/sw.js').then((reg) => {
-            console.log('[Pardais Party PWA] ServiceWorker registered successfully:', reg.scope);
-          }).catch((err) => {
-            console.warn('[Pardais Party PWA] ServiceWorker registration note:', err);
-          });
-        } catch (swErr) {
-          console.warn('[Pardais Party PWA] ServiceWorker registration skipped:', swErr);
-        }
+  // Register ServiceWorker for Android PWA / WebAPK 1-Click Installation
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('/sw.js').then((reg) => {
+        console.log('[Pardais Party PWA] ServiceWorker registered successfully:', reg.scope);
+      }).catch((err) => {
+        console.warn('[Pardais Party PWA] ServiceWorker registration note:', err);
       });
-    }
-  } catch (e) {
-    // Ignore iframe / security restrictions
+    });
   }
 
   const originalConsoleError = console.error;
@@ -63,12 +55,14 @@ if (typeof window !== "undefined") {
     const msg = args.map(safeFormatArg).join(" ").toLowerCase();
 
     if (
+      msg.includes("script error") ||
       msg.includes("circular structure") ||
       msg.includes("has no supported sources") ||
-      msg.includes("play retry error")
+      msg.includes("play retry error") ||
+      (msg.includes("profile save/upload") && msg.includes("network fetch failed"))
     ) {
       originalConsoleWarn.apply(console, [
-        "[Pardais Party - Media Note] Handled media element source/player notice:",
+        "[Pardais Party - Note] Handled script/media notice:",
         ...args.map(safeFormatArg)
       ]);
       return;
@@ -117,6 +111,7 @@ if (typeof window !== "undefined") {
     const reason = event.reason;
     const msg = String(reason?.message || reason?.stack || reason?.code || reason?.name || reason || "").toLowerCase();
     if (
+      msg.includes("script error") ||
       msg.includes("circular structure") ||
       msg.includes("has no supported sources") ||
       (msg.includes("firestore") && (msg.includes("resource_exhausted") || msg.includes("quota") || msg.includes("resource-exhausted") || msg.includes("code: 8") || msg.includes("code=resource-exhausted"))) ||
@@ -158,7 +153,7 @@ if (typeof window !== "undefined") {
       msg.includes("apresponse")
     ) {
       originalConsoleWarn.apply(console, [
-        "[Pardais Party - Notice] Handled window error gracefully:",
+        "[Pardais Party - Media/RTC] Handled window error for transient stream/RTC:",
         msg
       ]);
       return true; // prevent error firing
@@ -319,7 +314,3 @@ createRoot(document.getElementById('root')!).render(
     <MainRouter />
   </StrictMode>,
 );
-
-if (typeof window !== "undefined") {
-  queueMicrotask(() => window.dispatchEvent(new Event("pardais:app-ready")));
-}

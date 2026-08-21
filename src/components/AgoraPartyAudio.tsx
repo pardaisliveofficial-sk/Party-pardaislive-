@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import AgoraRTC, { 
+import type { 
   IAgoraRTCClient, 
   IMicrophoneAudioTrack, 
   IAgoraRTCRemoteUser 
@@ -7,15 +7,21 @@ import AgoraRTC, {
 import { authenticatedFetch, resolveApiUrl } from "../lib/apiClient";
 import type { MusicTrack } from "../musicData";
 
-// Set Agora SDK log level to 1 (ERROR) to expose internal errors in console
-AgoraRTC.setLogLevel(1);
-
-// Ensure all console.error calls are printed without suppression
-if (typeof window !== "undefined") {
-  const origConsoleError = console.error;
-  console.error = function (...args: any[]) {
-    origConsoleError.apply(console, args);
-  };
+let cachedAgoraRTC: any = null;
+async function getAgoraRTC() {
+  if (cachedAgoraRTC) return cachedAgoraRTC;
+  if (typeof window === "undefined") return null;
+  try {
+    const mod = await import("agora-rtc-sdk-ng");
+    cachedAgoraRTC = (mod as any).default || mod;
+    if (typeof cachedAgoraRTC.setLogLevel === "function") {
+      try { cachedAgoraRTC.setLogLevel(1); } catch (e) {}
+    }
+    return cachedAgoraRTC;
+  } catch (err) {
+    console.warn("[AgoraPartyAudio] Dynamic AgoraRTC import note:", err);
+    return null;
+  }
 }
 
 interface AgoraPartyAudioProps {
@@ -226,6 +232,10 @@ export const AgoraPartyAudio: React.FC<AgoraPartyAudioProps> = ({
       try {
         setStatusDetails("Connecting to WebRTC voice gateway...");
 
+        const AgoraRTC = await getAgoraRTC();
+        if (!AgoraRTC) {
+          throw new Error("Agora WebRTC engine could not be initialized.");
+        }
         const agoraClient = AgoraRTC.createClient({ mode: "live", codec: "vp8" });
         clientRef.current = agoraClient;
         setClient(agoraClient);
@@ -448,6 +458,8 @@ export const AgoraPartyAudio: React.FC<AgoraPartyAudioProps> = ({
           let track = localAudioTrackRef.current;
           if (!track) {
             console.log("[AgoraPartyAudio] Creating microphone audio track...");
+            const AgoraRTC = await getAgoraRTC();
+            if (!AgoraRTC) return;
             track = await AgoraRTC.createMicrophoneAudioTrack({
               AEC: true,
               ANS: true,
@@ -565,6 +577,8 @@ export const AgoraPartyAudio: React.FC<AgoraPartyAudioProps> = ({
         const mediaTrack = destination.stream.getAudioTracks()[0];
         if (!mediaTrack) throw new Error("Unable to create party music audio track");
 
+        const AgoraRTC = await getAgoraRTC();
+        if (!AgoraRTC) return;
         const customTrack = (AgoraRTC as any).createCustomAudioTrack({ mediaStreamTrack: mediaTrack });
         partyMusicCustomTrackRef.current = customTrack;
         await agoraClient.publish([customTrack]);

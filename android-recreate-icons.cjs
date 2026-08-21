@@ -7,7 +7,6 @@ const sharp = require('sharp');
 
 const RES_DIR = path.join(__dirname, 'android', 'app', 'src', 'main', 'res');
 const WEB_ICON_PATH = path.join(__dirname, 'public', 'icon.svg');
-const EXACT_PNG_PATH = path.join(__dirname, 'public', 'pardais-party-exact.png');
 
 // Configurations for Launcher Icons
 const ICON_CONFIGS = [
@@ -77,30 +76,15 @@ async function execute() {
   console.log('🎨 Starting Android Resource Generation Process... 🎨');
   console.log('------------------------------------------------------------');
 
-  const rawIconSvg = fs.existsSync(WEB_ICON_PATH) ? fs.readFileSync(WEB_ICON_PATH, 'utf8') : '';
-  if (!fs.existsSync(EXACT_PNG_PATH) && !rawIconSvg) {
-    throw new Error(`Pardais Party logo source missing. Expected ${EXACT_PNG_PATH} or ${WEB_ICON_PATH}`);
+  if (!fs.existsSync(WEB_ICON_PATH)) {
+    throw new Error(`Web icon file missing at: ${WEB_ICON_PATH}`);
   }
 
-  // Prefer the exact PNG, but fall back to the canonical SVG if the PNG was
-  // corrupted during a text-based transfer. This prevents Sharp from failing
-  // the Android build on an invalid PNG and keeps the logo deterministic.
-  let iconBuffer;
-  if (fs.existsSync(EXACT_PNG_PATH)) {
-    try {
-      iconBuffer = fs.readFileSync(EXACT_PNG_PATH);
-      await sharp(iconBuffer).metadata();
-    } catch (pngError) {
-      console.warn('⚠️ Exact PNG is invalid; falling back to public/icon.svg:', pngError.message);
-      if (!rawIconSvg) throw pngError;
-      iconBuffer = Buffer.from(rawIconSvg, 'utf8');
-    }
-  } else {
-    iconBuffer = Buffer.from(rawIconSvg, 'utf8');
-  }
+  const rawIconSvg = fs.readFileSync(WEB_ICON_PATH, 'utf8');
+  const iconBuffer = Buffer.from(rawIconSvg);
 
   // 1. Generate Launcher Icons (mipmap)
-  console.log('\nGenerating Android Launcher Icons (mipmap) from public/pardais-party-exact.png:');
+  console.log('\nGenerating Android Launcher Icons (mipmap) from public/icon.svg:');
   for (const config of ICON_CONFIGS) {
     const dirPath = path.join(RES_DIR, config.dir);
     if (!fs.existsSync(dirPath)) {
@@ -155,17 +139,19 @@ async function execute() {
       fs.mkdirSync(dirPath, { recursive: true });
     }
 
+    const svgString = getSplashSVG(config.width, config.height, rawIconSvg);
+    const svgBuffer = Buffer.from(svgString);
+
     const splashPath = path.join(dirPath, 'splash.png');
-    const logo = await sharp(iconBuffer).resize({ width: Math.round(config.width * 0.82), height: Math.round(config.height * 0.82), fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } }).png().toBuffer();
-    await sharp({ create: { width: config.width, height: config.height, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 1 } } })
-      .composite([{ input: logo, gravity: 'center' }])
+    await sharp(svgBuffer)
+      .resize(config.width, config.height)
       .png({ palette: false, quality: 100 })
       .toFile(splashPath);
     console.log(` ✅ Saved 32-bit: ${splashPath} (${config.width}x${config.height})`);
   }
 
   console.log('\n------------------------------------------------------------');
-  console.log('🎉 All Android Resources Generated Successfully from the exact Pardais Party PNG! 🎉');
+  console.log('🎉 All Android Resources Generated Successfully from public/icon.svg! 🎉');
   console.log('------------------------------------------------------------');
 }
 
