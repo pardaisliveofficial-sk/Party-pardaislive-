@@ -1,7 +1,0 @@
-Pardais Party Reel upload fix
-
-1. Increased the /api/v1/reels/upload-video request/R2 upload timeout from 3 seconds to 10 minutes.
-2. Added request/response timeouts on the upload route for mobile/Capacitor uploads.
-3. Added uploadReelVideo() helper in src/lib/apiClient.ts using authenticated fetch + FormData + 10-minute AbortController timeout.
-
-Important: this archive's src tree does not contain the older inline XHR Reel-publish handler that produced the exact "Video upload operation aborted" message. The bundled Android assets are also from a different build snapshot. The backend timeout is fixed here without replacing the current Reel UI.
