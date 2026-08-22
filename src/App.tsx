@@ -8148,6 +8148,29 @@ export default function App() {
     }
   };
 
+  // Handle a successful login for a newly added/saved account.
+  // Keep the same session keys as the main authentication gate so the
+  // Account Switcher immediately activates the selected account.
+  const handleNewAccountLoginSuccess = (newUser: UserProfile, token: string) => {
+    try {
+      const activeProfile = { ...newUser, isGuest: false };
+      localStorage.setItem("pardais_auth_token", token);
+      localStorage.setItem("pardais_is_logged_in", "true");
+      localStorage.setItem("pardais_user_profile", JSON.stringify(activeProfile));
+      lastSavedUserRef.current = JSON.stringify(activeProfile);
+      saveAccountToDevice(activeProfile, token);
+      setUser(activeProfile);
+      setIsLoggedIn(true);
+      setShowAccountSwitcherModal(false);
+      setShowSettingsDrawer(false);
+      setClientView("feed");
+      setReportSuccessToast(`Logged in as @${activeProfile.username || activeProfile.fullName || "user"}!`);
+      setTimeout(() => setReportSuccessToast(null), 3000);
+    } catch (err) {
+      console.warn("New account login state error:", err);
+    }
+  };
+
   // Universal Logout - Exits directly to the Sign Up & Login Gate
   const handleLogout = async () => {
     const token = localStorage.getItem("pardais_auth_token");
@@ -30966,6 +30989,194 @@ export default function App() {
       {/* GIFT HISTORY MODAL */}
       {showGiftHistoryModal && (
         <GiftHistoryModal onClose={() => setShowGiftHistoryModal(false)} user={user} />
+      )}
+
+      {/* 👥 ACCOUNT SWITCHER MODAL */}
+      {showAccountSwitcherModal && (
+        <AccountSwitcherModal
+          isOpen={showAccountSwitcherModal}
+          onClose={() => setShowAccountSwitcherModal(false)}
+          currentUser={user}
+          onSwitchAccount={handleSwitchAccount}
+          onLoginNewAccountSuccess={handleNewAccountLoginSuccess}
+          onGoogleSignIn={handleGoogleSignIn}
+        />
+      )}
+
+      {/* 🎡 PARTY GAMES MODAL */}
+      {showPartyGamesModal && (
+        <PartyGamesModal
+          user={user}
+          setUser={setUser}
+          onClose={() => setShowPartyGamesModal(false)}
+          setTransactions={setTransactions}
+          onSendRoomMessage={(msg: string) => {
+            if (activePartyId) {
+              fetch(`/api/v1/parties/${activePartyId}/comments`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ message: msg, username: user.username, avatar: user.avatar })
+              }).catch(() => {});
+            } else if (activeHost?.id) {
+              fetch(`/api/v1/hosts/${activeHost.id}/comments`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ message: msg, username: user.username, avatar: user.avatar })
+              }).catch(() => {});
+            }
+          }}
+        />
+      )}
+
+      {/* 🎙️ CREATE PARTY ROOM MODAL */}
+      {showCreatePartyModal && (
+        <div className="fixed inset-0 bg-black/85 flex items-center justify-center z-999 p-4 animate-fade-in select-none">
+          <div className="bg-[#120a24]/95 border-2 border-pink-500 rounded-3xl p-5 w-full max-w-sm shadow-2xl relative animate-pop-gift text-left max-h-[90vh] overflow-y-auto scrollbar-thin">
+            <button
+              onClick={() => setShowCreatePartyModal(false)}
+              className="absolute top-4 right-4 text-gray-400 hover:text-white transition-colors cursor-pointer w-6 h-6 flex items-center justify-center rounded-full bg-white/5"
+            >
+              ✕
+            </button>
+
+            <div className="border-b border-white/10 pb-3 flex items-center space-x-2 bg-transparent">
+              <span className="text-xl">🎙️</span>
+              <div className="bg-transparent">
+                <h3 className="text-xs font-black text-white uppercase tracking-wider font-mono">Create Your Audio Lounge</h3>
+                <p className="text-[8.5px] text-pink-400 font-mono uppercase tracking-widest">Start a 12 or 25-seat Party Room</p>
+              </div>
+            </div>
+
+            <div className="mt-4 space-y-4 bg-transparent">
+              {/* Seat capacity */}
+              <div className="space-y-2 bg-transparent">
+                <label className="text-[8.5px] font-black uppercase text-gray-300 font-mono">Party Seat Capacity</label>
+                <div className="grid grid-cols-2 gap-2">
+                  {[12, 25].map((count) => (
+                    <button
+                      key={count}
+                      type="button"
+                      onClick={() => setPartyFormSeatCount(count as 12 | 25)}
+                      className={`py-2.5 rounded-xl border text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer ${
+                        partyFormSeatCount === count
+                          ? "bg-gradient-to-r from-pink-500 to-purple-600 text-white border-pink-400 shadow-lg"
+                          : "bg-[#221a36] text-gray-400 border-white/10 hover:border-pink-400/40"
+                      }`}
+                    >
+                      {count === 12 ? "🎙️ 12 Seats" : "🎙️ 25 Seats"}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Room name */}
+              <div className="space-y-1 bg-transparent">
+                <label className="text-[8.5px] font-black uppercase text-gray-300 font-mono">Room Name (Title) *</label>
+                <input
+                  type="text"
+                  value={partyFormName}
+                  onChange={(e) => setPartyFormName(e.target.value)}
+                  placeholder="e.g. Pardais Night Mehfil 🎙️"
+                  className="w-full bg-black/40 border border-white/10 focus:border-pink-500 rounded-xl px-3 py-2 text-xs text-white focus:outline-none"
+                />
+              </div>
+
+              {/* Category & Language in grid */}
+              <div className="grid grid-cols-2 gap-3 bg-transparent">
+                <div className="space-y-1 bg-transparent">
+                  <label className="text-[8.5px] font-black uppercase text-gray-300 font-mono">Category</label>
+                  <select
+                    value={partyFormCategory}
+                    onChange={(e) => setPartyFormCategory(e.target.value)}
+                    className="w-full bg-black/40 border border-white/10 focus:border-pink-500 rounded-xl px-2 py-2 text-xs text-white focus:outline-none cursor-pointer"
+                  >
+                    <option value="Music" className="bg-[#120a24]">🎵 Music</option>
+                    <option value="Chat" className="bg-[#120a24]">💬 Chat</option>
+                    <option value="Gaming" className="bg-[#120a24]">🎮 Gaming</option>
+                    <option value="Poetry" className="bg-[#120a24]">📜 Poetry</option>
+                    <option value="Dating" className="bg-[#120a24]">❤️ Dating</option>
+                    <option value="Debate" className="bg-[#120a24]">🔥 Debate</option>
+                  </select>
+                </div>
+
+                <div className="space-y-1 bg-transparent">
+                  <label className="text-[8.5px] font-black uppercase text-gray-300 font-mono">Language</label>
+                  <select
+                    value={partyFormLanguage}
+                    onChange={(e) => setPartyFormLanguage(e.target.value)}
+                    className="w-full bg-black/40 border border-white/10 focus:border-pink-500 rounded-xl px-2 py-2 text-xs text-white focus:outline-none cursor-pointer"
+                  >
+                    <option value="Urdu" className="bg-[#120a24]">Urdu</option>
+                    <option value="Hindi" className="bg-[#120a24]">Hindi</option>
+                    <option value="English" className="bg-[#120a24]">English</option>
+                    <option value="Punjabi" className="bg-[#120a24]">Punjabi</option>
+                    <option value="Sindhi" className="bg-[#120a24]">Sindhi</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Description */}
+              <div className="space-y-1 bg-transparent">
+                <label className="text-[8.5px] font-black uppercase text-gray-300 font-mono">Room Tagline / Description</label>
+                <input
+                  type="text"
+                  value={partyFormDescription}
+                  onChange={(e) => setPartyFormDescription(e.target.value)}
+                  placeholder="Welcome rules, descriptions etc..."
+                  className="w-full bg-black/40 border border-white/10 focus:border-pink-500 rounded-xl px-3 py-2 text-xs text-white focus:outline-none"
+                />
+              </div>
+
+              {/* Privacy option */}
+              <div className="space-y-2 bg-transparent">
+                <div className="flex items-center justify-between bg-transparent">
+                  <label className="text-[8.5px] font-black uppercase text-gray-300 font-mono">Privacy Status</label>
+                  <div className="flex items-center space-x-2 bg-transparent">
+                    <button
+                      type="button"
+                      onClick={() => setPartyFormIsPublic(true)}
+                      className={`text-[9px] font-black uppercase px-2.5 py-1 rounded-lg transition-all cursor-pointer ${
+                        partyFormIsPublic ? "bg-emerald-500 text-black" : "bg-[#221a36] text-gray-400 hover:text-white"
+                      }`}
+                    >
+                      Public
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPartyFormIsPublic(false)}
+                      className={`text-[9px] font-black uppercase px-2.5 py-1 rounded-lg transition-all cursor-pointer ${
+                        !partyFormIsPublic ? "bg-red-500 text-white" : "bg-[#221a36] text-gray-400 hover:text-white"
+                      }`}
+                    >
+                      Private
+                    </button>
+                  </div>
+                </div>
+
+                {!partyFormIsPublic && (
+                  <div className="space-y-1 bg-transparent animate-slide-up">
+                    <label className="text-[8px] font-bold uppercase text-red-400 font-mono">Set Room Password</label>
+                    <input
+                      type="password"
+                      value={partyFormPassword}
+                      onChange={(e) => setPartyFormPassword(e.target.value)}
+                      placeholder="Enter room password..."
+                      className="w-full bg-black/40 border border-red-500/30 focus:border-red-500 rounded-xl px-3 py-2 text-xs text-white focus:outline-none"
+                    />
+                  </div>
+                )}
+              </div>
+
+              {/* Submit action */}
+              <button
+                onClick={handleCreateParty}
+                className="w-full py-3 bg-gradient-to-r from-pink-500 to-purple-600 hover:opacity-90 text-white text-[10.5px] font-black uppercase tracking-wider rounded-xl transition-all shadow-lg active:scale-95 cursor-pointer font-sans text-center"
+              >
+                🚀 Create Your Party Lounge
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* 🌟 GLOBAL BROADCAST GIFT BANNER (PATTI) OVERLAY ON ALL SCREENS */}
