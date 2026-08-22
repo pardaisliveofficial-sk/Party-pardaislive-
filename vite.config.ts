@@ -15,12 +15,26 @@ export default defineConfig(() => {
       dedupe: ['react', 'react-dom'],
     },
     build: {
+      target: 'es2022',
       minify: 'esbuild' as const,
       cssMinify: true,
+      sourcemap: false,
+      reportCompressedSize: false,
+      chunkSizeWarningLimit: 2500,
       rollupOptions: {
         input: {
           main: path.resolve(process.cwd(), 'index.html'),
           admin: path.resolve(process.cwd(), 'admin.html'),
+        },
+        output: {
+          manualChunks(id) {
+            if (!id.includes('node_modules')) return;
+            if (id.includes('/react/') || id.includes('/react-dom/')) return 'vendor-react';
+            if (id.includes('/firebase/')) return 'vendor-firebase';
+            if (id.includes('/agora-rtc-sdk-ng/')) return 'vendor-agora';
+            if (id.includes('/lucide-react/')) return 'vendor-icons';
+            if (id.includes('/motion/')) return 'vendor-motion';
+          },
         },
       },
     },
