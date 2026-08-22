@@ -39,7 +39,8 @@
     "node-fetch": "2.7.0",
     "nodemailer": "^9.0.3",
     "react": "^19.0.1",
-    "react-dom": "^19.0.1"
+    "react-dom": "^19.0.1",
+    "motion": "^12.23.12"
   },
   "devDependencies": {
     "@capacitor/android": "^8.4.2",
