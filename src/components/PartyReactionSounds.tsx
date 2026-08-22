@@ -48,7 +48,19 @@ export const PartyReactionSounds: React.FC<PartyReactionSoundsProps> = ({ onPlay
         <button
           key={sound.id}
           type="button"
-          onClick={() => onPlay(sound.id)}
+          onClick={() => {
+            // Start the SFX synchronously from the user's tap. Android WebView
+            // can reject WebAudio playback if the first play() happens later
+            // inside an async React effect. AgoraPartyAudio listens for this
+            // event and publishes the same audio stream to the party.
+            try {
+              const eventName = "pardais-party-reaction-sfx";
+              window.dispatchEvent(new CustomEvent(eventName, {
+                detail: { sound: sound.id, url: `/assets/party-sfx/${sound.id}.wav` }
+              }));
+            } catch (_) {}
+            onPlay(sound.id);
+          }}
           className="flex items-center gap-2 p-2 rounded-xl bg-white/[0.035] hover:bg-cyan-500/10 border border-white/5 hover:border-cyan-400/30 transition-all active:scale-95 cursor-pointer text-left"
           title={sound.hint}
         >

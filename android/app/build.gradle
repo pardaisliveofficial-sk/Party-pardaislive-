@@ -18,15 +18,21 @@ android {
     }
     signingConfigs {
         release {
-            storeFile file(System.getenv("RELEASE_STORE_FILE") ?: "release-key.jks")
-            storePassword System.getenv("RELEASE_STORE_PASSWORD") ?: "android123"
-            keyAlias System.getenv("RELEASE_KEY_ALIAS") ?: "release"
-            keyPassword System.getenv("RELEASE_KEY_PASSWORD") ?: "android123"
-            if (System.getenv("RELEASE_STORE_TYPE")) {
-                storeType System.getenv("RELEASE_STORE_TYPE")
-            } else {
-                storeType "JKS"
+            def releaseStoreFile = System.getenv("RELEASE_STORE_FILE")
+            def releaseStorePassword = System.getenv("RELEASE_STORE_PASSWORD")
+            def releaseKeyAlias = System.getenv("RELEASE_KEY_ALIAS")
+            def releaseKeyPassword = System.getenv("RELEASE_KEY_PASSWORD")
+            def releaseStoreType = System.getenv("RELEASE_STORE_TYPE")
+
+            if (!releaseStoreFile || !releaseStorePassword || !releaseKeyAlias || !releaseKeyPassword || !releaseStoreType) {
+                throw new GradleException("Release signing credentials are not configured. Use the existing Pardais Party GitHub Actions release secrets.")
             }
+
+            storeFile file(releaseStoreFile)
+            storePassword releaseStorePassword
+            keyAlias releaseKeyAlias
+            keyPassword releaseKeyPassword
+            storeType releaseStoreType
         }
     }
     buildTypes {

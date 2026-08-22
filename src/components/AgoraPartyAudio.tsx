@@ -82,6 +82,7 @@ export const AgoraPartyAudio: React.FC<AgoraPartyAudioProps> = ({
   const partyMusicCustomTrackRef = useRef<any>(null);
   const reactionCustomTrackRef = useRef<any>(null);
   const reactionAudioContextRef = useRef<AudioContext | null>(null);
+  const reactionAudioRef = useRef<HTMLAudioElement | null>(null);
 
   // Status states
   const [status, setStatus] = useState<"idle" | "connecting" | "connected" | "error">("idle");
@@ -604,89 +605,99 @@ export const AgoraPartyAudio: React.FC<AgoraPartyAudioProps> = ({
     return () => { cancelled = true; };
   }, [client, status, userRole, musicTrack?.id, musicPlaying]);
 
+  // 🔊 Reaction SFX: start directly from the user's tap so Android WebView
+  // does not block playback. The same HTMLAudio -> MediaStream is published
+  // to Agora, so remote party members hear the exact same short sound.
   useEffect(() => {
-    if (!reactionEvent || !clientRef.current || status !== "connected" || userRole === "listener") return;
-    let cancelled = false;
+    const handleReactionSfx = async (event: Event) => {
+      const custom = event as CustomEvent<{ sound: PartyReactionSoundId; url: string }>;
+      const url = custom.detail?.url;
+      if (!url || !clientRef.current || status !== "connected" || userRole === "listener") return;
 
-    const stopReaction = async () => {
       const clientNow = clientRef.current;
-      const track = reactionCustomTrackRef.current;
-      try {
-        if (clientNow && track && clientNow.connectionState === "CONNECTED") {
-          await clientNow.unpublish([track]);
-        }
-      } catch (_) {}
-      try { track?.stop?.(); } catch (_) {}
-      try { track?.close?.(); } catch (_) {}
-      reactionCustomTrackRef.current = null;
-      if (reactionAudioContextRef.current) {
-        try { await reactionAudioContextRef.current.close(); } catch (_) {}
-        reactionAudioContextRef.current = null;
-      }
-    };
-
-    const startReaction = async () => {
+      let audio: HTMLAudioElement | null = null;
       let ctx: AudioContext | null = null;
+      let customTrack: any = null;
+
+      const cleanup = async () => {
+        try {
+          if (clientNow && customTrack && clientNow.connectionState === "CONNECTED") {
+            await clientNow.unpublish([customTrack]);
+          }
+        } catch (_) {}
+        try { customTrack?.stop?.(); } catch (_) {}
+        try { customTrack?.close?.(); } catch (_) {}
+        if (reactionCustomTrackRef.current === customTrack) reactionCustomTrackRef.current = null;
+        try { audio?.pause(); } catch (_) {}
+        if (audio) audio.src = "";
+        try { await ctx?.close(); } catch (_) {}
+        if (reactionAudioContextRef.current === ctx) reactionAudioContextRef.current = null;
+      };
+
       try {
-        await stopReaction();
-        if (cancelled) return;
+        // Stop a previous reaction before starting a new one.
+        const previous = reactionCustomTrackRef.current;
+        if (previous && clientNow.connectionState === "CONNECTED") {
+          try { await clientNow.unpublish([previous]); } catch (_) {}
+          try { previous.stop?.(); previous.close?.(); } catch (_) {}
+          reactionCustomTrackRef.current = null;
+        }
+        if (reactionAudioContextRef.current) {
+          try { await reactionAudioContextRef.current.close(); } catch (_) {}
+          reactionAudioContextRef.current = null;
+        }
 
         const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
         if (!AudioCtx) throw new Error("Web Audio is not supported on this device");
+
         ctx = new AudioCtx();
         reactionAudioContextRef.current = ctx;
+        // This is still inside the click event path on Android WebView.
         if (ctx.state === "suspended") await ctx.resume().catch(() => {});
 
-        // Use a real short SFX asset instead of a synthesized tone. The same
-        // decoded audio is routed to the host speaker and to an Agora custom
-        // audio track, so everyone in the party hears the exact same sound.
-        const sfxUrl = `/assets/party-sfx/${reactionEvent.sound}.wav`;
-        const response = await fetch(sfxUrl, { cache: "force-cache" });
-        if (!response.ok) throw new Error(`SFX asset unavailable: ${reactionEvent.sound}`);
-        const bytes = await response.arrayBuffer();
-        if (cancelled) return;
-        const buffer = await ctx.decodeAudioData(bytes.slice(0));
-        if (cancelled) return;
+        audio = new Audio();
+        audio.preload = "auto";
+        audio.crossOrigin = "anonymous";
+        audio.src = url;
+        audio.volume = 1;
+        reactionAudioRef.current = audio;
 
-        const destination = ctx.createMediaStreamDestination();
+        const source = ctx.createMediaElementSource(audio);
         const master = ctx.createGain();
-        master.gain.value = 0.9;
-        master.connect(ctx.destination);
-        master.connect(destination);
-
-        const source = ctx.createBufferSource();
-        source.buffer = buffer;
+        master.gain.value = 1;
+        const destination = ctx.createMediaStreamDestination();
         source.connect(master);
+        master.connect(ctx.destination);       // host hears it immediately
+        master.connect(destination);            // Agora gets the same audio
 
         const mediaTrack = destination.stream.getAudioTracks()[0];
         if (!mediaTrack) throw new Error("Unable to create reaction audio track");
-        const AgoraRTC = await getAgoraRTC();
-        if (!AgoraRTC || cancelled) return;
 
-        const customTrack = (AgoraRTC as any).createCustomAudioTrack({ mediaStreamTrack: mediaTrack });
-        reactionCustomTrackRef.current = customTrack;
-        const clientNow = clientRef.current;
-        if (clientNow && clientNow.connectionState === "CONNECTED") {
-          await clientNow.publish([customTrack]);
+        // IMPORTANT: start local playback BEFORE any awaited network/Agora work.
+        // Android WebView may reject play() after the user-gesture activation
+        // window has expired.
+        const playPromise = audio.play();
+        if (playPromise && typeof playPromise.catch === "function") {
+          playPromise.catch((playErr) => console.warn("[AgoraPartyAudio] Local SFX playback blocked:", playErr));
         }
 
-        source.start(0);
-        const durationMs = Math.ceil((buffer.duration + 0.25) * 1000);
-        window.setTimeout(async () => {
-          try { await stopReaction(); } catch (_) {}
-        }, durationMs);
+        const AgoraRTC = await getAgoraRTC();
+        if (!AgoraRTC) throw new Error("Agora SDK unavailable");
+        customTrack = (AgoraRTC as any).createCustomAudioTrack({ mediaStreamTrack: mediaTrack });
+        reactionCustomTrackRef.current = customTrack;
+        await clientNow.publish([customTrack]);
+
+        const durationMs = Math.max(1000, Math.ceil((audio.duration || 3) * 1000) + 500);
+        window.setTimeout(() => { cleanup().catch(() => {}); }, durationMs);
       } catch (err) {
         console.warn("[AgoraPartyAudio] Reaction SFX failed:", err);
-        if (ctx) {
-          try { await ctx.close(); } catch (_) {}
-        }
-        reactionAudioContextRef.current = null;
+        await cleanup();
       }
     };
 
-    startReaction();
-    return () => { cancelled = true; };
-  }, [reactionEvent?.id, status, userRole]);
+    window.addEventListener("pardais-party-reaction-sfx", handleReactionSfx as EventListener);
+    return () => window.removeEventListener("pardais-party-reaction-sfx", handleReactionSfx as EventListener);
+  }, [status, userRole]);
 
   useEffect(() => {
     if (partyMusicGainRef.current) {
