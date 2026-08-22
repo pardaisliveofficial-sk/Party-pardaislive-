@@ -111,6 +111,7 @@ import { dbDataCache, db, auth as firebaseAuth } from "./db/firebaseDb";
 import { PardaisPartyLogo, PardaisLiveLogo } from "./components/PardaisPartyLogo";
 import { PardaisPartySplashScreen } from "./components/PardaisPartySplashScreen";
 import { PartyGamesModal } from "./components/PartyGamesModal";
+import { PartyReactionSounds, type PartyReactionSoundId } from "./components/PartyReactionSounds";
 import AuthModal from "./components/AuthModal";
 import AccountSwitcherModal from "./components/AccountSwitcherModal";
 import { getSavedAccounts, saveAccountToDevice, removeAccountFromDevice, getDemoAccounts } from "./lib/accountStorage";
@@ -2471,6 +2472,8 @@ export default function App() {
   const [partyMusicPlaying, setPartyMusicPlaying] = useState<boolean>(false);
   const [partyMusicVolume, setPartyMusicVolume] = useState<number>(0.45);
   const [showPartyMusicLibrary, setShowPartyMusicLibrary] = useState<boolean>(false);
+  const [showPartyReactionSounds, setShowPartyReactionSounds] = useState<boolean>(false);
+  const [partyReactionEvent, setPartyReactionEvent] = useState<{ id: string; sound: PartyReactionSoundId } | null>(null);
   const [partyMusicSearch, setPartyMusicSearch] = useState<string>("");
   const [showPartyGamesModal, setShowPartyGamesModal] = useState<boolean>(false);
   const [showCarnivalWelcomeCard, setShowCarnivalWelcomeCard] = useState<boolean>(true);
@@ -2528,6 +2531,35 @@ export default function App() {
     }
   };
   
+  // 🔊 Host-only short reaction sound effects. The actual sound is published through Agora in real time.
+  const handlePartyReactionSound = async (sound: PartyReactionSoundId) => {
+    if (!activePartyId || !isHostOfRoom) return;
+    const event = { id: `reaction-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, sound };
+    setPartyReactionEvent(event);
+    setShowPartyReactionSounds(false);
+    try {
+      const label = { laugh: "😂 Laugh", cry: "😭 Cry", cheer: "🎉 Cheer", applause: "👏 Applause", wow: "😮 Wow", boo: "😡 Boo", drumroll: "🥁 Drum Roll", airhorn: "📣 Air Horn" }[sound];
+      const res = await fetch(`/api/v1/parties/${activePartyId}/comments`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: `🔊 Host reaction: ${label}`,
+          username: user.username,
+          avatar: user.avatar,
+          userLevel: user.userLevel || user.level || 1,
+          vipLevel: user.vipLevel || 0,
+          isSystem: true,
+          reactionSound: sound,
+          reactionEventId: event.id
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data)) setPartiesList(prev => prev.map(p => p.id === activePartyId ? { ...p, comments: data } : p));
+      }
+    } catch (_) {}
+  };
+
   // Create Party Form states
   const [partyFormName, setPartyFormName] = useState<string>("");
   const [partyFormCategory, setPartyFormCategory] = useState<string>("Music");
@@ -10753,6 +10785,7 @@ export default function App() {
                                 musicTrack={partyMusicTrack}
                                 musicPlaying={partyMusicPlaying}
                                 musicVolume={partyMusicVolume}
+                                reactionEvent={isHostOfRoom ? partyReactionEvent : null}
                               />
                             </div>
 
@@ -10789,6 +10822,15 @@ export default function App() {
                                       >
                                         👁️ {totalViewers}
                                       </button>
+                                      {isHostOfRoom && (
+                                        <button
+                                          onClick={() => setShowPartyReactionSounds(v => !v)}
+                                          className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md border cursor-pointer ${showPartyReactionSounds ? "bg-cyan-500/20 border-cyan-400/40 text-cyan-200" : "bg-cyan-500/10 border-cyan-400/20 text-cyan-200 hover:bg-cyan-500/20"}`}
+                                          title="Play live party reaction sound"
+                                        >
+                                          🔊 SFX
+                                        </button>
+                                      )}
                                       <span title="Party running time">⏱️ {timerLabel}</span>
                                       <button
                                         onClick={() => { setPartyRankingTab("host"); setShowPartyRankingModal(true); }}
@@ -10854,6 +10896,13 @@ export default function App() {
                               );
                             })()}
                           </div>
+
+                          {isHostOfRoom && showPartyReactionSounds && (
+                            <PartyReactionSounds
+                              onPlay={handlePartyReactionSound}
+                              onClose={() => setShowPartyReactionSounds(false)}
+                            />
+                          )}
 
                           {/* LOWER AREA: INFORMATION CARD + COMMENTS + BOTTOM ACTIONS BAR */}
                           <div className="flex-1 min-h-0 flex flex-col justify-between bg-transparent select-none pb-1">

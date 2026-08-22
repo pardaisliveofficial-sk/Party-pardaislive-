@@ -5442,7 +5442,7 @@ app.post("/api/v1/parties/:id/close", (req, res) => {
 
 app.post("/api/v1/parties/:id/comments", (req, res) => {
   const { id } = req.params;
-  const { message, username, vipLevel, userLevel, isSystem, avatar } = req.body;
+  const { message, username, vipLevel, userLevel, isSystem, avatar, reactionSound, reactionEventId } = req.body;
   const index = dbData.parties?.findIndex((p: any) => p.id === id);
   if (index !== -1 && index !== undefined) {
     const party = dbData.parties[index];
@@ -5455,6 +5455,8 @@ app.post("/api/v1/parties/:id/comments", (req, res) => {
       userLevel: userLevel || 1,
       isSystem: !!isSystem,
       avatar: avatar || "",
+      ...(reactionSound ? { reactionSound } : {}),
+      ...(reactionEventId ? { reactionEventId } : {}),
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     };
     party.comments.push(newComment);
