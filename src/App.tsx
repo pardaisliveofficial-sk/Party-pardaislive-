@@ -31010,6 +31010,20 @@ export default function App() {
           setUser={setUser}
           onClose={() => setShowPartyGamesModal(false)}
           setTransactions={setTransactions}
+          partyGuests={(partiesList.find((p: any) => p.id === activePartyId)?.seats || [])
+            .filter((s: any) => s && s.name)
+            .map((s: any) => ({ username: s.name, avatar: s.avatar, userLevel: s.userLevel || 1, vipLevel: s.vipLevel || 0, isHost: s.id === 1 }))}
+          onSendGameInvite={(targetUsername: string, gameName: string, stakeCoins: number) => {
+            const message = `🎮 @${targetUsername} invited to ${gameName} • Stake ${stakeCoins.toLocaleString()} coins`;
+            if (activePartyId) {
+              fetch(`/api/v1/parties/${activePartyId}/comments`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ message, username: user.username, avatar: user.avatar, userLevel: user.userLevel || user.level || 1, vipLevel: user.vipLevel || 0, isSystem: true })
+              }).catch(() => {});
+            }
+          }}
+          onGameStatusChange={() => {}}
           onSendRoomMessage={(msg: string) => {
             if (activePartyId) {
               fetch(`/api/v1/parties/${activePartyId}/comments`, {
