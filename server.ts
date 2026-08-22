@@ -3213,6 +3213,7 @@ app.post("/api/v1/gifts/send", authenticateUser, (req, res) => {
     giftIcon: gift.icon,
     count: giftCount,
     targetHostSide: targetHostSide || "hostA",
+    partyId: req.body.partyId || req.body.roomId || null,
     timestamp: new Date().toISOString(),
     status: "Completed"
   };
@@ -3245,6 +3246,26 @@ app.post("/api/v1/gifts/send", authenticateUser, (req, res) => {
     dbData.notifications.unshift(notification);
     void syncDocument("notifications", notification.id, notification).catch(() => undefined);
   }
+  // Persist party-room gift totals server-side so every participant sees the same
+  // host/speaker gift ranking after refresh or reconnect.
+  const partyId = req.body.partyId || req.body.roomId || null;
+  if (partyId && Array.isArray(dbData.parties)) {
+    const party = dbData.parties.find((p: any) => p?.id === partyId);
+    if (party && Array.isArray(party.seats)) {
+      const normalizedRecipient = String(recipient || party.hostUsername || "Host").trim().toLowerCase();
+      party.seats = party.seats.map((seat: any) => {
+        const seatName = String(seat?.name || "").trim().toLowerCase();
+        const isHostTarget = (normalizedRecipient === "host" && seat.id === 1) || seatName === normalizedRecipient || (normalizedRecipient === String(party.hostUsername || "").trim().toLowerCase() && seat.id === 1);
+        if (!isHostTarget) return seat;
+        const current = Number(String(seat.giftCoins || "0").replace(/,/g, "").replace(/k$/i, "000").replace(/m$/i, "000000")) || 0;
+        return { ...seat, giftCoins: current + totalCost };
+      });
+      party.lastGiftEvent = { sender: user.username, recipient: recipient || party.hostUsername || "Host", totalCost, giftName: gift.name, count: giftCount, timestamp: Date.now() };
+      saveDatabase();
+      syncDocument("parties", party.id, party);
+    }
+  }
+
   saveDatabase();
 
   const responseData = {
@@ -5062,9 +5083,27 @@ app.post("/api/v1/pk/end", (req, res) => {
 });
 
 // Party Hub endpoints (12 or 25-seat Audio Party)
+const prunePartyPresence = (party: any) => {
+  if (!party) return party;
+  if (!Array.isArray(party.connectedViewers)) party.connectedViewers = [];
+  if (!party.lastSeen) party.lastSeen = {};
+  const now = Date.now();
+  const PRESENCE_TTL_MS = 12000;
+  party.connectedViewers = party.connectedViewers.filter((viewer: any) => {
+    const username = String(viewer?.username || "");
+    if (!username) return false;
+    // Join events without a heartbeat are given a short grace period.
+    const lastSeen = Number(party.lastSeen[username] || viewer.joinedAt || 0);
+    return lastSeen > 0 && (now - lastSeen) <= PRESENCE_TTL_MS;
+  });
+  party.participantCount = party.connectedViewers.length;
+  return party;
+};
+
 const sanitizePartyForClient = (party: any) => {
   if (!party) return party;
-  const safe = { ...party };
+  prunePartyPresence(party);
+  const safe = { ...party, connectedViewers: Array.isArray(party.connectedViewers) ? party.connectedViewers.map((v: any) => ({ ...v })) : [] };
   delete safe.password;
   return safe;
 };
@@ -5124,7 +5163,8 @@ app.post("/api/v1/parties", (req, res) => {
     allGuestsMuted: existingIdx !== -1 ? Boolean(dbData.parties[existingIdx].allGuestsMuted) : false,
     moderators: existingIdx !== -1 && Array.isArray(dbData.parties[existingIdx].moderators) ? dbData.parties[existingIdx].moderators : [],
     createdAt: existingIdx !== -1 ? (dbData.parties[existingIdx].createdAt || Date.now()) : Date.now(),
-    connectedViewers: [{ userId: validHost, username: validHost, avatar: hostAvatar || "", level: 1, vipLevel: Number(hostVipLevel || 0) }],
+    connectedViewers: [{ userId: validHost, username: validHost, avatar: hostAvatar || "", level: 1, vipLevel: Number(hostVipLevel || 0), joinedAt: Date.now() }],
+    lastSeen: { [validHost]: Date.now() },
     seats: Array.from({ length: resolvedSeatCount }, (_, index) => ({
       id: index + 1,
       name: index === 0 ? validHost : null,
@@ -5191,8 +5231,11 @@ app.post("/api/v1/parties/:id/join", (req, res) => {
     if (!party.connectedViewers) {
       party.connectedViewers = [];
     }
+    prunePartyPresence(party);
+    if (!party.lastSeen) party.lastSeen = {};
+    party.lastSeen[username] = Date.now();
     if (!party.connectedViewers.some((v: any) => v.username === username)) {
-      party.connectedViewers.push({ userId: username, username, avatar: avatar || "", level: userLevel || 1, vipLevel: vipLevel || 0 });
+      party.connectedViewers.push({ userId: username, username, avatar: avatar || "", level: userLevel || 1, vipLevel: vipLevel || 0, joinedAt: Date.now() });
     }
     party.participantCount = party.connectedViewers.length;
     party.lastJoinEvent = {
@@ -5250,8 +5293,14 @@ app.post("/api/v1/parties/:id/heartbeat", (req, res) => {
   
   const party = dbData.parties?.find((p: any) => p.id === id);
   if (party) {
+    prunePartyPresence(party);
     if (!party.lastSeen) party.lastSeen = {};
-    party.lastSeen[username] = Date.now();
+    const now = Date.now();
+    party.lastSeen[username] = now;
+    const viewer = (party.connectedViewers || []).find((v: any) => v.username === username);
+    if (viewer) viewer.lastSeen = now;
+    else party.connectedViewers.push({ userId: username, username, avatar: "", level: 1, vipLevel: 0, joinedAt: now });
+    party.participantCount = party.connectedViewers.length;
     res.json({ status: "ok" });
   } else {
     res.status(404).json({ error: "Party Room not found" });

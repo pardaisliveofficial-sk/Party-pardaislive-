@@ -2372,6 +2372,69 @@ export default function App() {
     };
   }, [clientView, activePartyId, user?.username]);
 
+  // Keep the device screen awake while an audio party room is actively open.
+  // Re-acquire the wake lock when the app returns from background/visibility changes.
+  useEffect(() => {
+    if (clientView !== "party-room" || !activePartyId) return;
+
+    let wakeLock: any = null;
+    let cancelled = false;
+
+    const requestWakeLock = async () => {
+      if (cancelled || document.visibilityState !== "visible") return;
+      try {
+        const wakeLockApi = (navigator as any).wakeLock;
+        if (!wakeLockApi?.request) return;
+        if (wakeLock) {
+          try { await wakeLock.release(); } catch (_) {}
+          wakeLock = null;
+        }
+        wakeLock = await wakeLockApi.request("screen");
+        wakeLock?.addEventListener?.("release", () => {
+          if (!cancelled && document.visibilityState === "visible") {
+            setTimeout(() => { requestWakeLock(); }, 250);
+          }
+        });
+      } catch (err) {
+        console.warn("[PARTY WAKE LOCK] Screen wake lock unavailable:", err);
+      }
+    };
+
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") requestWakeLock();
+    };
+
+    requestWakeLock();
+    document.addEventListener("visibilitychange", handleVisibility);
+
+    return () => {
+      cancelled = true;
+      document.removeEventListener("visibilitychange", handleVisibility);
+      if (wakeLock) { try { wakeLock.release(); } catch (_) {} }
+      wakeLock = null;
+    };
+  }, [clientView, activePartyId]);
+
+  // Refresh the active party snapshot so viewer lists, seats, mute states and comments
+  // stay synchronized across all users in the room.
+  useEffect(() => {
+    if (clientView !== "party-room" || !activePartyId) return;
+    let cancelled = false;
+    const refreshParty = async () => {
+      try {
+        const res = await fetch(`/api/v1/parties/${activePartyId}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!cancelled && data?.id) {
+          setPartiesList(prev => prev.map(p => p.id === activePartyId ? { ...p, ...data } : p));
+        }
+      } catch (_) {}
+    };
+    refreshParty();
+    const interval = setInterval(refreshParty, 3000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [clientView, activePartyId]);
+
   // Solo Live Host Heartbeat effect
   useEffect(() => {
     if (clientView !== "user-live" || !user) return;
@@ -2602,7 +2665,11 @@ export default function App() {
   // Party-specific moderation state. Host is always supreme; moderators inherit guest-management controls.
   const [partyModeratorUsers, setPartyModeratorUsers] = useState<Record<string, string[]>>({});
   const [partyAllGuestsMuted, setPartyAllGuestsMuted] = useState<Record<string, boolean>>({});
+  const [partyHostMicMuted, setPartyHostMicMuted] = useState<Record<string, boolean>>({});
   const [showActiveViewersModal, setShowActiveViewersModal] = useState<boolean>(false);
+  const [showPartyViewersModal, setShowPartyViewersModal] = useState<boolean>(false);
+  const [showPartyRankingModal, setShowPartyRankingModal] = useState<boolean>(false);
+  const [partyRankingTab, setPartyRankingTab] = useState<"gifter" | "host">("gifter");
 
   const triggerJoinNotif = (username: string, userLevel: number, vipLevel: number) => {
     const newNotif: JoinNotif = {
@@ -8572,6 +8639,10 @@ export default function App() {
     }
   };
 
+  const handlePartyToggleHostMic = (partyId: string) => {
+    setPartyHostMicMuted(prev => ({ ...prev, [partyId]: !Boolean(prev[partyId]) }));
+  };
+
   const handlePartyToggleMute = async (partyId: string, seatId: number) => {
     // A host-level "mute all" cannot be overridden by a guest.
     if (partyAllGuestsMuted[partyId] && !((partiesList.find((p: any) => p.id === partyId)?.hostUsername) === user.username)) {
@@ -10280,7 +10351,7 @@ export default function App() {
                             method: "POST",
                             headers: { "Content-Type": "application/json" },
                             body: JSON.stringify({
-                              message: `🎁 sent ${count > 1 ? `${count}x ` : ""}${gift.name} (${giftIconChar}) to @${actualTargetName}!`,
+                              message: `🎁 sent ${count > 1 ? `${count}x ` : ""}${gift.name} (${giftIconChar}) to @${actualTargetName}! • ${totalCost.toLocaleString()} coins`,
                               username: user.username,
                               avatar: user.avatar,
                               vipLevel: user.vipLevel || 0,
@@ -10676,7 +10747,7 @@ export default function App() {
                                 partyId={party.id}
                                 channelName={`party-${party.id}`}
                                 userRole={isHostOfRoom ? "host" : (mySeatedSeat ? "speaker" : "listener")}
-                                isMuted={isHostOfRoom ? false : (isAllGuestsMuted ? true : (mySeatedSeat ? mySeatedSeat.isMuted === true : true))}
+                                isMuted={isHostOfRoom ? Boolean(partyHostMicMuted[party.id]) : (isAllGuestsMuted ? true : (mySeatedSeat ? mySeatedSeat.isMuted === true : true))}
                                   username={user.username}
                                 avatar={user.avatar}
                                 musicTrack={partyMusicTrack}
@@ -10711,10 +10782,37 @@ export default function App() {
                                       <span className="font-black text-emerald-300">REAL VOICE</span>
                                     </div>
                                     <div className="flex items-center gap-2 text-gray-200">
-                                      <span title="All users in the room">👁️ {totalViewers}</span>
+                                      <button
+                                        onClick={() => setShowPartyViewersModal(true)}
+                                        className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md bg-cyan-500/10 border border-cyan-400/20 text-cyan-200 hover:bg-cyan-500/20 cursor-pointer"
+                                        title="View all active party viewers"
+                                      >
+                                        👁️ {totalViewers}
+                                      </button>
                                       <span title="Party running time">⏱️ {timerLabel}</span>
-                                      <span title="Overall host ranking">👑 H#{hostRank?.rank || "—"}</span>
-                                      <span title="Overall gifter ranking">🎁 G#{gifterRank?.rank || "—"}</span>
+                                      <button
+                                        onClick={() => { setPartyRankingTab("host"); setShowPartyRankingModal(true); }}
+                                        className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md bg-purple-500/10 border border-purple-400/20 text-purple-200 hover:bg-purple-500/20 cursor-pointer"
+                                        title="Open party host/speaker ranking"
+                                      >
+                                        👑 H#{hostRank?.rank || "—"}
+                                      </button>
+                                      <button
+                                        onClick={() => { setPartyRankingTab("gifter"); setShowPartyRankingModal(true); }}
+                                        className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md bg-amber-500/10 border border-amber-400/20 text-amber-200 hover:bg-amber-500/20 cursor-pointer"
+                                        title="Open party gifter ranking"
+                                      >
+                                        🎁 G#{gifterRank?.rank || "—"}
+                                      </button>
+                                      {isHostOfRoom && (
+                                        <button
+                                          onClick={() => handlePartyToggleHostMic(party.id)}
+                                          className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md border font-black cursor-pointer ${partyHostMicMuted[party.id] ? "bg-red-500/20 border-red-400/40 text-red-300" : "bg-emerald-500/10 border-emerald-400/30 text-emerald-300"}`}
+                                          title={partyHostMicMuted[party.id] ? "Unmute your host microphone" : "Mute your host microphone"}
+                                        >
+                                          {partyHostMicMuted[party.id] ? "🔇 HOST MUTED" : "🎙️ HOST MIC"}
+                                        </button>
+                                      )}
                                       {isHostOfRoom && (
                                         <button
                                           onClick={() => setShowRequestsSheet(true)}
@@ -30909,6 +31007,103 @@ export default function App() {
                     Shift View
                   </span>
                 </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* PARTY ROOM VIEWERS MODAL */}
+      {showPartyViewersModal && activePartyId && (() => {
+        const party = partiesList.find((p: any) => p.id === activePartyId);
+        const viewers = Array.from(new Map(((party?.connectedViewers || []) as any[]).map(v => [v.username, v])).values());
+        return (
+          <div className="fixed inset-0 bg-black/85 flex items-center justify-center z-[999] p-4 animate-fade-in">
+            <div className="bg-[#11101a] border border-cyan-400/30 rounded-3xl p-5 w-full max-w-sm shadow-2xl relative">
+              <button onClick={() => setShowPartyViewersModal(false)} className="absolute top-4 right-4 text-gray-400 hover:text-white">✕</button>
+              <div className="border-b border-white/10 pb-3 mb-3">
+                <h3 className="text-sm font-black text-white uppercase font-mono">👁️ Party Viewers</h3>
+                <p className="text-[9px] text-cyan-300 mt-1">{viewers.length} active viewers currently in this room</p>
+              </div>
+              <div className="max-h-[360px] overflow-y-auto space-y-2">
+                {viewers.length === 0 ? (
+                  <p className="text-[10px] text-gray-500 text-center py-8">No active viewers yet.</p>
+                ) : viewers.map((v: any, i: number) => (
+                  <div key={`${v.username || "viewer"}-${i}`} className="flex items-center gap-2.5 p-2 rounded-xl bg-white/5 border border-white/5">
+                    <img src={v.avatar || DEFAULT_USER.avatar} className="w-9 h-9 rounded-full object-cover border border-cyan-400/30" />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[10px] font-black text-white truncate">@{v.username || "Viewer"}</p>
+                      <p className="text-[7.5px] text-gray-400 font-mono">Lv.{v.userLevel || v.level || 1}{v.vipLevel ? ` • VIP ${v.vipLevel}` : ""}</p>
+                    </div>
+                    <span className="text-[7px] text-emerald-300 font-black uppercase">LIVE</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* PARTY ROOM RANKING MODAL */}
+      {showPartyRankingModal && activePartyId && (() => {
+        const party = partiesList.find((p: any) => p.id === activePartyId);
+        if (!party) return null;
+        const totalViewers = Array.isArray(party.connectedViewers) ? party.connectedViewers.length : Number(party.participantCount || 0);
+        const parseCoins = (value: any) => {
+          const s = String(value ?? "0").trim().toUpperCase();
+          if (s.endsWith("M")) return (parseFloat(s) || 0) * 1000000;
+          if (s.endsWith("K")) return (parseFloat(s) || 0) * 1000;
+          return parseFloat(s) || 0;
+        };
+        const gifterTotals: Record<string, { username: string; avatar?: string; coins: number; gifts: number }> = {};
+        (party.comments || []).forEach((comment: any) => {
+          const text = String(comment.message || "");
+          if (!text.includes("🎁") || !text.includes("coins")) return;
+          const match = text.match(/([0-9][0-9,]*)\s+coins/i);
+          const coins = match ? parseCoins(match[1].replace(/,/g, "")) : 0;
+          const name = comment.username || "Unknown";
+          if (!gifterTotals[name]) gifterTotals[name] = { username: name, avatar: comment.avatar, coins: 0, gifts: 0 };
+          gifterTotals[name].coins += coins;
+          gifterTotals[name].gifts += 1;
+        });
+        const gifterRows = Object.values(gifterTotals).sort((a, b) => b.coins - a.coins);
+        const occupiedSeats = (party.seats || []).filter((s: any) => s.name);
+        const hostRows = occupiedSeats.map((seat: any) => {
+          const giftCoins = parseCoins(seat.giftCoins);
+          const isHost = seat.id === 1 || seat.name === party.hostUsername;
+          const score = totalViewers * 100 + giftCoins;
+          return { username: seat.name, avatar: seat.avatar, audience: totalViewers, giftCoins, score, isHost };
+        }).sort((a: any, b: any) => b.score - a.score);
+        return (
+          <div className="fixed inset-0 bg-black/85 flex items-center justify-center z-[999] p-4 animate-fade-in">
+            <div className="bg-[#11101a] border border-amber-400/30 rounded-3xl p-5 w-full max-w-sm shadow-2xl relative">
+              <button onClick={() => setShowPartyRankingModal(false)} className="absolute top-4 right-4 text-gray-400 hover:text-white">✕</button>
+              <h3 className="text-sm font-black text-white uppercase font-mono">🏆 Party Rankings</h3>
+              <p className="text-[8px] text-gray-500 mt-1 mb-3">Live ranking for this room — updates with the party snapshot.</p>
+              <div className="grid grid-cols-2 gap-2 mb-3">
+                <button onClick={() => setPartyRankingTab("gifter")} className={`py-2 rounded-xl text-[9px] font-black border cursor-pointer ${partyRankingTab === "gifter" ? "bg-amber-400 text-black border-amber-300" : "bg-white/5 text-gray-300 border-white/10"}`}>🎁 GIFTER RANKING</button>
+                <button onClick={() => setPartyRankingTab("host")} className={`py-2 rounded-xl text-[9px] font-black border cursor-pointer ${partyRankingTab === "host" ? "bg-purple-500 text-white border-purple-300" : "bg-white/5 text-gray-300 border-white/10"}`}>👑 HOST RANKING</button>
+              </div>
+              <div className="max-h-[360px] overflow-y-auto space-y-2">
+                {partyRankingTab === "gifter" ? (gifterRows.length === 0 ? (
+                  <p className="text-[10px] text-gray-500 text-center py-8">No party gifts recorded yet.</p>
+                ) : gifterRows.map((row, i) => (
+                  <div key={row.username} className="flex items-center gap-2 p-2 rounded-xl bg-white/5 border border-amber-400/10">
+                    <span className="w-6 text-center text-[11px] font-black text-amber-300">#{i + 1}</span>
+                    <img src={row.avatar || DEFAULT_USER.avatar} className="w-8 h-8 rounded-full object-cover" />
+                    <div className="flex-1 min-w-0"><p className="text-[9px] font-black text-white truncate">@{row.username}</p><p className="text-[7px] text-gray-400">{row.gifts} gift action{row.gifts === 1 ? "" : "s"}</p></div>
+                    <span className="text-[8px] font-black text-amber-300">{row.coins.toLocaleString()} 🪙</span>
+                  </div>
+                ))) : (hostRows.length === 0 ? (
+                  <p className="text-[10px] text-gray-500 text-center py-8">No hosts/speakers are seated.</p>
+                ) : hostRows.map((row: any, i: number) => (
+                  <div key={row.username} className="flex items-center gap-2 p-2 rounded-xl bg-white/5 border border-purple-400/10">
+                    <span className="w-6 text-center text-[11px] font-black text-purple-300">#{i + 1}</span>
+                    <img src={row.avatar || DEFAULT_USER.avatar} className="w-8 h-8 rounded-full object-cover" />
+                    <div className="flex-1 min-w-0"><p className="text-[9px] font-black text-white truncate">@{row.username}{row.isHost ? " 👑" : ""}</p><p className="text-[7px] text-gray-400">Audience {row.audience} • Gifts {row.giftCoins.toLocaleString()}</p></div>
+                    <span className="text-[8px] font-black text-purple-300">Score {Math.round(row.score).toLocaleString()}</span>
+                  </div>
+                )))}
               </div>
             </div>
           </div>
