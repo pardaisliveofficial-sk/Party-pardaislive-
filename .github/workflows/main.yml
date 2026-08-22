@@ -2,9 +2,9 @@ name: Build Android APK & AAB
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ main, master, staging ]
   pull_request:
-    branches: [ main, master ]
+    branches: [ main, master, staging ]
 
 jobs:
   build:
@@ -149,5 +149,6 @@ jobs:
         with:
           name: pardais-party-debug-apk
           path: android/app/build/outputs/apk/debug/*.apk
+
 
           
