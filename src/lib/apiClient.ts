@@ -44,18 +44,33 @@ export const resolveApiUrl = (path: string): string => {
 
   const cleanPath = path.startsWith("/") ? path : `/${path}`;
 
-  // If an explicit VITE_API_URL is configured in environment, use it
+  // Capacitor native builds MUST use the production API. A relative /api URL
+  // points at the WebView origin (for example https://localhost) inside the APK
+  // instead of the Railway API, which makes email OTP/recovery fail only in APK.
+  if (typeof window !== "undefined") {
+    const loc = window.location;
+    const cap = (window as any).Capacitor;
+    const nativeCapacitor = !!cap && (
+      cap.isNativePlatform?.() === true ||
+      cap.getPlatform?.() === "android" ||
+      cap.getPlatform?.() === "ios"
+    );
+    const nativeProtocol = !!loc && (
+      loc.protocol === "file:" ||
+      loc.protocol.includes("capacitor") ||
+      loc.origin === "null"
+    );
+    const nativeLocalhost = !!loc && (loc.hostname === "localhost" || loc.hostname === "127.0.0.1");
+
+    if (nativeCapacitor || nativeProtocol || nativeLocalhost) {
+      return `${PRODUCTION_API_BASE}${cleanPath}`;
+    }
+  }
+
+  // Web builds may override the API base through VITE_API_URL.
   const envApiUrl = (import.meta as any).env?.VITE_API_URL;
   if (typeof envApiUrl === "string" && envApiUrl.trim()) {
     return `${envApiUrl.trim().replace(/\/+$/, "")}${cleanPath}`;
-  }
-
-  // In Android APK / Capacitor native wrapper with file:// or capacitor:// protocol, route to production base
-  if (typeof window !== "undefined") {
-    const loc = window.location;
-    if (loc && (loc.protocol === "file:" || loc.protocol.includes("capacitor") || loc.origin === "null")) {
-      return `${PRODUCTION_API_BASE}${cleanPath}`;
-    }
   }
 
   // In standard web browser environments (AI Studio dev/preview, localhost, cloud run, etc.), use the relative path

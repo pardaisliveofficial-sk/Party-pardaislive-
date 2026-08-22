@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import pardaisPartyExactLogo from "../assets/pardais-party-exact.png";
 import { 
   Users, 
   Plus, 
@@ -223,7 +224,7 @@ export default function AccountSwitcherModal({
         <div className="p-3.5 border-b border-white/10 bg-gradient-to-r from-purple-950/80 via-[#181828] to-pink-950/80 flex items-center justify-between">
           <div className="flex items-center space-x-2">
             <div className="w-8 h-8 rounded-xl bg-[#090514] border border-pink-500/50 p-0.5 flex items-center justify-center shadow-lg shadow-pink-500/30 overflow-hidden">
-              <img src="/pardais-party-exact.png" alt="Pardais Party" className="w-full h-full object-contain" />
+              <img src={pardaisPartyExactLogo} alt="Pardais Party" className="w-full h-full object-contain" />
             </div>
             <div>
               <h3 className="text-xs font-black text-white uppercase tracking-wider font-mono flex items-center gap-1.5">

@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import pardaisPartyExactLogo from "../assets/pardais-party-exact.png";
 import { 
   X, 
   Mail, 
@@ -331,7 +332,7 @@ export default function AuthModal({
           <div className="flex justify-center mb-1">
             <div className="w-20 h-20 relative flex items-center justify-center">
               <img
-                src="/pardais-party-exact.png?v=8"
+                src={pardaisPartyExactLogo}
                 alt="Pardais Party"
                 className="w-full h-full object-contain filter drop-shadow-[0_0_15px_rgba(255,0,127,0.5)]"
                 draggable={false}

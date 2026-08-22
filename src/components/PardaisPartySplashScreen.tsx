@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useRef } from "react";
+import pardaisPartyExactLogo from "../assets/pardais-party-exact.png";
 
 interface PardaisPartySplashScreenProps {
   onComplete?: () => void;
@@ -46,7 +47,7 @@ export const PardaisPartySplashScreen: React.FC<PardaisPartySplashScreenProps> =
           <div className="absolute inset-0 rounded-full bg-gradient-to-tr from-[#ff007f] via-[#7b2cbf] to-[#00d2ff] animate-pulse blur-xl opacity-70"></div>
           <div className="relative w-28 h-28 rounded-3xl bg-[#090514] border-2 border-[#ff007f]/70 p-2 flex items-center justify-center shadow-[0_0_35px_rgba(255,0,127,0.5)] overflow-hidden">
             <img
-              src="/pardais-party-exact.png"
+              src={pardaisPartyExactLogo}
               alt="Pardais Party"
               className="w-full h-full object-contain filter drop-shadow-[0_0_12px_rgba(255,0,127,0.8)] select-none"
               draggable={false}

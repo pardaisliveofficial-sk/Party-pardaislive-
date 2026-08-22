@@ -1,4 +1,5 @@
 import React from "react";
+import pardaisPartyExactLogo from "../assets/pardais-party-exact.png";
 
 interface PardaisPartyLogoProps {
   size?: "sm" | "md" | "lg" | "xl" | "custom";
@@ -18,7 +19,7 @@ export const PardaisPartyLogo: React.FC<PardaisPartyLogoProps> = ({
   return (
     <div className={`inline-flex items-center justify-center ${textPosition === "bottom" ? "flex-col space-y-3" : "space-x-3.5"} ${className}`}>
       <div className={`relative ${iconClass} flex items-center justify-center select-none shrink-0`}>
-        <img src="/pardais-party-exact.png?v=8" alt="Pardais Party" className="w-full h-full object-contain select-none" draggable={false} />
+        <img src={pardaisPartyExactLogo} alt="Pardais Party" className="w-full h-full object-contain select-none" draggable={false} />
       </div>
       {showText && (
         <div className={textPosition === "bottom" ? "text-center" : "text-left"}>
