@@ -3420,7 +3420,7 @@ app.post("/api/v1/gifts/send", authenticateUser, (req, res) => {
   }
 
   // Update active party room state with lastGiftEvent & giftEventQueue
-  const partyId = req.body.partyId || req.body.roomId;
+  // Reuse the partyId declared above in this request scope.
   const activePartyMatch = (dbData.parties || []).find((p: any) =>
     (partyId && (p.id === partyId || p.hostUsername === partyId)) ||
     (p.id === hostId) ||
