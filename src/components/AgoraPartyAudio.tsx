@@ -619,17 +619,34 @@ export const AgoraPartyAudio: React.FC<AgoraPartyAudioProps> = ({
       try { track?.stop?.(); } catch (_) {}
       try { track?.close?.(); } catch (_) {}
       reactionCustomTrackRef.current = null;
+      if (reactionAudioContextRef.current) {
+        try { await reactionAudioContextRef.current.close(); } catch (_) {}
+        reactionAudioContextRef.current = null;
+      }
     };
 
     const startReaction = async () => {
+      let ctx: AudioContext | null = null;
       try {
         await stopReaction();
         if (cancelled) return;
+
         const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-        if (!AudioCtx) return;
-        const ctx: AudioContext = new AudioCtx();
+        if (!AudioCtx) throw new Error("Web Audio is not supported on this device");
+        ctx = new AudioCtx();
         reactionAudioContextRef.current = ctx;
         if (ctx.state === "suspended") await ctx.resume().catch(() => {});
+
+        // Use a real short SFX asset instead of a synthesized tone. The same
+        // decoded audio is routed to the host speaker and to an Agora custom
+        // audio track, so everyone in the party hears the exact same sound.
+        const sfxUrl = `/assets/party-sfx/${reactionEvent.sound}.wav`;
+        const response = await fetch(sfxUrl, { cache: "force-cache" });
+        if (!response.ok) throw new Error(`SFX asset unavailable: ${reactionEvent.sound}`);
+        const bytes = await response.arrayBuffer();
+        if (cancelled) return;
+        const buffer = await ctx.decodeAudioData(bytes.slice(0));
+        if (cancelled) return;
 
         const destination = ctx.createMediaStreamDestination();
         const master = ctx.createGain();
@@ -637,81 +654,33 @@ export const AgoraPartyAudio: React.FC<AgoraPartyAudioProps> = ({
         master.connect(ctx.destination);
         master.connect(destination);
 
-        const now = ctx.currentTime + 0.02;
-        const noiseBuffer = () => {
-          const buffer = ctx.createBuffer(1, Math.floor(ctx.sampleRate * 0.5), ctx.sampleRate);
-          const data = buffer.getChannelData(0);
-          for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
-          return buffer;
-        };
-        const tone = (freq: number, start: number, duration: number, gain = 0.16, type: OscillatorType = "sine", endFreq?: number) => {
-          const osc = ctx.createOscillator();
-          const g = ctx.createGain();
-          osc.type = type;
-          osc.frequency.setValueAtTime(freq, now + start);
-          if (endFreq) osc.frequency.exponentialRampToValueAtTime(Math.max(30, endFreq), now + start + duration);
-          g.gain.setValueAtTime(0.0001, now + start);
-          g.gain.exponentialRampToValueAtTime(gain, now + start + 0.01);
-          g.gain.exponentialRampToValueAtTime(0.0001, now + start + duration);
-          osc.connect(g); g.connect(master);
-          osc.start(now + start); osc.stop(now + start + duration + 0.03);
-        };
-        const burst = (start: number, duration: number, gain = 0.12, filterFreq = 1800) => {
-          const src = ctx.createBufferSource();
-          src.buffer = noiseBuffer();
-          const filter = ctx.createBiquadFilter();
-          const g = ctx.createGain();
-          filter.type = "bandpass"; filter.frequency.value = filterFreq; filter.Q.value = 0.8;
-          g.gain.setValueAtTime(0.0001, now + start);
-          g.gain.exponentialRampToValueAtTime(gain, now + start + 0.01);
-          g.gain.exponentialRampToValueAtTime(0.0001, now + start + duration);
-          src.connect(filter); filter.connect(g); g.connect(master);
-          src.start(now + start); src.stop(now + start + duration + 0.03);
-        };
-
-        let duration = 1.1;
-        switch (reactionEvent.sound) {
-          case "laugh":
-            [0, 0.22, 0.44, 0.66].forEach((t, i) => tone(520 + i * 35, t, 0.18, 0.22, "triangle"));
-            duration = 0.95; break;
-          case "cry":
-            tone(700, 0, 0.55, 0.22, "sine", 330); tone(560, 0.55, 0.45, 0.16, "sine", 260);
-            duration = 1.15; break;
-          case "cheer":
-            [0, 0.12, 0.24, 0.36].forEach((t, i) => tone([523, 659, 784, 1046][i], t, 0.32, 0.17, "sawtooth")); burst(0.1, 0.6, 0.08, 3000);
-            duration = 0.95; break;
-          case "applause":
-            for (let i = 0; i < 8; i++) burst(i * 0.12, 0.11, 0.14, 1300 + (i % 3) * 500);
-            duration = 1.15; break;
-          case "wow":
-            tone(420, 0, 0.65, 0.2, "sine", 920); tone(920, 0.62, 0.25, 0.13, "sine", 700);
-            duration = 1.0; break;
-          case "boo":
-            tone(180, 0, 0.55, 0.2, "sawtooth", 110); burst(0.05, 0.5, 0.08, 500);
-            duration = 0.75; break;
-          case "drumroll":
-            for (let i = 0; i < 12; i++) burst(i * 0.07, 0.055, 0.12, 140 + i * 8);
-            duration = 0.98; break;
-          case "airhorn":
-            tone(170, 0, 0.22, 0.24, "sawtooth", 120); tone(135, 0.22, 0.6, 0.24, "sawtooth", 85);
-            duration = 0.9; break;
-        }
+        const source = ctx.createBufferSource();
+        source.buffer = buffer;
+        source.connect(master);
 
         const mediaTrack = destination.stream.getAudioTracks()[0];
-        if (!mediaTrack) { await ctx.close().catch(() => {}); return; }
+        if (!mediaTrack) throw new Error("Unable to create reaction audio track");
         const AgoraRTC = await getAgoraRTC();
-        if (!AgoraRTC || cancelled) { await ctx.close().catch(() => {}); return; }
+        if (!AgoraRTC || cancelled) return;
+
         const customTrack = (AgoraRTC as any).createCustomAudioTrack({ mediaStreamTrack: mediaTrack });
         reactionCustomTrackRef.current = customTrack;
         const clientNow = clientRef.current;
-        if (clientNow && clientNow.connectionState === "CONNECTED") await clientNow.publish([customTrack]);
+        if (clientNow && clientNow.connectionState === "CONNECTED") {
+          await clientNow.publish([customTrack]);
+        }
+
+        source.start(0);
+        const durationMs = Math.ceil((buffer.duration + 0.25) * 1000);
         window.setTimeout(async () => {
           try { await stopReaction(); } catch (_) {}
-          try { await ctx.close(); } catch (_) {}
-          reactionAudioContextRef.current = null;
-        }, Math.ceil((duration + 0.15) * 1000));
+        }, durationMs);
       } catch (err) {
-        console.warn("[AgoraPartyAudio] Reaction sound failed:", err);
+        console.warn("[AgoraPartyAudio] Reaction SFX failed:", err);
+        if (ctx) {
+          try { await ctx.close(); } catch (_) {}
+        }
+        reactionAudioContextRef.current = null;
       }
     };
 

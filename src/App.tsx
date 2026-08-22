@@ -10812,7 +10812,7 @@ export default function App() {
                                         <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
                                         <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500" />
                                       </span>
-                                      <span className="font-black text-emerald-300">REAL VOICE</span>
+                                      
                                     </div>
                                     <div className="flex items-center gap-2 text-gray-200">
                                       <button
@@ -10859,9 +10859,9 @@ export default function App() {
                                         <button
                                           onClick={() => setShowRequestsSheet(true)}
                                           className="relative text-amber-300 hover:text-white p-0.5 rounded-md cursor-pointer"
-                                          title="Seat Join Requests"
+                                          title="Seat Log / Join Requests"
                                         >
-                                          🎙️
+                                          📜 LOG
                                           {activeRequests.length > 0 && (
                                             <span className="absolute -top-1 -right-1 bg-amber-400 text-black text-[5px] font-black rounded-full min-w-2.5 h-2.5 px-0.5 flex items-center justify-center">
                                               {activeRequests.length}
