@@ -159,7 +159,7 @@ function saveDatabase() {
     // Asynchronously push metadata updates to Firebase Firestore only if they have actually changed
     const currentUserStr = JSON.stringify(dbData.user || {});
     if (currentUserStr !== lastSavedUserStr) {
-      await writeMetadata("user_profile", dbData.user);
+      void writeMetadata("user_profile", dbData.user).catch((e) => console.error("[PARDAIS-PARTY FIREBASE] user_profile sync failed:", e));
       lastSavedUserStr = currentUserStr;
     }
 
