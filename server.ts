@@ -5828,7 +5828,10 @@ app.post("/api/v1/parties/:id/theme", (req, res) => {
     return res.status(400).json({ error: "Invalid party theme" });
   }
   const party = dbData.parties[index];
-  // The visual theme is a shared room setting; any participant may select it.
+  // Only the room host controls the shared Party View. Everyone else receives the selected theme.
+  if (String(username || "").toLowerCase() !== String(party.hostUsername || "").toLowerCase()) {
+    return res.status(403).json({ error: "Only the host can change the Party View" });
+  }
   party.partyViewTheme = String(themeId);
   party.updatedAt = Date.now();
   saveDatabase();
