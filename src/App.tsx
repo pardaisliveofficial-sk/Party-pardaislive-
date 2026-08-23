@@ -10657,16 +10657,16 @@ export default function App() {
 
                       return (
                             <div
-                              className="w-full h-full flex flex-col relative select-none overflow-hidden pb-3 border-x shadow-[inset_0_0_80px_rgba(0,0,0,0.9)]"
+                              className="w-full h-full min-h-0 flex flex-col relative select-none overflow-hidden pb-3 border-x shadow-[inset_0_0_80px_rgba(0,0,0,0.9)]"
                               style={{ borderColor: `${partyTheme.accent}55` }}
                             >
                               {/* Full-room scenic party background. It is visual-only; all existing controls remain above it. */}
                               <div
-                                className="absolute inset-0 bg-gradient-to-b from-[#0a0c1a] via-[#05060f] to-[#020308] bg-cover bg-center bg-no-repeat transition-all duration-500"
-                                style={partyTheme.background ? { backgroundImage: `url(${partyTheme.background})` } : undefined}
+                                className="absolute inset-0 z-0 bg-gradient-to-b from-[#0a0c1a] via-[#05060f] to-[#020308] bg-cover bg-center bg-no-repeat transition-all duration-500"
+                                style={partyTheme.background ? { backgroundImage: `linear-gradient(rgba(0,0,0,0.10), rgba(0,0,0,0.18)), url(${partyTheme.background})`, backgroundSize: "cover", backgroundPosition: "center" } : undefined}
                               />
-                              <div className="absolute inset-0 pointer-events-none" style={{ background: partyTheme.overlay }} />
-                              <div className="absolute inset-0 pointer-events-none bg-gradient-to-b from-black/10 via-black/10 to-black/45" />
+                              <div className="absolute inset-0 pointer-events-none z-[1]" style={{ background: partyTheme.id === "default" ? partyTheme.overlay : "rgba(0,0,0,0.08)" }} />
+                              <div className="absolute inset-0 pointer-events-none z-[1] bg-gradient-to-b from-black/5 via-black/5 to-black/20" />
 
                               {/* Ambient Neon Gold Glow Spots */}
                           <div className="absolute top-0 left-1/4 w-72 h-72 bg-amber-500/10 rounded-full blur-3xl pointer-events-none" />
@@ -10839,7 +10839,7 @@ export default function App() {
                             )}
 
                             {/* 🎙️ 12-SEAT LOUNGE AUDIOGRID AREA (3 COLUMNS x 4 ROWS = 12 HEXAGON SEATS) */}
-                            <div className="px-3 py-2 space-y-2 bg-transparent">
+                            <div className={`px-3 py-1.5 space-y-1.5 bg-transparent shrink-0 ${isDefaultView ? "max-h-[46vh] overflow-y-auto" : "max-h-[40vh] overflow-y-auto"}`}>
                               {(() => {
                                 const seatCount = Number(party.maxCapacity || party.seatCount || 12) === 25 ? 25 : 12;
                                 const fullSeats = Array.from({ length: seatCount }, (_, i) => {
@@ -10859,13 +10859,13 @@ export default function App() {
                                   const isHostSeat = seat.id === 1;
                                   const isLarge = isHostSeat;
                                   const sizeClass = customView
-                                    ? (isLarge ? (seatCount === 25 ? "w-20 h-20" : "w-24 h-24") : (seatCount === 25 ? "w-11 h-11" : "w-14 h-14"))
+                                    ? (isLarge ? (seatCount === 25 ? "w-16 h-16" : "w-[72px] h-[72px]") : (seatCount === 25 ? "w-10 h-10" : "w-12 h-12"))
                                     : (seatCount === 25 ? "w-11 h-11" : "w-14 h-14");
                                   const accent = partyTheme.accent;
                                   const initial = String(seat.name || "?").trim().charAt(0).toUpperCase();
 
                                   return (
-                                    <div key={seat.id} className={`flex flex-col items-center relative bg-transparent ${customView && isHostSeat ? "min-w-[105px]" : "min-w-0"}`}>
+                                    <div key={seat.id} className={`flex flex-col items-center relative bg-transparent ${customView && isHostSeat ? "min-w-[82px]" : "min-w-0"}`}>
                                       {customView && isHostSeat && (
                                         <span className="absolute -top-4 left-1/2 -translate-x-1/2 text-[15px] drop-shadow-[0_0_9px_rgba(245,158,11,1)] z-30 animate-bounce pointer-events-none">👑</span>
                                       )}
@@ -10963,18 +10963,18 @@ export default function App() {
                                 };
 
                                 return isDefaultView ? (
-                                  <div className="bg-black/35 backdrop-blur-md border rounded-2xl p-2.5 shadow-[0_0_30px_rgba(0,0,0,0.9)] relative overflow-hidden" style={{ borderColor: `${partyTheme.accent}55` }}>
+                                  <div className="bg-black/30 backdrop-blur-[2px] border rounded-2xl p-2 shadow-[0_0_30px_rgba(0,0,0,0.75)] relative overflow-hidden" style={{ borderColor: `${partyTheme.accent}55` }}>
                                     <div className="absolute inset-x-0 top-0 h-28 pointer-events-none" style={{ background: `radial-gradient(circle at 50% 0%, ${partyTheme.accent}22, transparent 70%)` }} />
-                                    <div className={seatCount === 25 ? "grid grid-cols-5 gap-x-1.5 gap-y-2.5" : "grid grid-cols-3 gap-x-2.5 gap-y-3"}>
+                                    <div className={seatCount === 25 ? "grid grid-cols-5 gap-x-1 gap-y-2" : "grid grid-cols-3 gap-x-1.5 gap-y-2.5"}>
                                       {fullSeats.map((seat) => renderSeat(seat, false))}
                                     </div>
                                   </div>
                                 ) : (
-                                  <div className="bg-black/30 backdrop-blur-md border rounded-3xl p-3 shadow-[0_0_35px_rgba(0,0,0,0.85)] relative overflow-hidden" style={{ borderColor: `${partyTheme.accent}70` }}>
-                                    <div className="relative z-10 flex justify-center pb-4">
+                                  <div className="bg-black/30 backdrop-blur-[2px] border rounded-3xl p-2 shadow-[0_0_35px_rgba(0,0,0,0.75)] relative overflow-hidden" style={{ borderColor: `${partyTheme.accent}70`, ...(partyTheme.background ? { backgroundImage: `linear-gradient(rgba(0,0,0,0.10), rgba(0,0,0,0.18)), url(${partyTheme.background})`, backgroundSize: "cover", backgroundPosition: "center" } : {}) }}>
+                                    <div className="relative z-10 flex justify-center pb-2">
                                       {renderSeat(hostSeat, true)}
                                     </div>
-                                    <div className={seatCount === 25 ? "grid grid-cols-5 gap-x-2.5 gap-y-4" : "grid grid-cols-3 gap-x-4 gap-y-4"}>
+                                    <div className={seatCount === 25 ? "grid grid-cols-5 gap-x-1.5 gap-y-2" : "grid grid-cols-3 gap-x-2 gap-y-2.5"}>
                                       {guestSeats.map((seat) => renderSeat(seat, true))}
                                     </div>
                                   </div>
@@ -11112,7 +11112,7 @@ export default function App() {
                           )}
 
                           {/* LOWER AREA: INFORMATION CARD + COMMENTS + BOTTOM ACTIONS BAR */}
-                          <div className="flex-1 min-h-0 flex flex-col justify-between bg-transparent select-none pb-1">
+                          <div className="flex-1 min-h-0 flex flex-col bg-transparent select-none pb-1 overflow-hidden">
                             {/* 🎪 CARNIVAL WELCOME & ROOM INFO CARD (AUTO-DISMISSES AFTER 6 SECONDS OR VIA DISMISS BUTTON) */}
                             {showCarnivalWelcomeCard && (
                               <div className="mx-3 my-1 p-2.5 rounded-2xl bg-gradient-to-r from-amber-950/60 via-black/80 to-purple-950/60 border border-amber-500/40 backdrop-blur-md shadow-2xl text-left relative overflow-hidden shrink-0 animate-fadeIn transition-all duration-300">
@@ -11140,7 +11140,7 @@ export default function App() {
                             )}
 
                             {/* 💬 INTERACTIVE COMMENTS TIMELINE CHAT STREAM */}
-                            <div className="flex-1 min-h-[120px] mx-3 my-1 bg-black/50 border border-amber-500/20 rounded-2xl flex flex-col justify-between overflow-hidden shadow-2xl backdrop-blur-md">
+                            <div className="flex-1 min-h-0 mx-3 my-1 bg-black/50 border border-amber-500/20 rounded-2xl flex flex-col justify-between overflow-hidden shadow-2xl backdrop-blur-md">
                               <div className="flex-1 overflow-y-auto space-y-1.5 scrollbar-thin text-left p-2.5">
                                 {party.comments?.map((comment: any) => {
                                   if (comment.isSystem) {
@@ -11665,7 +11665,7 @@ export default function App() {
                           )}
 
                           {/* ⌨️ INTERACTIVE BOTTOM CONTROL ACTIONS ROW */}
-                          <div className="w-full min-w-0 max-w-full px-3 pt-1 pb-[calc(0.25rem+env(safe-area-inset-bottom,0px))] flex items-center gap-1.5 sm:gap-2 shrink-0 bg-transparent overflow-hidden">
+                          <div className="w-full min-w-0 max-w-full px-3 pt-1 pb-[calc(0.25rem+env(safe-area-inset-bottom,0px))] flex items-center gap-1 sm:gap-1.5 shrink-0 bg-transparent overflow-x-auto overflow-y-hidden">
                             {/* Message Input Form */}
                             <form 
                               onSubmit={(e) => {
