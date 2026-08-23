@@ -1,0 +1,230 @@
+name: Build Android APK & AAB
+
+on:
+  push:
+    branches: [ main, master, Staging ]
+  pull_request:
+    branches: [ main, master, Staging ]
+
+jobs:
+  build:
+    name: Build Native Android App
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js Environment
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install Dependencies
+        run: npm install --no-audit --no-fund --legacy-peer-deps --include=optional
+
+      - name: Recreate Android Assets from SVG (Icons & Splash)
+        run: node android-recreate-icons.cjs
+
+      - name: Verify animation dependencies
+        run: |
+          node -e "const p=require('./package.json'); if (p.version !== '1.0.3') { console.error('Expected app version 1.0.3, found ' + p.version); process.exit(1); } const d={...(p.dependencies||{}),...(p.devDependencies||{})}; if (!d.motion) { console.error('Missing dependency: motion'); process.exit(1); } console.log('App version 1.0.3 and animation dependency OK')"
+          npm ls motion --depth=0
+
+      - name: Build Web Application
+        run: npm run build
+
+      - name: Sync Assets to Android Native
+        run: npx cap sync android
+
+      - name: Setup Java JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'gradle'
+
+      - name: Download Valid Gradle Wrapper JAR
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/gradle/gradle/v8.13.0/gradle/wrapper/gradle-wrapper.jar -o android/gradle/wrapper/gradle-wrapper.jar
+
+      - name: Grant Execute Permission to Gradlew
+        run: chmod +x android/gradlew
+
+      # IMPORTANT: Only the four existing Pardais Party release secrets are used.
+      # No fallback secret names, generated keystore, or default passwords are allowed.
+      - name: Configure Pardais Party Release Signing
+        env:
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+          RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p android/app
+          rm -f android/app/pardais-party-release.keystore
+
+          for name in RELEASE_KEYSTORE_BASE64 RELEASE_KEY_ALIAS RELEASE_KEY_PASSWORD RELEASE_STORE_PASSWORD; do
+            if [ -z "${!name}" ]; then
+              echo "❌ Required GitHub Actions secret is missing: $name"
+              exit 1
+            fi
+          done
+
+          printf '%s' "$RELEASE_KEYSTORE_BASE64" | tr -d '\r\n ' | base64 --decode > android/app/pardais-party-release.keystore
+          if [ ! -s android/app/pardais-party-release.keystore ]; then
+            echo "❌ Decoded release keystore is empty."
+            exit 1
+          fi
+
+          # Validate the existing keystore and determine its actual format without printing secrets.
+          STORE_TYPE=''
+          if keytool -list -keystore android/app/pardais-party-release.keystore -storepass "$RELEASE_STORE_PASSWORD" -storetype JKS >/dev/null 2>&1; then
+            STORE_TYPE='JKS'
+          elif keytool -list -keystore android/app/pardais-party-release.keystore -storepass "$RELEASE_STORE_PASSWORD" -storetype PKCS12 >/dev/null 2>&1; then
+            STORE_TYPE='PKCS12'
+          else
+            echo "❌ Existing release keystore could not be opened with RELEASE_STORE_PASSWORD."
+            exit 1
+          fi
+
+          if ! keytool -list -keystore android/app/pardais-party-release.keystore -storepass "$RELEASE_STORE_PASSWORD" -storetype "$STORE_TYPE" -alias "$RELEASE_KEY_ALIAS" >/dev/null 2>&1; then
+            echo "❌ RELEASE_KEY_ALIAS does not exist in the supplied Pardais Party keystore."
+            exit 1
+          fi
+
+          # Print only the public SHA-256 certificate fingerprint; never print passwords or keystore bytes.
+          KEYSTORE_SHA256=$(keytool -exportcert -rfc -keystore android/app/pardais-party-release.keystore -storetype "$STORE_TYPE" -storepass "$RELEASE_STORE_PASSWORD" -alias "$RELEASE_KEY_ALIAS" 2>/dev/null | openssl x509 -noout -fingerprint -sha256 | sed 's/^.*=//;s/://g')
+          if [ -z "$KEYSTORE_SHA256" ]; then
+            echo "❌ Could not read the release certificate fingerprint."
+            exit 1
+          fi
+          echo "Release signing certificate SHA-256: $KEYSTORE_SHA256"
+
+          echo "RELEASE_STORE_FILE=pardais-party-release.keystore" >> "$GITHUB_ENV"
+          echo "RELEASE_STORE_TYPE=$STORE_TYPE" >> "$GITHUB_ENV"
+          echo "RELEASE_CERT_SHA256=$KEYSTORE_SHA256" >> "$GITHUB_ENV"
+
+      - name: Build signed release APK
+        env:
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+          RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
+        run: |
+          cd android
+          ./gradlew --no-daemon clean assembleRelease
+
+      - name: Build signed release AAB
+        env:
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+          RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
+        run: |
+          cd android
+          ./gradlew --no-daemon bundleRelease
+
+      - name: Verify release APK and AAB signatures
+        env:
+          RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          APK="android/app/build/outputs/apk/release/app-release.apk"
+          AAB="android/app/build/outputs/bundle/release/app-release.aab"
+          if [ ! -s "$APK" ] || [ ! -s "$AAB" ]; then
+            echo "❌ Release APK/AAB was not produced."
+            exit 1
+          fi
+
+          APKSIGNER=$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)
+          if [ -z "$APKSIGNER" ]; then
+            echo "❌ Android apksigner not found."
+            exit 1
+          fi
+
+          AAPT=$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -1)
+          if [ -z "$AAPT" ]; then
+            echo "❌ Android aapt not found."
+            exit 1
+          fi
+          "$AAPT" dump badging "$APK" | grep -q "package: name='com.pardaisparty.app'" || {
+            echo "❌ APK application ID is not com.pardaisparty.app."
+            exit 1
+          }
+          echo "✅ APK application ID verified: com.pardaisparty.app"
+
+          echo "Verifying APK signature..."
+          "$APKSIGNER" verify --verbose --print-certs "$APK"
+          APK_SHA256=$("$APKSIGNER" verify --print-certs "$APK" 2>/dev/null | awk -F': ' '/Signer #1 certificate SHA-256 digest:/ {print $2; exit}' | tr -d ':')
+
+          echo "Verifying AAB signature..."
+          jarsigner -verify -strict -certs "$AAB" >/dev/null
+          AAB_SHA256=$(keytool -printcert -jarfile "$AAB" 2>/dev/null | awk -F': ' '/SHA256:/ {print $2; exit}' | tr -d ':')
+
+          if [ -z "$APK_SHA256" ] || [ -z "$AAB_SHA256" ]; then
+            echo "❌ Could not read APK/AAB certificate fingerprints."
+            exit 1
+          fi
+          echo "APK certificate SHA-256: $APK_SHA256"
+          echo "AAB certificate SHA-256: $AAB_SHA256"
+          echo "Configured release certificate SHA-256: $RELEASE_CERT_SHA256"
+
+          if [ "$APK_SHA256" != "$RELEASE_CERT_SHA256" ]; then
+            echo "❌ APK certificate does not match the supplied Pardais Party release key."
+            exit 1
+          fi
+          if [ "$AAB_SHA256" != "$RELEASE_CERT_SHA256" ]; then
+            echo "❌ AAB certificate does not match the supplied Pardais Party release key."
+            exit 1
+          fi
+          if [ "$APK_SHA256" != "$AAB_SHA256" ]; then
+            echo "❌ APK and AAB certificates do not match each other."
+            exit 1
+          fi
+          echo "✅ APK and AAB are genuinely signed with the existing Pardais Party release certificate."
+
+      - name: Verify Play Store release version
+        run: |
+          grep -q 'versionCode 4' android/app/build.gradle
+          grep -q 'versionName "1.0.3"' android/app/build.gradle
+          echo "✅ Play Store release version verified: 1.0.3 (4)"
+
+      - name: Verify Android application ID
+        run: |
+          grep -q 'applicationId "com.pardaisparty.app"' android/app/build.gradle
+          echo "✅ Application ID verified: com.pardaisparty.app"
+
+      - name: Rename release artifacts
+        run: |
+          cp android/app/build/outputs/apk/release/app-release.apk pardais-party-release.apk
+          cp android/app/build/outputs/bundle/release/app-release.aab pardais-party-release.aab
+
+      - name: Build Debug APK (separate)
+        run: |
+          cd android
+          ./gradlew --no-daemon assembleDebug
+
+      - name: Upload Release APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pardais-party-release-apk
+          path: pardais-party-release.apk
+          if-no-files-found: error
+
+      - name: Upload Release AAB Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pardais-party-release-aab
+          path: pardais-party-release.aab
+          if-no-files-found: error
+
+      - name: Upload Debug APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pardais-party-debug-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+
+      - name: Remove temporary signing keystore
+        if: always()
+        run: rm -f android/app/pardais-party-release.keystore
