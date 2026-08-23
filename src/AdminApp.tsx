@@ -57,7 +57,7 @@ import {
   loadCategoriesFromStorage, 
   saveCategoriesToStorage 
 } from "./components/GiftSystem";
-import { resolveApiUrl } from "./lib/apiClient";
+import { resolveApiUrl, getAuthToken, setAuthToken, removeAuthToken } from "./lib/apiClient";
 
 export default function AdminApp() {
   // Authentication state
@@ -71,14 +71,9 @@ export default function AdminApp() {
   });
 
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
-    try {
-      const raw = localStorage.getItem("pardais_user_profile");
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        return isAuthorizedAdmin(parsed);
-      }
-    } catch (e) {}
-    return false;
+    const token = getAuthToken();
+    const raw = localStorage.getItem("pardais_admin_session");
+    return Boolean(token && raw);
   });
 
   const [username, setUsername] = useState<string>("");
@@ -100,12 +95,6 @@ export default function AdminApp() {
   const [oldPassword, setOldPassword] = useState<string>("");
   const [newPassword, setNewPassword] = useState<string>("");
 
-  // Saved admin credentials in memory (changeable)
-  const [credentials, setCredentials] = useState<any>({
-    superadmin: { pass: "pardaisparty2026", role: "Super Admin" },
-    admin: { pass: "pardaisparty2026", role: "Admin" },
-    moderator: { pass: "pardaisparty2026", role: "Moderator" }
-  });
 
   // Helper to ensure all DB properties have safe array/object fallbacks
   const normalizeDb = (data: any) => {
@@ -155,10 +144,11 @@ export default function AdminApp() {
   const [adminActiveVipOverlay, setAdminActiveVipOverlay] = useState<{ vipLevel: number; username: string } | null>(null);
 
   useEffect(() => {
+    if (!isAuthenticated) return;
     syncNominatedAdminEmails().then((list) => {
       setAllowedAdminEmailsList(list);
     });
-  }, []);
+  }, [isAuthenticated]);
 
   const handleAddAdminNomination = async (emailToAdd?: string) => {
     const targetEmail = emailToAdd || newAdminEmailInput;
@@ -399,7 +389,7 @@ export default function AdminApp() {
   const handleEndStreamOnTheSpot = async (streamType: string, streamId: string, hostUsername: string) => {
     setModActionLoading(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/v1/moderation/end-stream`, {
+      const res = await adminFetch(`${API_BASE_URL}/api/v1/moderation/end-stream`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -428,7 +418,7 @@ export default function AdminApp() {
     setModActionLoading(true);
     try {
       const cleanUser = username.trim().replace(/^@/, "");
-      const res = await fetch(`${API_BASE_URL}/api/v1/moderation/toggle-suspend`, {
+      const res = await adminFetch(`${API_BASE_URL}/api/v1/moderation/toggle-suspend`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -456,7 +446,7 @@ export default function AdminApp() {
     setModActionLoading(true);
     try {
       const cleanUser = username.trim().replace(/^@/, "");
-      const res = await fetch(`${API_BASE_URL}/api/v1/moderation/force-live-on`, {
+      const res = await adminFetch(`${API_BASE_URL}/api/v1/moderation/force-live-on`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -482,7 +472,7 @@ export default function AdminApp() {
     setModActionLoading(true);
     try {
       const cleanUser = username.trim().replace(/^@/, "");
-      const res = await fetch(`${API_BASE_URL}/api/v1/moderation/warning`, {
+      const res = await adminFetch(`${API_BASE_URL}/api/v1/moderation/warning`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -508,7 +498,7 @@ export default function AdminApp() {
     setModActionLoading(true);
     try {
       const cleanDev = deviceId.trim();
-      const res = await fetch(`${API_BASE_URL}/api/v1/moderation/device-ban`, {
+      const res = await adminFetch(`${API_BASE_URL}/api/v1/moderation/device-ban`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -641,10 +631,30 @@ export default function AdminApp() {
 
   // Fetch Central Database
   const API_BASE_URL = resolveApiUrl("");
+  const adminHeaders = (): Record<string, string> => {
+    const token = getAuthToken();
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  };
+  const adminFetch = (url: string, options: RequestInit = {}) => {
+    return fetch(url, {
+      ...options,
+      headers: {
+        ...(options.headers || {}),
+        ...adminHeaders(),
+      },
+    });
+  };
 
   const fetchDb = async () => {
     try {
-      const res = await fetch(`${API_BASE_URL}/api/v1/db`);
+      const res = await adminFetch(`${API_BASE_URL}/api/v1/db`);
+      if (res.status === 401) {
+        removeAuthToken();
+        localStorage.removeItem("pardais_admin_session");
+        setIsAuthenticated(false);
+        setAuthError("Admin session expired. Please sign in again.");
+        return;
+      }
       if (res.ok) {
         const data = await res.json();
         setDb(normalizeDb(data));
@@ -655,7 +665,7 @@ export default function AdminApp() {
       }
 
       // Fetch Admin Users list
-      const uRes = await fetch(`${API_BASE_URL}/api/v1/admin-users`);
+      const uRes = await adminFetch(`${API_BASE_URL}/api/v1/admin-users`);
       if (uRes.ok) {
         const uData = await uRes.json();
         if (Array.isArray(uData)) {
@@ -664,7 +674,7 @@ export default function AdminApp() {
       }
 
       // Fetch Audit Logs list
-      const aRes = await fetch(`${API_BASE_URL}/api/v1/admin/audit-logs`);
+      const aRes = await adminFetch(`${API_BASE_URL}/api/v1/admin/audit-logs`);
       if (aRes.ok) {
         const aData = await aRes.json();
         if (Array.isArray(aData)) {
@@ -723,7 +733,7 @@ export default function AdminApp() {
   const handleEndActiveStream = async (streamId: string, hostName: string) => {
     if (!window.confirm(`Are you sure you want to FORCE END the stream broadcast for "${hostName}"?`)) return;
     try {
-      await fetch(`${API_BASE_URL}/api/v1/active-streams/end`, {
+      await adminFetch(`${API_BASE_URL}/api/v1/active-streams/end`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ streamId })
@@ -747,8 +757,8 @@ export default function AdminApp() {
   };
 
   useEffect(() => {
-    fetchDb();
-  }, []);
+    if (isAuthenticated) void fetchDb();
+  }, [isAuthenticated]);
 
   // Show auto-dismiss toast helper
   const triggerToast = (msg: string) => {
@@ -756,51 +766,48 @@ export default function AdminApp() {
     setTimeout(() => setSuccessToast(null), 3000);
   };
 
-  // Login handler
-  const handleLogin = (e: React.FormEvent) => {
+  // Production admin login: credentials are verified only by the backend.
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthError(null);
-
-    const targetUser = username.toLowerCase().trim();
-    if (credentials[targetUser] && credentials[targetUser].pass === password) {
+    const email = username.toLowerCase().trim();
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/v1/admin/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.token) {
+        setAuthError(data?.error || "Administrator authentication failed.");
+        return;
+      }
+      setAuthToken(String(data.token));
+      localStorage.setItem("pardais_admin_session", JSON.stringify(data.admin || { email, role: "super_admin" }));
+      localStorage.setItem("pardais_user_profile", JSON.stringify({ email, isAdmin: true, role: "admin" }));
       setIsAuthenticated(true);
-      setRole(credentials[targetUser].role);
-      triggerToast(`Welcome back, ${credentials[targetUser].role}! Access granted.`);
-    } else if (password === "pardaisparty2026" && (isAuthorizedAdmin(targetUser) || allowedAdminEmailsList.includes(targetUser) || DEFAULT_ADMIN_EMAILS.includes(targetUser))) {
-      setIsAuthenticated(true);
-      setRole(`Super Admin (${targetUser})`);
-      triggerToast(`Welcome back, Admin ${targetUser}! Access granted.`);
-    } else if (isAuthorizedAdmin(targetUser) || allowedAdminEmailsList.includes(targetUser)) {
-      setIsAuthenticated(true);
-      setRole(`Authorized Admin (${targetUser})`);
-      triggerToast(`Welcome back, Admin ${targetUser}! Access granted.`);
-    } else {
-      setAuthError("Incorrect Operator ID or Security Password! Default password: pardaisparty2026");
+      setRole(`Super Admin (${email})`);
+      setPassword("");
+      triggerToast("Welcome back, Administrator. Access granted.");
+      setTimeout(() => { void fetchDb(); }, 0);
+    } catch (err) {
+      setAuthError("Unable to reach the Admin API. Check the admin domain/API URL.");
     }
   };
 
-  // Password change handler
+  // Password is managed through the backend deployment secret (ADMIN_PASSWORD).
   const handlePasswordChange = (e: React.FormEvent) => {
     e.preventDefault();
-    const userKey = username.toLowerCase().trim();
-    if (credentials[userKey].pass !== oldPassword) {
-      alert("Current password does not match our records!");
-      return;
-    }
-    setCredentials((prev: any) => ({
-      ...prev,
-      [userKey]: { ...prev[userKey], pass: newPassword }
-    }));
     setShowPasswordChangeModal(false);
     setOldPassword("");
     setNewPassword("");
-    triggerToast("Password changed successfully! Keep it secure.");
+    triggerToast("Password is managed securely in the Admin deployment environment.");
   };
 
   // Sync API modifications helper
   const syncWithServer = async (endpoint: string, method: string, payload: any) => {
     try {
-      const res = await fetch(`${API_BASE_URL}${endpoint}`, {
+      const res = await adminFetch(`${API_BASE_URL}${endpoint}`, {
         method,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
@@ -964,7 +971,7 @@ export default function AdminApp() {
 
   const handleDeleteGift = async (giftId: string) => {
     if (!window.confirm("Are you absolutely sure you want to delete this gift item? This will instantly remove it from the viewer store.")) return;
-    await fetch(`${API_BASE_URL}/api/v1/gifts/${giftId}`, { method: "DELETE" });
+    await adminFetch(`${API_BASE_URL}/api/v1/gifts/${giftId}`, { method: "DELETE" });
     await fetchDb();
     triggerToast("Gift catalog item deleted successfully.");
   };
@@ -1160,7 +1167,7 @@ export default function AdminApp() {
               ))}
             </div>
             <div className="pt-1 text-center text-[8.5px] text-gray-500 border-t border-white/5">
-              Operator Logins: <span className="text-pink-400 font-bold">superadmin</span> | <span className="text-pink-400 font-bold">admin</span> (pass: pardaisparty2026)
+              Credentials are verified server-side. Set <span className="text-pink-400 font-bold">ADMIN_EMAILS</span> and <span className="text-pink-400 font-bold">ADMIN_PASSWORD</span> in the production environment.
             </div>
           </div>
         </div>
@@ -1257,6 +1264,9 @@ export default function AdminApp() {
           <button
             onClick={() => {
               if (confirm("Disconnect admin session?")) {
+                removeAuthToken();
+                localStorage.removeItem("pardais_admin_session");
+                localStorage.removeItem("pardais_user_profile");
                 setIsAuthenticated(false);
                 setUsername("");
                 setPassword("");

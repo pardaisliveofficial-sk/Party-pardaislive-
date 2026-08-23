@@ -814,6 +814,106 @@ function isAdminAccount(user: any): boolean {
   return Boolean(user && isAdminEmail(user.email));
 }
 
+// ------------------------------------------------------------------
+// PRODUCTION ADMIN AUTHENTICATION
+// ------------------------------------------------------------------
+// Admin credentials are intentionally kept server-side. Set these on Railway:
+// ADMIN_EMAILS=admin1@example.com,admin2@example.com
+// ADMIN_PASSWORD=<strong-password>
+// ADMIN_AUTH_SECRET=<long-random-secret>
+const ADMIN_AUTH_TTL_SECONDS = 8 * 60 * 60;
+
+function configuredAdminLoginEmails(): string[] {
+  const env = String(process.env.ADMIN_EMAILS || "").split(",").map(v => v.trim().toLowerCase()).filter(Boolean);
+  return env.length ? env : getConfiguredAdminEmails();
+}
+
+function adminAuthSecret(): string {
+  return String(process.env.ADMIN_AUTH_SECRET || "").trim();
+}
+
+function createAdminToken(email: string): string {
+  const payload = Buffer.from(JSON.stringify({
+    sub: email.toLowerCase().trim(),
+    role: "super_admin",
+    exp: Math.floor(Date.now() / 1000) + ADMIN_AUTH_TTL_SECONDS
+  })).toString("base64url");
+  const signature = crypto.createHmac("sha256", adminAuthSecret()).update(payload).digest("base64url");
+  return `${payload}.${signature}`;
+}
+
+function verifyAdminToken(token: string): any | null {
+  const secret = adminAuthSecret();
+  if (!secret || !token) return null;
+  const parts = token.split(".");
+  if (parts.length !== 2) return null;
+  const [payload, signature] = parts;
+  const expected = crypto.createHmac("sha256", secret).update(payload).digest("base64url");
+  try {
+    if (!crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) return null;
+    const data = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+    if (!data?.sub || !data?.exp || Number(data.exp) < Math.floor(Date.now() / 1000)) return null;
+    if (!configuredAdminLoginEmails().includes(String(data.sub).toLowerCase())) return null;
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+app.post("/api/v1/admin/login", (req, res) => {
+  const email = String(req.body?.email || "").trim().toLowerCase();
+  const password = String(req.body?.password || "");
+  const configuredPassword = String(process.env.ADMIN_PASSWORD || "");
+
+  if (!adminAuthSecret() || !configuredPassword) {
+    return res.status(503).json({ error: "Admin authentication is not configured on the server." });
+  }
+  if (!email || !password || !configuredAdminLoginEmails().includes(email)) {
+    return res.status(401).json({ error: "Invalid administrator credentials." });
+  }
+
+  const supplied = Buffer.from(password);
+  const expected = Buffer.from(configuredPassword);
+  if (supplied.length !== expected.length || !crypto.timingSafeEqual(supplied, expected)) {
+    return res.status(401).json({ error: "Invalid administrator credentials." });
+  }
+
+  return res.json({
+    success: true,
+    token: createAdminToken(email),
+    admin: { email, role: "super_admin" },
+    expiresIn: ADMIN_AUTH_TTL_SECONDS
+  });
+});
+
+function isAdminProtectedRequest(req: any): boolean {
+  const pathName = String(req.path || req.originalUrl || "").split("?")[0];
+  if (pathName === "/api/v1/admin/login") return false;
+  if (pathName.startsWith("/api/v1/admin/") || pathName === "/api/v1/admin-users" || pathName.startsWith("/api/v1/admin-users/") || pathName === "/api/v1/admin-emails" || pathName.startsWith("/api/v1/admin-emails/")) return true;
+  if (pathName === "/api/v1/db") return true;
+  if (pathName === "/api/v1/config" && req.method !== "GET") return true;
+  if (pathName.startsWith("/api/v1/moderation/")) return true;
+  if (pathName === "/api/v1/active-streams/end") return true;
+  if (/^\/api\/v1\/(gifts|hosts|families|agencies|agency-requests|coin-sellers|reports|kyc-requests)(\/|$)/.test(pathName)) {
+    // Preserve normal app read endpoints and only guard administrative writes.
+    if (req.method !== "GET") {
+      const publicAction = /\/(send|heartbeat|end|join|leave|like|comments|guest-requests|invites|respond|requests|seats|moderators|block-user|close|change|toggle-mute|mute-all|toggle-lock|toggle-lock-all|kick-user|mute-user)(\/|$)/.test(pathName);
+      return !publicAction;
+    }
+  }
+  return false;
+}
+
+app.use((req, res, next) => {
+  if (!isAdminProtectedRequest(req)) return next();
+  const auth = String(req.headers.authorization || "");
+  const token = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
+  const admin = verifyAdminToken(token);
+  if (!admin) return res.status(401).json({ error: "Administrator authentication required." });
+  (req as any).admin = admin;
+  next();
+});
+
 function applyAdminAccountState(user: any, opts: { initializeCoins?: boolean } = {}) {
   if (!user) return user;
   const admin = isAdminAccount(user);
