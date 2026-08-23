@@ -20,7 +20,6 @@ import {
   UserCheck
 } from "lucide-react";
 import { UserProfile, SavedAccount } from "../types";
-import { getInitialAvatarData } from "../lib/avatarFallback";
 import { DEFAULT_USER } from "../data";
 import { 
   getSavedAccounts, 
@@ -343,7 +342,7 @@ export default function AccountSwitcherModal({
                       <div className="flex items-center space-x-2.5 min-w-0 flex-1">
                         <div className="relative shrink-0">
                           <img
-                            src={acc.avatar || getInitialAvatarData(acc.fullName || acc.username)}
+                            src={acc.avatar || DEFAULT_USER.avatar}
                             alt={acc.username}
                             className="w-10 h-10 rounded-full object-cover border-2 border-white/20 shadow-md"
                           />

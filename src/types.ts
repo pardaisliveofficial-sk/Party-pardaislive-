@@ -43,8 +43,6 @@ export interface UserProfile {
   avatarUrl?: string;
   avatarUpdatedAt?: string;
   avatarSource?: "user-upload" | "default";
-  coverPhotoUpdatedAt?: string;
-  coverPhotoSource?: "user-upload" | "default";
   profileUpdatedAt?: string;
   coverPhoto: string;
   bio: string;
@@ -59,6 +57,8 @@ export interface UserProfile {
   hostLevel: number;
   wealthLevel: number;
   xp: number;
+  giftSpentCoins?: number;
+  progressUpdatedAt?: string;
   familyId: string | null;
   agencyId: string | null;
   isVerified: boolean;

@@ -140,7 +140,7 @@ export const dbDataCache: any = {
   user: {
     username: "Pardais_User",
     uniqueId: "pardes_1001",
-    avatar: "",
+    avatar: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80",
     coverPhoto: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=800&q=80",
     bio: "Welcome to Pardes Party!",
     gender: "Male",
@@ -562,7 +562,8 @@ export function startFirestoreSynchronization() {
           Number(Boolean(u?.avatar)) * 10 +
           Number(Boolean(u?.fullName)) * 5 +
           Number(Boolean(u?.phoneNumber)) * 2 +
-          Number(Boolean(u?.uniqueId));
+          Number(Boolean(u?.uniqueId)) +
+          ((Date.parse(String(u?.progressUpdatedAt || u?.updatedAt || "")) || 0) / 1e13);
 
         for (const item of items) {
           if (!item) continue;
@@ -575,7 +576,30 @@ export function startFirestoreSynchronization() {
           }
         }
 
-        dbDataCache.users = Array.from(byIdentity.values());
+        dbDataCache.users = Array.from(byIdentity.values()).map((primary: any) => {
+          const identity = typeof primary?.email === "string" && primary.email.trim()
+            ? `email:${primary.email.toLowerCase().trim()}`
+            : (primary?.uid ? `uid:${primary.uid}` : `username:${String(primary?.username || "")}`);
+          const same = items.filter((u: any) => {
+            if (!u) return false;
+            const email = typeof u.email === "string" ? u.email.toLowerCase().trim() : "";
+            const uid = String(u.uid || "");
+            const key = email ? `email:${email}` : (uid ? `uid:${uid}` : `username:${String(u.username || "")}`);
+            return key === identity;
+          });
+          const maxNum = (key: string, fallback: number) => {
+            const vals = same.map((u: any) => Number(u?.[key])).filter((v: number) => Number.isFinite(v));
+            return vals.length ? Math.max(...vals) : fallback;
+          };
+          return {
+            ...primary,
+            userLevel: maxNum("userLevel", Number(primary?.userLevel) || 1),
+            level: Math.max(Number(primary?.level) || 1, maxNum("userLevel", Number(primary?.userLevel) || 1)),
+            vipLevel: maxNum("vipLevel", Number(primary?.vipLevel) || 0),
+            xp: maxNum("xp", Number(primary?.xp) || 0),
+            giftSpentCoins: maxNum("giftSpentCoins", Number(primary?.giftSpentCoins) || 0)
+          };
+        });
       } else if (colName === "hosts") {
         dbDataCache.hosts = items.filter((h: any) => h && (h.isLive === true || h.status === "live") && h.status !== "ended" && h.status !== "offline");
       } else if (colName === "gifts") {

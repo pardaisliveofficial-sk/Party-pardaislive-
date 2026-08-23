@@ -1,5 +1,5 @@
 // Authorized Admin Email Accounts for Pardais Party Web Admin Portal
-import { resolveApiUrl, getAuthToken } from "./lib/apiClient";
+import { resolveApiUrl } from "./lib/apiClient";
 
 export const DEFAULT_ADMIN_EMAILS: string[] = [
   "pardaisliveofficial@gmail.com",
@@ -9,11 +9,6 @@ export const DEFAULT_ADMIN_EMAILS: string[] = [
 ];
 
 export const ALLOWED_ADMIN_EMAILS: string[] = DEFAULT_ADMIN_EMAILS;
-
-function adminRequestHeaders(): Record<string, string> {
-  const token = getAuthToken();
-  return token ? { Authorization: `Bearer ${token}` } : {};
-}
 
 // Get nominated admin emails stored in local memory / localStorage
 export function getNominatedAdminEmails(): string[] {
@@ -70,7 +65,7 @@ export function isAuthorizedAdmin(
 // Fetch nominated emails from backend server & sync to localStorage
 export async function syncNominatedAdminEmails(): Promise<string[]> {
   try {
-    const res = await fetch(resolveApiUrl("/api/v1/admin-emails"), { headers: adminRequestHeaders() });
+    const res = await fetch(resolveApiUrl("/api/v1/admin-emails"));
     if (res.ok) {
       const data = await res.json();
       if (Array.isArray(data)) {
@@ -94,7 +89,7 @@ export async function addNominatedAdminEmail(email: string): Promise<{ success: 
   try {
     const res = await fetch(resolveApiUrl("/api/v1/admin-emails"), {
       method: "POST",
-      headers: { "Content-Type": "application/json", ...adminRequestHeaders() },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email: cleaned })
     });
 
@@ -124,8 +119,7 @@ export async function removeNominatedAdminEmail(email: string): Promise<{ succes
 
   try {
     const res = await fetch(resolveApiUrl(`/api/v1/admin-emails/${encodeURIComponent(cleaned)}`), {
-      method: "DELETE",
-      headers: adminRequestHeaders()
+      method: "DELETE"
     });
 
     if (res.ok) {

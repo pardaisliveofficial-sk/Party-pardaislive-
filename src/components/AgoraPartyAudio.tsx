@@ -50,19 +50,6 @@ const getNumericUid = (str: string): number => {
   return ((Math.abs(hash) % 1000) * 100000) + sessionRand;
 };
 
-const setNativePartySpeaker = async (enabled: boolean) => {
-  try {
-    const cap = (window as any)?.Capacitor;
-    const plugin = cap?.Plugins?.PartyAudioRoute;
-    if (plugin?.setSpeakerphone) {
-      await plugin.setSpeakerphone({ enabled });
-      console.log("[PARDAIS PARTY AUDIO] Native media speaker route:", enabled);
-    }
-  } catch (err) {
-    console.warn("[PARDAIS PARTY AUDIO] Native speaker route unavailable:", err);
-  }
-};
-
 export const AgoraPartyAudio: React.FC<AgoraPartyAudioProps> = ({
   partyId,
   channelName,
@@ -76,29 +63,6 @@ export const AgoraPartyAudio: React.FC<AgoraPartyAudioProps> = ({
   reactionEvent = null,
   onStatusChange
 }) => {
-  // Android Capacitor/WebView can otherwise route WebRTC voice to the
-  // telephone earpiece. Force party voice onto the device media speaker
-  // while this party audio component is mounted. Browser/PWA builds are no-op.
-  useEffect(() => {
-    void setNativePartySpeaker(true);
-
-    const restoreSpeaker = () => {
-      void setNativePartySpeaker(true);
-    };
-    window.addEventListener("click", restoreSpeaker);
-    window.addEventListener("touchstart", restoreSpeaker);
-    window.addEventListener("pointerdown", restoreSpeaker);
-    window.addEventListener("visibilitychange", restoreSpeaker);
-
-    return () => {
-      window.removeEventListener("click", restoreSpeaker);
-      window.removeEventListener("touchstart", restoreSpeaker);
-      window.removeEventListener("pointerdown", restoreSpeaker);
-      window.removeEventListener("visibilitychange", restoreSpeaker);
-      void setNativePartySpeaker(false);
-    };
-  }, []);
-
   // Real Agora SDK Instances & Refs
   const [client, setClient] = useState<IAgoraRTCClient | null>(null);
   const clientRef = useRef<IAgoraRTCClient | null>(null);
@@ -400,8 +364,6 @@ export const AgoraPartyAudio: React.FC<AgoraPartyAudioProps> = ({
             targetJoinUid
           );
           console.log("[AGORA PARTY JOIN SUCCESS]", { channel: tokenData.channelName, uid: targetJoinUid });
-          // Re-assert the native Android route after Agora/WebRTC initializes.
-          void setNativePartySpeaker(true);
         } catch (joinErr: any) {
           console.warn("[AGORA PARTY JOIN FAILURE]", joinErr);
           if (

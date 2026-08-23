@@ -159,7 +159,7 @@ function saveDatabase() {
     // Asynchronously push metadata updates to Firebase Firestore only if they have actually changed
     const currentUserStr = JSON.stringify(dbData.user || {});
     if (currentUserStr !== lastSavedUserStr) {
-      void writeMetadata("user_profile", dbData.user).catch((e) => console.error("[PARDAIS-PARTY FIREBASE] user_profile sync failed:", e));
+      writeMetadata("user_profile", dbData.user);
       lastSavedUserStr = currentUserStr;
     }
 
@@ -283,7 +283,7 @@ async function authenticateUser(req: any, res: any, next: any) {
       uniqueId: cleanEmail ? stablePardaisId(cleanEmail) : `pardes_${uid.slice(-10)}`,
       fullName: "",
       avatar: "",
-      coverPhoto: "",
+      coverPhoto: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=800&q=80",
       bio: "Pardais Party Member 🇵🇰",
       gender: "Male",
       country: "Pakistan",
@@ -814,106 +814,6 @@ function isAdminAccount(user: any): boolean {
   return Boolean(user && isAdminEmail(user.email));
 }
 
-// ------------------------------------------------------------------
-// PRODUCTION ADMIN AUTHENTICATION
-// ------------------------------------------------------------------
-// Admin credentials are intentionally kept server-side. Set these on Railway:
-// ADMIN_EMAILS=admin1@example.com,admin2@example.com
-// ADMIN_PASSWORD=<strong-password>
-// ADMIN_AUTH_SECRET=<long-random-secret>
-const ADMIN_AUTH_TTL_SECONDS = 8 * 60 * 60;
-
-function configuredAdminLoginEmails(): string[] {
-  const env = String(process.env.ADMIN_EMAILS || "").split(",").map(v => v.trim().toLowerCase()).filter(Boolean);
-  return env.length ? env : getConfiguredAdminEmails();
-}
-
-function adminAuthSecret(): string {
-  return String(process.env.ADMIN_AUTH_SECRET || "").trim();
-}
-
-function createAdminToken(email: string): string {
-  const payload = Buffer.from(JSON.stringify({
-    sub: email.toLowerCase().trim(),
-    role: "super_admin",
-    exp: Math.floor(Date.now() / 1000) + ADMIN_AUTH_TTL_SECONDS
-  })).toString("base64url");
-  const signature = crypto.createHmac("sha256", adminAuthSecret()).update(payload).digest("base64url");
-  return `${payload}.${signature}`;
-}
-
-function verifyAdminToken(token: string): any | null {
-  const secret = adminAuthSecret();
-  if (!secret || !token) return null;
-  const parts = token.split(".");
-  if (parts.length !== 2) return null;
-  const [payload, signature] = parts;
-  const expected = crypto.createHmac("sha256", secret).update(payload).digest("base64url");
-  try {
-    if (!crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) return null;
-    const data = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
-    if (!data?.sub || !data?.exp || Number(data.exp) < Math.floor(Date.now() / 1000)) return null;
-    if (!configuredAdminLoginEmails().includes(String(data.sub).toLowerCase())) return null;
-    return data;
-  } catch {
-    return null;
-  }
-}
-
-app.post("/api/v1/admin/login", (req, res) => {
-  const email = String(req.body?.email || "").trim().toLowerCase();
-  const password = String(req.body?.password || "");
-  const configuredPassword = String(process.env.ADMIN_PASSWORD || "");
-
-  if (!adminAuthSecret() || !configuredPassword) {
-    return res.status(503).json({ error: "Admin authentication is not configured on the server." });
-  }
-  if (!email || !password || !configuredAdminLoginEmails().includes(email)) {
-    return res.status(401).json({ error: "Invalid administrator credentials." });
-  }
-
-  const supplied = Buffer.from(password);
-  const expected = Buffer.from(configuredPassword);
-  if (supplied.length !== expected.length || !crypto.timingSafeEqual(supplied, expected)) {
-    return res.status(401).json({ error: "Invalid administrator credentials." });
-  }
-
-  return res.json({
-    success: true,
-    token: createAdminToken(email),
-    admin: { email, role: "super_admin" },
-    expiresIn: ADMIN_AUTH_TTL_SECONDS
-  });
-});
-
-function isAdminProtectedRequest(req: any): boolean {
-  const pathName = String(req.path || req.originalUrl || "").split("?")[0];
-  if (pathName === "/api/v1/admin/login") return false;
-  if (pathName.startsWith("/api/v1/admin/") || pathName === "/api/v1/admin-users" || pathName.startsWith("/api/v1/admin-users/") || pathName === "/api/v1/admin-emails" || pathName.startsWith("/api/v1/admin-emails/")) return true;
-  if (pathName === "/api/v1/db") return true;
-  if (pathName === "/api/v1/config" && req.method !== "GET") return true;
-  if (pathName.startsWith("/api/v1/moderation/")) return true;
-  if (pathName === "/api/v1/active-streams/end") return true;
-  if (/^\/api\/v1\/(gifts|hosts|families|agencies|agency-requests|coin-sellers|reports|kyc-requests)(\/|$)/.test(pathName)) {
-    // Preserve normal app read endpoints and only guard administrative writes.
-    if (req.method !== "GET") {
-      const publicAction = /\/(send|heartbeat|end|join|leave|like|comments|guest-requests|invites|respond|requests|seats|moderators|block-user|close|change|toggle-mute|mute-all|toggle-lock|toggle-lock-all|kick-user|mute-user)(\/|$)/.test(pathName);
-      return !publicAction;
-    }
-  }
-  return false;
-}
-
-app.use((req, res, next) => {
-  if (!isAdminProtectedRequest(req)) return next();
-  const auth = String(req.headers.authorization || "");
-  const token = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
-  const admin = verifyAdminToken(token);
-  if (!admin) return res.status(401).json({ error: "Administrator authentication required." });
-  (req as any).admin = admin;
-  next();
-});
-
 function applyAdminAccountState(user: any, opts: { initializeCoins?: boolean } = {}) {
   if (!user) return user;
   const admin = isAdminAccount(user);
@@ -1132,6 +1032,22 @@ function canonicalizeUsers(items: any[]): any[] {
         }
       }
     }
+
+    // Progression is monotonic. Legacy username/UID/email mirrors can have
+    // different snapshots; never let a stale mirror downgrade level/XP/VIP.
+    const maxNumeric = (key: string, fallback: number) => {
+      const values = group.map(u => Number(u?.[key])).filter(v => Number.isFinite(v));
+      return values.length ? Math.max(...values) : fallback;
+    };
+    primary.userLevel = maxNumeric("userLevel", Number(primary.userLevel) || 1);
+    primary.level = Math.max(Number(primary.level) || 1, primary.userLevel);
+    primary.vipLevel = maxNumeric("vipLevel", Number(primary.vipLevel) || 0);
+    primary.xp = maxNumeric("xp", Number(primary.xp) || 0);
+    primary.giftSpentCoins = maxNumeric("giftSpentCoins", Number(primary.giftSpentCoins) || 0);
+    primary.progressUpdatedAt = group
+      .map(u => String(u?.progressUpdatedAt || ""))
+      .sort((a, b) => (Date.parse(b) || 0) - (Date.parse(a) || 0))[0] || primary.progressUpdatedAt;
+
     result.push(primary);
   }
   return result;
@@ -1232,7 +1148,7 @@ app.post("/api/v1/auth/google-login", async (req, res) => {
       username: "",
       uniqueId,
       fullName: displayName?.trim() || "",
-      avatar: photoURL?.trim() || "",
+      avatar: photoURL?.trim() || `https://api.dicebear.com/7.x/adventurer/svg?seed=${encodeURIComponent(cleanEmail)}`,
       coverPhoto: "",
       bio: "",
       gender: "",
@@ -1673,7 +1589,7 @@ app.post("/api/v1/auth/verify-email-otp", async (req, res) => {
       uniqueId: stablePardaisId(cleanEmail),
       fullName: "",
       avatar: "",
-      coverPhoto: "",
+      coverPhoto: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=800&q=80",
       bio: "Pardais Party Member 🇵🇰",
       gender: "Male",
       country: "Pakistan",
@@ -1771,7 +1687,7 @@ app.post("/api/v1/auth/recover-email-session", async (req, res) => {
       username: cleanEmail.split("@")[0].replace(/[^a-zA-Z0-9_]/g, "_") || `user_${Math.floor(1000 + Math.random() * 9000)}`,
       uniqueId: stablePardaisId(cleanEmail),
       fullName: "", avatar: "",
-      coverPhoto: "",
+      coverPhoto: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=800&q=80",
       bio: "Pardais Party Member 🇵🇰", gender: "Male", country: "Pakistan", language: "Urdu / Hinglish",
       coins: 0, diamonds: 0, vipLevel: 0, userLevel: 1, hostLevel: 1, wealthLevel: 1, xp: 0,
       familyId: "", agencyId: "", isVerified: true, isBanned: false, twoFactorEnabled: false,
@@ -2525,7 +2441,7 @@ app.post("/api/v1/auth/guest-login", (req, res) => {
         username: requestedUsername,
         uniqueId: `pardais_${Math.floor(1000 + Math.random() * 9000)}`,
         fullName: req.body?.fullName || "Pardais Member",
-        avatar: "",
+        avatar: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80",
         bio: "Pardais Party Member 🇵🇰",
         gender: "Male",
         country: "Pakistan",
@@ -2591,7 +2507,7 @@ app.post("/api/v1/auth/refresh-session", async (req, res) => {
       uniqueId: `pardais_${Math.floor(1000 + Math.random() * 9000)}`,
       email: requestedEmail,
       fullName: req.body?.fullName || "Pardais Member",
-      avatar: "",
+      avatar: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80",
       bio: "Pardais Party Member 🇵🇰",
       gender: "Male",
       country: "Pakistan",
@@ -2667,8 +2583,8 @@ app.get("/api/v1/db", (req, res) => {
 // Reset database to default
 app.post("/api/v1/db/reset", (req, res) => {
   fs.unlinkSync(DB_PATH);
-  saveDatabase();
-  res.json({ message: "Admin user updated successfully", data: userObj });
+  loadDatabase();
+  res.json({ message: "Database reset to defaults successfully", data: dbData });
 });
 
 // Global configurations get/update
@@ -2725,7 +2641,7 @@ app.post("/api/v1/user", authenticateUser, async (req: any, res: any) => {
 
   // Only editable profile fields are permitted: DP (avatar), fullName, dob/age, phoneNumber, bio, gender, country, language.
   // Permanent identity fields (username, uniqueId, email, passwordHash, coins, diamonds, vipLevel) cannot be altered via profile edit.
-  const allowedFields = ["avatar", "coverPhoto", "fullName", "dob", "phoneNumber", "bio", "gender", "country", "language"];
+  const allowedFields = ["avatar", "fullName", "dob", "phoneNumber", "bio", "gender", "country", "language"];
   const profileUpdates: Record<string, any> = {};
   for (const field of allowedFields) {
     if (req.body && req.body[field] !== undefined) {
@@ -2746,10 +2662,6 @@ app.post("/api/v1/user", authenticateUser, async (req: any, res: any) => {
   if (profileUpdates.avatar !== undefined) {
     updatedUser.avatarUpdatedAt = profileUpdatedAt;
     updatedUser.avatarSource = profileUpdates.avatar ? "user-upload" : "default";
-  }
-  if (profileUpdates.coverPhoto !== undefined) {
-    updatedUser.coverPhotoUpdatedAt = profileUpdatedAt;
-    updatedUser.coverPhotoSource = profileUpdates.coverPhoto ? "user-upload" : "default";
   }
   req.user = updatedUser;
   
@@ -3265,11 +3177,23 @@ app.post("/api/v1/gifts/send", authenticateUser, (req, res) => {
   }
 
   user.coins = userCoins - totalCost;
-  user.xp = (user.xp || 0) + Math.floor(totalCost * 0.2);
-  const giftProgress = getProgressionFromServerCoins(user.xp);
-  user.userLevel = giftProgress.level;
-  user.vipLevel = giftProgress.vipLevel;
+
+  // PERMANENT GIFT PROGRESSION: level/XP must never reset after refresh,
+  // app update, logout/login, or a new session. Keep a dedicated cumulative
+  // gift-spend counter and only move progression forward.
+  const previousGiftSpentCoins = Math.max(0, Number(user.giftSpentCoins) || 0);
+  const nextGiftSpentCoins = previousGiftSpentCoins + totalCost;
+  const previousXp = Math.max(0, Number(user.xp) || 0);
+  const nextXp = previousXp + Math.floor(totalCost * 0.2);
+  const giftProgress = getProgressionFromServerCoins(nextXp);
+  user.giftSpentCoins = nextGiftSpentCoins;
+  user.xp = nextXp;
+  user.userLevel = Math.max(1, Number(user.userLevel) || 1, giftProgress.level);
+  user.level = user.userLevel;
+  user.vipLevel = Math.max(Number(user.vipLevel) || 0, giftProgress.vipLevel);
   user.wealthLevel = Math.max(Number(user.wealthLevel) || 1, (Number(user.wealthLevel) || 1) + 1);
+  user.progressUpdatedAt = new Date().toISOString();
+  user.updatedAt = user.progressUpdatedAt;
 
   // Gift display value is always the full amount, while the recipient
   // receives exactly 50% in the earning/diamond wallet.
@@ -3372,13 +3296,17 @@ app.post("/api/v1/gifts/send", authenticateUser, (req, res) => {
 
   saveDatabase();
 
-  const responseData = {
+  const responseData: any = {
     success: true,
     transactionId: txId,
     gift,
     count: giftCount,
     totalCoinsSpent: totalCost,
     remainingCoins: user.coins,
+    xp: user.xp,
+    userLevel: user.userLevel,
+    vipLevel: user.vipLevel,
+    giftSpentCoins: user.giftSpentCoins,
     hostEarnings,
     recipientEarnings,
     companyShare,
@@ -3542,7 +3470,14 @@ app.post("/api/v1/gifts/send", authenticateUser, (req, res) => {
     if (recipientSeat) {
       // Seat badge always displays 100% of the gift value. The recipient
       // earning wallet receives only recipientEarnings (50%).
-      recipientSeat.giftCoins = (Number(recipientSeat.giftCoins) || 0) + totalCost;
+      const previousSeatGiftCoins = Number(recipientSeat.giftCoins) || 0;
+      recipientSeat.giftCoins = previousSeatGiftCoins + totalCost;
+      // Party seat gift badge intentionally shows 2x room gift points.
+      // Keep giftCoins at the real gift value so rankings/ledger remain accurate.
+      const previousDisplayCoins = recipientSeat.giftDisplayCoins !== undefined
+        ? (Number(recipientSeat.giftDisplayCoins) || 0)
+        : (previousSeatGiftCoins * 2);
+      recipientSeat.giftDisplayCoins = previousDisplayCoins + (totalCost * 2);
       recipientSeat.giftCount = (Number(recipientSeat.giftCount) || 0) + giftCount;
       recipientSeat.earningCoins = (Number(recipientSeat.earningCoins) || 0) + recipientEarnings;
       recipientSeat.lastGiftAt = Date.now();
@@ -3561,9 +3496,72 @@ app.post("/api/v1/gifts/send", authenticateUser, (req, res) => {
     console.log(`[REALTIME PARTY GIFT SYNC] Updated party ${activePartyMatch.id} with gift ${gift.name} from @${user.username}`);
   }
 
+  // Return the canonical server event as well. The sender may already have
+  // rendered the same requestId locally; client-side event-id dedupe prevents duplicates.
+  responseData.giftEvent = giftEvent;
+
   saveDatabase();
 
   return res.json(responseData);
+});
+
+// GET /api/v1/gifts/events - Low-latency authoritative gift event feed.
+// Reads the same server-side room/host queues used for persistence, but returns
+// only events newer than the caller's timestamp. This prevents recipients from
+// depending on UI state refresh timing and makes sender/host/viewer/guest/PK
+// animation delivery use the exact same event payload.
+app.get("/api/v1/gifts/events", (req, res) => {
+  const partyId = String(req.query.partyId || req.query.roomId || "").trim();
+  const hostId = String(req.query.hostId || "").trim();
+  const since = Number(req.query.since || 0);
+  const queues: any[][] = [];
+
+  const pushQueue = (q: any) => {
+    if (Array.isArray(q) && q.length) queues.push(q);
+  };
+
+  if (partyId) {
+    const party = (dbData.parties || []).find((p: any) => String(p?.id || "") === partyId);
+    if (party) pushQueue(party.giftEventQueue);
+  }
+
+  if (hostId) {
+    const host = (dbData.hosts || []).find((h: any) =>
+      String(h?.id || "") === hostId ||
+      String(h?.hostUsername || "").toLowerCase() === hostId.toLowerCase() ||
+      String(h?.hostUid || "").toLowerCase() === hostId.toLowerCase()
+    );
+    if (host) pushQueue(host.giftEventQueue);
+
+    // PK delivery: both host-side queues receive the same event, so include
+    // the related active PK counterpart queue as well.
+    Object.values(activePkSessions).forEach((sess: any) => {
+      if (!sess || sess.status === "ended") return;
+      const names = [sess.hostA?.username, sess.hostB?.username].filter(Boolean).map((x: any) => String(x).toLowerCase());
+      const hostMatches = names.includes(hostId.toLowerCase());
+      const userIds = [sess.hostA?.userId, sess.hostB?.userId].filter(Boolean).map((x: any) => String(x).toLowerCase());
+      const idMatches = userIds.includes(hostId.toLowerCase());
+      if (!hostMatches && !idMatches) return;
+      [sess.hostA, sess.hostB].filter(Boolean).forEach((participant: any) => {
+        const counterpart = (dbData.hosts || []).find((h: any) =>
+          (participant.username && String(h?.hostUsername || h?.name || "").toLowerCase() === String(participant.username).toLowerCase()) ||
+          (participant.userId && String(h?.hostUid || h?.id || "").toLowerCase() === String(participant.userId).toLowerCase())
+        );
+        if (counterpart) pushQueue(counterpart.giftEventQueue);
+      });
+    });
+  }
+
+  const unique = new Map<string, any>();
+  queues.flat().forEach((evt: any) => {
+    if (!evt?.eventId) return;
+    if (Number(evt.timestamp || 0) <= since) return;
+    unique.set(String(evt.eventId), evt);
+  });
+
+  const events = Array.from(unique.values()).sort((a: any, b: any) => Number(a.timestamp || 0) - Number(b.timestamp || 0));
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+  res.json({ events });
 });
 
 // GET /api/v1/gifts/supporters - Retrieve real top supporters aggregated from backend gift transactions
@@ -5263,6 +5261,7 @@ app.post("/api/v1/parties", (req, res) => {
     password: password || "",
     language: language || "English",
     description: description || `Welcome to our ${resolvedSeatCount}-seat audio lounge!`,
+    partyViewTheme: existingIdx !== -1 ? (dbData.parties[existingIdx].partyViewTheme || "default") : "default",
     status: "active",
     allGuestsMuted: existingIdx !== -1 ? Boolean(dbData.parties[existingIdx].allGuestsMuted) : false,
     moderators: existingIdx !== -1 && Array.isArray(dbData.parties[existingIdx].moderators) ? dbData.parties[existingIdx].moderators : [],
@@ -5813,6 +5812,31 @@ app.post("/api/v1/parties/:id/seats/change", (req, res) => {
   saveDatabase(); syncDocument("parties", id, party); res.json(party);
 });
 
+// Shared party visual theme. Only the visual shell changes; room functionality is untouched.
+app.post("/api/v1/parties/:id/theme", (req, res) => {
+  const { id } = req.params;
+  const { themeId, username } = req.body || {};
+  const allowedThemes = new Set([
+    "default", "eid-ul-fitr", "eid-ul-adha", "milad-un-nabi", "islamic-mosque",
+    "pakistan-day", "jungle", "mountain", "desert-night", "club-lounge", "lake-view"
+  ]);
+  const index = dbData.parties?.findIndex((p: any) => p && p.id === id);
+  if (index === -1 || index === undefined) {
+    return res.status(404).json({ error: "Party Room not found" });
+  }
+  if (!allowedThemes.has(String(themeId || ""))) {
+    return res.status(400).json({ error: "Invalid party theme" });
+  }
+  const party = dbData.parties[index];
+  // The visual theme is a shared room setting; any participant may select it.
+  party.partyViewTheme = String(themeId);
+  party.updatedAt = Date.now();
+  saveDatabase();
+  syncDocument("parties", id, party);
+  console.log(`[PARDAIS-PARTY VIEW] @${username || "unknown"} changed party ${id} theme to ${party.partyViewTheme}`);
+  return res.json(sanitizePartyForClient(party));
+});
+
 app.post("/api/v1/parties/:id/moderators/toggle", (req, res) => {
   const { id } = req.params; const { username, actorUsername } = req.body;
   const index = dbData.parties?.findIndex((p: any) => p.id === id);
@@ -5989,7 +6013,7 @@ app.get("/api/v1/agencies/:id/hosts", (req, res) => {
   res.json(agencyHosts);
 });
 
-app.post("/api/v1/agencies/:id/hosts", async (req, res) => {
+app.post("/api/v1/agencies/:id/hosts", (req, res) => {
   const { id } = req.params;
   const { username } = req.body;
   if (!username) return res.status(400).json({ error: "Username required" });
@@ -6009,14 +6033,14 @@ app.post("/api/v1/agencies/:id/hosts", async (req, res) => {
     }
 
     saveDatabase();
-    await syncDocument("users", username, dbData.users[userIndex]);
+    syncDocument("users", username, dbData.users[userIndex]);
     res.json({ message: "Host assigned successfully", user: dbData.users[userIndex] });
   } else {
     res.status(404).json({ error: "User not found" });
   }
 });
 
-app.delete("/api/v1/agencies/:id/hosts/:username", async (req, res) => {
+app.delete("/api/v1/agencies/:id/hosts/:username", (req, res) => {
   const { id, username } = req.params;
   const userIndex = (dbData.users || []).findIndex((u: any) => u.username === username && u.agencyId === id);
 
@@ -6032,7 +6056,7 @@ app.delete("/api/v1/agencies/:id/hosts/:username", async (req, res) => {
     }
 
     saveDatabase();
-    await syncDocument("users", username, dbData.users[userIndex]);
+    syncDocument("users", username, dbData.users[userIndex]);
     res.json({ message: "Host removed from agency" });
   } else {
     res.status(404).json({ error: "Host not found in this agency" });
@@ -6418,7 +6442,7 @@ app.post("/api/v1/purchase-requests", (req, res) => {
   res.status(201).json(newReq);
 });
 
-app.put("/api/v1/purchase-requests/:id", async (req, res) => {
+app.put("/api/v1/purchase-requests/:id", (req, res) => {
   const { id } = req.params;
   const { status } = req.body; // Approved or Rejected
   if (!dbData.purchaseRequests) dbData.purchaseRequests = [];
@@ -6435,7 +6459,7 @@ app.put("/api/v1/purchase-requests/:id", async (req, res) => {
       const userIndex = dbData.users.findIndex((u: any) => u.username === username);
       if (userIndex !== -1) {
         dbData.users[userIndex].coins = (dbData.users[userIndex].coins || 0) + coinsAmount;
-        await syncDocument("users", username, dbData.users[userIndex]);
+        syncDocument("users", username, dbData.users[userIndex]);
       }
       
       if (username === dbData.user.username) {
@@ -7173,13 +7197,13 @@ app.get("/api/v1/admin-users", (req, res) => {
       userMap.set(key, {
         id: u.id || u.numericId || `usr_${key}`,
         username: u.username || key,
-        fullName: u.fullName || u.displayName || "",
-        email: u.email || "",
-        phone: u.phone || u.phoneNumber || "",
-        avatar: u.avatar || u.photoURL || "",
-        level: typeof u.level === "number" ? u.level : (typeof u.userLevel === "number" ? u.userLevel : 0),
-        vipLevel: typeof u.vipLevel === "number" ? u.vipLevel : 0,
-        coins: typeof u.coins === "number" ? u.coins : 0,
+        fullName: u.fullName || u.displayName || u.username,
+        email: u.email || `${u.username}@pardais.app`,
+        phone: u.phone || u.phoneNumber || "+92 300 0000000",
+        avatar: u.avatar || u.photoURL || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100",
+        level: u.level || u.userLevel || 1,
+        vipLevel: u.vipLevel || 0,
+        coins: typeof u.coins === "number" ? u.coins : 5000,
         partyEnabled: u.partyEnabled !== false,
         liveEnabled: u.liveEnabled !== false,
         reelsEnabled: u.reelsEnabled !== false,
@@ -7189,7 +7213,7 @@ app.get("/api/v1/admin-users", (req, res) => {
         isVerified: u.isVerified === true,
         kycStatus: u.kycStatus || "not_submitted",
         selectedFrameId: u.selectedFrameId || null,
-        deviceId: u.deviceId || ""
+        deviceId: u.deviceId || "DEV-S24-PAK8821"
       });
     }
   });
@@ -7226,7 +7250,7 @@ app.get("/api/v1/admin-users", (req, res) => {
   res.json(list);
 });
 
-app.put("/api/v1/admin-users/:username", async (req, res) => {
+app.put("/api/v1/admin-users/:username", (req, res) => {
   const { username } = req.params;
   const updates = req.body || {};
 
@@ -7242,7 +7266,7 @@ app.put("/api/v1/admin-users/:username", async (req, res) => {
   if (userIndex !== -1) {
     dbData.users[userIndex] = { ...dbData.users[userIndex], ...updates };
     userObj = dbData.users[userIndex];
-    await syncDocument("users", username, dbData.users[userIndex]);
+    syncDocument("users", username, dbData.users[userIndex]);
   } else {
     userObj = { username, ...updates };
     dbData.users.push(userObj);
@@ -7252,7 +7276,7 @@ app.put("/api/v1/admin-users/:username", async (req, res) => {
   const adminIndex = dbData.adminUsersList.findIndex((u: any) => (u.username || "").toLowerCase() === key);
   if (adminIndex !== -1) {
     dbData.adminUsersList[adminIndex] = { ...dbData.adminUsersList[adminIndex], ...updates };
-    await syncDocument("adminUsersList", username, dbData.adminUsersList[adminIndex]);
+    syncDocument("adminUsersList", username, dbData.adminUsersList[adminIndex]);
   } else {
     dbData.adminUsersList.push({ username, ...updates });
   }
@@ -7260,7 +7284,7 @@ app.put("/api/v1/admin-users/:username", async (req, res) => {
   // 3. Update dbData.user if current user
   if (dbData.user && (dbData.user.username || "").toLowerCase() === key) {
     dbData.user = { ...dbData.user, ...updates };
-    await writeMetadata("user_profile", dbData.user);
+    writeMetadata("user_profile", dbData.user);
   }
 
   // 4. Record Audit Log
@@ -7711,83 +7735,6 @@ app.get('/api/v1/gifts/animation', async (req: any, res: any) => {
 // R2 objects are private in some production configurations, so the client must
 // never depend on the R2_PUBLIC_URL being directly readable. The API proxies only
 // objects under the avatars/ prefix and preserves the stored image content type.
-const coverMulterUpload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 25 * 1024 * 1024 },
-  fileFilter: (_req, file, cb) => {
-    const mime = String(file.mimetype || "").toLowerCase();
-    const name = String(file.originalname || "").toLowerCase();
-    cb(null, mime.startsWith("image/") || /\.(jpg|jpeg|png|webp|gif|avif|heic|heif)$/i.test(name));
-  }
-});
-
-app.get("/api/v1/user/cover-media", async (req: any, res: any) => {
-  try {
-    const objectKey = typeof req.query?.key === "string" ? req.query.key : "";
-    if (!objectKey || !objectKey.startsWith("covers/") || objectKey.includes("..")) return res.status(400).json({ error: "Invalid cover media key." });
-    if (!process.env.R2_ACCESS_KEY_ID || !process.env.R2_SECRET_ACCESS_KEY || !process.env.R2_ENDPOINT) return res.status(503).json({ error: "Profile media storage is temporarily unavailable." });
-    const result: any = await getS3Client().send(new GetObjectCommand({ Bucket: process.env.R2_BUCKET_NAME || "pardaisparty-reels", Key: objectKey }));
-    res.setHeader("Content-Type", String(result.ContentType || "image/webp"));
-    res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
-    if (result.ContentLength != null) res.setHeader("Content-Length", String(result.ContentLength));
-    if (result.Body && typeof result.Body.pipe === "function") result.Body.pipe(res);
-    else if (result.Body) res.end(Buffer.from(await result.Body.transformToByteArray()));
-    else res.status(404).json({ error: "Cover photo not found." });
-  } catch (err: any) {
-    console.error("[PARDAIS-PARTY COVER MEDIA] Playback failed:", err?.message || err);
-    return res.status(404).json({ error: "Cover photo not found." });
-  }
-});
-
-app.post("/api/v1/user/cover", authenticateUser, (req: any, res: any, next: any) => {
-  coverMulterUpload.single("cover")(req, res, (uploadErr: any) => {
-    if (uploadErr) return res.status(400).json({ success: false, error: uploadErr?.message || "Cover photo upload could not be read." });
-    next();
-  });
-}, async (req: any, res: any) => {
-  try {
-    if (!req.user) return res.status(401).json({ success: false, error: "Unauthorized. Please log in." });
-    const file = req.file;
-    if (!file?.buffer || file.size <= 0) return res.status(400).json({ success: false, error: "No valid cover photo was uploaded." });
-    let uploadBuffer = file.buffer;
-    let uploadContentType = String(file.mimetype || "image/jpeg").toLowerCase();
-    let uploadExtension = uploadContentType === "image/png" ? "png" : uploadContentType === "image/webp" ? "webp" : "jpg";
-    try {
-      uploadBuffer = await sharp(file.buffer).rotate().resize(1600, 900, { fit: "cover", withoutEnlargement: true }).webp({ quality: 86 }).toBuffer();
-      uploadContentType = "image/webp"; uploadExtension = "webp";
-    } catch (e: any) { console.warn("[PARDAIS-PARTY COVER] Image optimization skipped:", e?.message || e); }
-    const safeUserId = String(req.user.uid || req.user.username || "user").replace(/[^a-zA-Z0-9_-]/g, "_");
-    const objectKey = `covers/${safeUserId}/${Date.now()}-${crypto.randomBytes(5).toString("hex")}.${uploadExtension}`;
-    let coverUrl = "";
-    try {
-      const bucketName = process.env.R2_BUCKET_NAME || "pardaisparty-reels";
-      await Promise.race([
-        getS3Client().send(new PutObjectCommand({ Bucket: bucketName, Key: objectKey, Body: uploadBuffer, ContentType: uploadContentType, ContentLength: uploadBuffer.length, CacheControl: "public, max-age=31536000, immutable" })),
-        new Promise((_, reject) => setTimeout(() => reject(new Error("R2 cover upload timeout")), 10000))
-      ]);
-      coverUrl = `${PUBLIC_API_BASE}/api/v1/user/cover-media?key=${encodeURIComponent(objectKey)}`;
-    } catch (r2Err: any) {
-      console.warn("[PARDAIS-PARTY COVER] R2 unavailable; using API storage fallback:", r2Err?.message || r2Err);
-      const uploadsDir = path.join(process.cwd(), "public", "uploads");
-      fs.mkdirSync(uploadsDir, { recursive: true });
-      const fallbackName = `cover_${safeUserId}_${Date.now()}_${crypto.randomBytes(4).toString("hex")}.webp`;
-      fs.writeFileSync(path.join(uploadsDir, fallbackName), uploadBuffer);
-      coverUrl = `${PUBLIC_API_BASE}/uploads/${fallbackName}`;
-    }
-    const updatedAt = new Date().toISOString();
-    const updatedUser = { ...req.user, coverPhoto: coverUrl, coverPhotoUpdatedAt: updatedAt, coverPhotoSource: "user-upload", profileUpdatedAt: updatedAt };
-    req.user = updatedUser;
-    const idx = dbData.users.findIndex((u: any) => (updatedUser.uid && u.uid === updatedUser.uid) || (updatedUser.email && String(u.email || "").toLowerCase().trim() === String(updatedUser.email || "").toLowerCase().trim()) || (updatedUser.username && u.username === updatedUser.username));
-    if (idx !== -1) dbData.users[idx] = { ...dbData.users[idx], ...updatedUser }; else dbData.users.push(updatedUser);
-    saveDatabase();
-    await persistUserDurably(updatedUser);
-    return res.json({ success: true, url: coverUrl, coverPhoto: coverUrl, message: "Cover photo updated successfully." });
-  } catch (err: any) {
-    console.error("[PARDAIS-PARTY COVER] Upload failed:", err);
-    return res.status(500).json({ success: false, error: err?.message || "Cover photo upload failed." });
-  }
-});
-
 app.get("/api/v1/user/avatar-media", async (req: any, res: any) => {
   try {
     const objectKey = typeof req.query?.key === "string" ? req.query.key : "";

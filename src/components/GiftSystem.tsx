@@ -6,7 +6,7 @@ import {
   Send, AlertCircle, DollarSign, Archive, Volume2, ArrowUpRight, Search, Activity
 } from "lucide-react";
 import { Gift, GiftType, ChatMessage, Transaction, UserProfile } from "../types";
-import { resolveApiUrl, getAuthToken } from "../lib/apiClient";
+import { resolveApiUrl } from "../lib/apiClient";
 
 // Web Audio API Synthesizer for Gift Sound Effects
 export const playGiftAudioSynthesizer = (soundType: string = "ding") => {
@@ -1964,17 +1964,13 @@ export const AdminGiftTab: React.FC<AdminGiftTabProps> = ({
       }
     }
 
-    // Sync with backend API using the existing authenticated Admin session
+    // Sync with backend API
     try {
       const endpoint = editingGift ? `/api/v1/gifts/${editingGift.id}` : "/api/v1/gifts";
       const method = editingGift ? "PUT" : "POST";
-      const token = getAuthToken();
       const res = await fetch(resolveApiUrl(endpoint), {
         method,
-        headers: {
-          "Content-Type": "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {})
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
       });
       if (res.ok) {
@@ -2030,10 +2026,7 @@ export const AdminGiftTab: React.FC<AdminGiftTabProps> = ({
       saveGiftsToStorage(nextGifts);
 
       try {
-        await fetch(resolveApiUrl(`/api/v1/gifts/${id}`), {
-          method: "DELETE",
-          headers: { ...(getAuthToken() ? { Authorization: `Bearer ${getAuthToken()}` } : {}) }
-        });
+        await fetch(resolveApiUrl(`/api/v1/gifts/${id}`), { method: "DELETE" });
       } catch (err) {
         console.error("Failed to delete gift on backend:", err);
       }

@@ -38,7 +38,7 @@ export function saveAccountToDevice(
     const cleanUsername = user.username || `User_${cleanUid.slice(-4)}`;
     const cleanFullName = user.fullName || cleanUsername;
     const cleanEmail = user.email || "";
-    const cleanAvatar = user.avatar || "";
+    const cleanAvatar = user.avatar || DEFAULT_USER.avatar;
     const cleanToken = token || localStorage.getItem("pardais_auth_token") || `token_${cleanUid}_${Date.now()}`;
 
     const newSavedAccount: SavedAccount = {
@@ -128,8 +128,8 @@ export function getDemoAccounts(): Array<{
         username: "Malik_Bilal",
         fullName: "Malik Bilal Official",
         email: "bilal.malik.live@gmail.com",
-        avatar: "",
-        coverPhoto: "",
+        avatar: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=300&q=80",
+        coverPhoto: "https://images.unsplash.com/photo-1511512578047-dfb367046420?auto=format&fit=crop&w=600&q=80",
         bio: "👑 Co-Host & PK King from Lahore | Pardais Talent ⭐",
         coins: 145000,
         diamonds: 32000,
@@ -154,8 +154,8 @@ export function getDemoAccounts(): Array<{
         username: "Ayesha_Queen",
         fullName: "Ayesha Noor Khan",
         email: "ayesha.khan.party@gmail.com",
-        avatar: "",
-        coverPhoto: "",
+        avatar: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=300&q=80",
+        coverPhoto: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=600&q=80",
         bio: "💎 Top Gifter & Audio Lounge Queen | Royal Family 👑",
         coins: 480000,
         diamonds: 95000,
@@ -180,8 +180,8 @@ export function getDemoAccounts(): Array<{
         username: "DJ_Hamza_Party",
         fullName: "Hamza Tariq DJ",
         email: "djhamza.official@gmail.com",
-        avatar: "",
-        coverPhoto: "",
+        avatar: "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=300&q=80",
+        coverPhoto: "https://images.unsplash.com/photo-1470225620780-dba8ba36b745?auto=format&fit=crop&w=600&q=80",
         bio: "🎧 Late Night Remix & Urdu Anthems | Live Daily 10 PM 🎵",
         coins: 82000,
         diamonds: 64000,
