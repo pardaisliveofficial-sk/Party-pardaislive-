@@ -57,8 +57,6 @@ export interface UserProfile {
   hostLevel: number;
   wealthLevel: number;
   xp: number;
-  giftSpentCoins?: number;
-  progressUpdatedAt?: string;
   familyId: string | null;
   agencyId: string | null;
   isVerified: boolean;

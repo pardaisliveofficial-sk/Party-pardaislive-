@@ -1032,22 +1032,6 @@ function canonicalizeUsers(items: any[]): any[] {
         }
       }
     }
-
-    // Progression is monotonic. Legacy username/UID/email mirrors can have
-    // different snapshots; never let a stale mirror downgrade level/XP/VIP.
-    const maxNumeric = (key: string, fallback: number) => {
-      const values = group.map(u => Number(u?.[key])).filter(v => Number.isFinite(v));
-      return values.length ? Math.max(...values) : fallback;
-    };
-    primary.userLevel = maxNumeric("userLevel", Number(primary.userLevel) || 1);
-    primary.level = Math.max(Number(primary.level) || 1, primary.userLevel);
-    primary.vipLevel = maxNumeric("vipLevel", Number(primary.vipLevel) || 0);
-    primary.xp = maxNumeric("xp", Number(primary.xp) || 0);
-    primary.giftSpentCoins = maxNumeric("giftSpentCoins", Number(primary.giftSpentCoins) || 0);
-    primary.progressUpdatedAt = group
-      .map(u => String(u?.progressUpdatedAt || ""))
-      .sort((a, b) => (Date.parse(b) || 0) - (Date.parse(a) || 0))[0] || primary.progressUpdatedAt;
-
     result.push(primary);
   }
   return result;
@@ -3177,23 +3161,11 @@ app.post("/api/v1/gifts/send", authenticateUser, (req, res) => {
   }
 
   user.coins = userCoins - totalCost;
-
-  // PERMANENT GIFT PROGRESSION: level/XP must never reset after refresh,
-  // app update, logout/login, or a new session. Keep a dedicated cumulative
-  // gift-spend counter and only move progression forward.
-  const previousGiftSpentCoins = Math.max(0, Number(user.giftSpentCoins) || 0);
-  const nextGiftSpentCoins = previousGiftSpentCoins + totalCost;
-  const previousXp = Math.max(0, Number(user.xp) || 0);
-  const nextXp = previousXp + Math.floor(totalCost * 0.2);
-  const giftProgress = getProgressionFromServerCoins(nextXp);
-  user.giftSpentCoins = nextGiftSpentCoins;
-  user.xp = nextXp;
-  user.userLevel = Math.max(1, Number(user.userLevel) || 1, giftProgress.level);
-  user.level = user.userLevel;
-  user.vipLevel = Math.max(Number(user.vipLevel) || 0, giftProgress.vipLevel);
+  user.xp = (user.xp || 0) + Math.floor(totalCost * 0.2);
+  const giftProgress = getProgressionFromServerCoins(user.xp);
+  user.userLevel = giftProgress.level;
+  user.vipLevel = giftProgress.vipLevel;
   user.wealthLevel = Math.max(Number(user.wealthLevel) || 1, (Number(user.wealthLevel) || 1) + 1);
-  user.progressUpdatedAt = new Date().toISOString();
-  user.updatedAt = user.progressUpdatedAt;
 
   // Gift display value is always the full amount, while the recipient
   // receives exactly 50% in the earning/diamond wallet.
@@ -3296,17 +3268,13 @@ app.post("/api/v1/gifts/send", authenticateUser, (req, res) => {
 
   saveDatabase();
 
-  const responseData: any = {
+  const responseData = {
     success: true,
     transactionId: txId,
     gift,
     count: giftCount,
     totalCoinsSpent: totalCost,
     remainingCoins: user.coins,
-    xp: user.xp,
-    userLevel: user.userLevel,
-    vipLevel: user.vipLevel,
-    giftSpentCoins: user.giftSpentCoins,
     hostEarnings,
     recipientEarnings,
     companyShare,
@@ -3470,14 +3438,7 @@ app.post("/api/v1/gifts/send", authenticateUser, (req, res) => {
     if (recipientSeat) {
       // Seat badge always displays 100% of the gift value. The recipient
       // earning wallet receives only recipientEarnings (50%).
-      const previousSeatGiftCoins = Number(recipientSeat.giftCoins) || 0;
-      recipientSeat.giftCoins = previousSeatGiftCoins + totalCost;
-      // Party seat gift badge intentionally shows 2x room gift points.
-      // Keep giftCoins at the real gift value so rankings/ledger remain accurate.
-      const previousDisplayCoins = recipientSeat.giftDisplayCoins !== undefined
-        ? (Number(recipientSeat.giftDisplayCoins) || 0)
-        : (previousSeatGiftCoins * 2);
-      recipientSeat.giftDisplayCoins = previousDisplayCoins + (totalCost * 2);
+      recipientSeat.giftCoins = (Number(recipientSeat.giftCoins) || 0) + totalCost;
       recipientSeat.giftCount = (Number(recipientSeat.giftCount) || 0) + giftCount;
       recipientSeat.earningCoins = (Number(recipientSeat.earningCoins) || 0) + recipientEarnings;
       recipientSeat.lastGiftAt = Date.now();
@@ -5261,7 +5222,6 @@ app.post("/api/v1/parties", (req, res) => {
     password: password || "",
     language: language || "English",
     description: description || `Welcome to our ${resolvedSeatCount}-seat audio lounge!`,
-    partyViewTheme: existingIdx !== -1 ? (dbData.parties[existingIdx].partyViewTheme || "default") : "default",
     status: "active",
     allGuestsMuted: existingIdx !== -1 ? Boolean(dbData.parties[existingIdx].allGuestsMuted) : false,
     moderators: existingIdx !== -1 && Array.isArray(dbData.parties[existingIdx].moderators) ? dbData.parties[existingIdx].moderators : [],
@@ -5810,34 +5770,6 @@ app.post("/api/v1/parties/:id/seats/change", (req, res) => {
   const moved = { ...from };
   party.seats = party.seats.map((s: any) => s.id === from.id ? { ...s, name: null, avatar: null, isMuted: false } : s.id === to.id ? { ...s, name: moved.name, avatar: moved.avatar, isMuted: moved.isMuted } : s);
   saveDatabase(); syncDocument("parties", id, party); res.json(party);
-});
-
-// Shared party visual theme. Only the visual shell changes; room functionality is untouched.
-app.post("/api/v1/parties/:id/theme", (req, res) => {
-  const { id } = req.params;
-  const { themeId, username } = req.body || {};
-  const allowedThemes = new Set([
-    "default", "eid-ul-fitr", "eid-ul-adha", "milad-un-nabi", "islamic-mosque",
-    "pakistan-day", "jungle", "mountain", "desert-night", "club-lounge", "lake-view"
-  ]);
-  const index = dbData.parties?.findIndex((p: any) => p && p.id === id);
-  if (index === -1 || index === undefined) {
-    return res.status(404).json({ error: "Party Room not found" });
-  }
-  if (!allowedThemes.has(String(themeId || ""))) {
-    return res.status(400).json({ error: "Invalid party theme" });
-  }
-  const party = dbData.parties[index];
-  // Only the room host controls the shared Party View. Everyone else receives the selected theme.
-  if (String(username || "").toLowerCase() !== String(party.hostUsername || "").toLowerCase()) {
-    return res.status(403).json({ error: "Only the host can change the Party View" });
-  }
-  party.partyViewTheme = String(themeId);
-  party.updatedAt = Date.now();
-  saveDatabase();
-  syncDocument("parties", id, party);
-  console.log(`[PARDAIS-PARTY VIEW] @${username || "unknown"} changed party ${id} theme to ${party.partyViewTheme}`);
-  return res.json(sanitizePartyForClient(party));
 });
 
 app.post("/api/v1/parties/:id/moderators/toggle", (req, res) => {

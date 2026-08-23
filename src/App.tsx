@@ -145,27 +145,6 @@ import {
   getDownloadURL 
 } from "firebase/storage";
 
-// Party visual themes. The room functionality, seats, audio, gifts and games remain unchanged;
-// only the visual shell/background changes when a theme is selected.
-const PARTY_VIEW_THEMES = [
-  { id: "default", name: "Default Lounge", short: "Classic", icon: "🎙️", accent: "#f59e0b", background: "", overlay: "rgba(2,3,8,0.15)" },
-  { id: "eid-ul-fitr", name: "Eid ul Fitr", short: "Eid Mubarak", icon: "🌙", accent: "#d8b25c", background: "/assets/party-themes/eid-ul-fitr.jpg", overlay: "rgba(2,10,8,0.48)" },
-  { id: "eid-ul-adha", name: "Eid ul Adha", short: "Qurbani", icon: "🐑", accent: "#e6b85c", background: "/assets/party-themes/eid-ul-adha.jpg", overlay: "rgba(24,12,3,0.42)" },
-  { id: "milad-un-nabi", name: "Milad un Nabi", short: "Islamic", icon: "🕌", accent: "#b7d66a", background: "/assets/party-themes/milad-un-nabi.jpg", overlay: "rgba(0,17,13,0.46)" },
-  { id: "islamic-mosque", name: "Islamic Mosque", short: "Spiritual", icon: "🕌", accent: "#78b6e8", background: "/assets/party-themes/islamic-mosque.jpg", overlay: "rgba(4,10,22,0.42)" },
-  { id: "pakistan-day", name: "Pakistan Day", short: "Pakistan Zindabad", icon: "🇵🇰", accent: "#7bd48c", background: "/assets/party-themes/pakistan-day.jpg", overlay: "rgba(2,17,9,0.44)" },
-  { id: "jungle", name: "Jungle Vibes", short: "Nature", icon: "🌿", accent: "#76c879", background: "/assets/party-themes/jungle.jpg", overlay: "rgba(1,14,5,0.42)" },
-  { id: "mountain", name: "Mountain Escape", short: "Snow", icon: "🏔️", accent: "#72b6ef", background: "/assets/party-themes/mountain.jpg", overlay: "rgba(2,10,20,0.42)" },
-  { id: "desert-night", name: "Desert Night", short: "Moonlight", icon: "🌵", accent: "#d57bd8", background: "/assets/party-themes/desert-night.jpg", overlay: "rgba(12,3,18,0.48)" },
-  { id: "club-lounge", name: "Club Lounge", short: "Neon", icon: "🎧", accent: "#d75df0", background: "/assets/party-themes/club-lounge.jpg", overlay: "rgba(8,1,17,0.40)" },
-  { id: "lake-view", name: "Sunset Lake", short: "Sun View", icon: "🌅", accent: "#56c6d9", background: "/assets/party-themes/lake-view.jpg", overlay: "rgba(2,10,14,0.36)" },
-] as const;
-
-type PartyViewThemeId = typeof PARTY_VIEW_THEMES[number]["id"];
-
-const getPartyViewTheme = (id?: string) =>
-  PARTY_VIEW_THEMES.find(theme => theme.id === id) || PARTY_VIEW_THEMES[0];
-
 // Standardize authDomain & storageBucket for Firebase Google Auth & Storage Handlers
 const effectiveFirebaseConfig = {
   ...firebaseConfig,
@@ -245,19 +224,6 @@ interface PattiConfig {
   icon: string;
   sparkleColor: string;
 }
-
-
-const formatPartySeatGiftDisplay = (value: string | number | null | undefined): string => {
-  const raw = String(value ?? "0").trim().toUpperCase();
-  let n = 0;
-  if (raw.endsWith("M")) n = (parseFloat(raw) || 0) * 1000000;
-  else if (raw.endsWith("K")) n = (parseFloat(raw) || 0) * 1000;
-  else n = parseFloat(raw) || 0;
-  const doubled = n * 2;
-  if (doubled >= 1000000) return (doubled / 1000000).toFixed(1) + "M";
-  if (doubled >= 1000) return (doubled / 1000).toFixed(1) + "K";
-  return Math.floor(doubled).toString();
-};
 
 const getPattiConfig = (level: number): PattiConfig => {
   if (level >= 80) {
@@ -1005,13 +971,6 @@ export default function App() {
               avatarUpdatedAt: preservedAvatarUpdatedAt,
               avatarSource: (useLocalAvatar ? localProfile!.avatarSource : data.user.avatarSource) || (preservedAvatar ? "user-upload" : "default"),
               profileUpdatedAt: data.user.profileUpdatedAt || localProfile?.profileUpdatedAt,
-              // Never downgrade durable gift progression during session restore.
-              xp: Math.max(Number(data.user.xp) || 0, Number(localProfile?.xp) || 0),
-              userLevel: Math.max(Number(data.user.userLevel) || 1, Number(localProfile?.userLevel) || 1),
-              level: Math.max(Number(data.user.level) || 1, Number(localProfile?.level) || 1, Number(data.user.userLevel) || 1, Number(localProfile?.userLevel) || 1),
-              vipLevel: Math.max(Number(data.user.vipLevel) || 0, Number(localProfile?.vipLevel) || 0),
-              giftSpentCoins: Math.max(Number(data.user.giftSpentCoins) || 0, Number(localProfile?.giftSpentCoins) || 0),
-              progressUpdatedAt: data.user.progressUpdatedAt || localProfile?.progressUpdatedAt,
               bio: localProfile?.bio || data.user.bio,
               gender: localProfile?.gender || data.user.gender,
               dob: localProfile?.dob || data.user.dob,
@@ -2497,7 +2456,6 @@ export default function App() {
   const [currentBannerIndex, setCurrentBannerIndex] = useState<number>(0);
   const [invitedToSeat, setInvitedToSeat] = useState<{ partyId: string; seatId: number; hostName: string } | null>(null);
   const [showCreatePartyModal, setShowCreatePartyModal] = useState<boolean>(false);
-  const [showPartyViewMenu, setShowPartyViewMenu] = useState<boolean>(false);
   const [showPartyExitConfirm, setShowPartyExitConfirm] = useState<boolean>(false);
   const [showCreateActionSheet, setShowCreateActionSheet] = useState<boolean>(false);
   const [partyCategory, setPartyCategory] = useState<string>("all");
@@ -6913,12 +6871,10 @@ export default function App() {
         const isSeatMatch = recipientName.toLowerCase().includes(`seat-${s.id}`) || recipientName.toLowerCase().includes(`seat #${s.id}`);
         if (isNameMatch || isSeatMatch) {
           const currentGiftCoins = parseSeatGiftCoins((s as any).giftCoins);
-          const currentDisplayCoins = parseSeatGiftCoins((s as any).giftDisplayCoins);
           const addedGiftCoins = totalCost;
           return {
             ...s,
-            giftCoins: formatSeatGiftCoins(currentGiftCoins + addedGiftCoins),
-            giftDisplayCoins: formatSeatGiftCoins(currentDisplayCoins + (addedGiftCoins * 2))
+            giftCoins: formatSeatGiftCoins(currentGiftCoins + addedGiftCoins)
           };
         }
         return s;
@@ -6938,12 +6894,10 @@ export default function App() {
           const isSeatMatch = recipientName.toLowerCase().includes(`seat-${s.id}`) || recipientName.toLowerCase().includes(`seat #${s.id}`);
           if (isNameMatch || isSeatMatch) {
             const currentGiftCoins = parseSeatGiftCoins((s as any).giftCoins);
-            const currentDisplayCoins = parseSeatGiftCoins((s as any).giftDisplayCoins);
             const addedGiftCoins = totalCost;
             return {
               ...s,
-              giftCoins: formatSeatGiftCoins(currentGiftCoins + addedGiftCoins),
-              giftDisplayCoins: formatSeatGiftCoins(currentDisplayCoins + (addedGiftCoins * 2))
+              giftCoins: formatSeatGiftCoins(currentGiftCoins + addedGiftCoins)
             };
           }
           return s;
@@ -6970,20 +6924,15 @@ export default function App() {
     const xpGained = totalCost; // 1 Coin Spent = 1 XP Gained
 
     setUser(prev => {
-      // Match the server's 20% gift-XP rule and keep progression monotonic.
-      const newXp = (prev.xp || 0) + Math.floor(xpGained * 0.2);
+      const newXp = (prev.xp || 0) + xpGained;
       const prog = getProgressionFromCoins(newXp);
-      const nextLevel = Math.max(Number(prev.userLevel) || 1, prog.level);
       return {
         ...prev,
         coins: Math.max(0, prev.coins - coinsDeducted),
         xp: newXp,
-        userLevel: nextLevel,
-        level: nextLevel,
-        vipLevel: Math.max(Number(prev.vipLevel) || 0, prog.vipLevel),
-        giftSpentCoins: (Number((prev as any).giftSpentCoins) || 0) + totalCost,
-        progressUpdatedAt: new Date().toISOString(),
-        wealthLevel: (Number(prev.wealthLevel) || 1) + 1
+        userLevel: prog.level,
+        vipLevel: prog.vipLevel,
+        wealthLevel: prev.wealthLevel + 1
       };
     });
 
@@ -7015,11 +6964,6 @@ export default function App() {
           setUser(prev => ({
             ...prev,
             coins: data.remainingCoins !== undefined ? data.remainingCoins : prev.coins,
-            xp: data.xp !== undefined ? Math.max(Number(prev.xp) || 0, Number(data.xp) || 0) : prev.xp,
-            userLevel: data.userLevel !== undefined ? Math.max(Number(prev.userLevel) || 1, Number(data.userLevel) || 1) : prev.userLevel,
-            level: data.userLevel !== undefined ? Math.max(Number(prev.userLevel) || 1, Number(data.userLevel) || 1) : prev.level,
-            vipLevel: data.vipLevel !== undefined ? Math.max(Number(prev.vipLevel) || 0, Number(data.vipLevel) || 0) : prev.vipLevel,
-            giftSpentCoins: data.giftSpentCoins !== undefined ? Math.max(Number((prev as any).giftSpentCoins) || 0, Number(data.giftSpentCoins) || 0) : (prev as any).giftSpentCoins,
             ...(data.recipientCreatorBalance !== undefined && data.recipientRecipientUsername && data.recipientRecipientUsername === prev.username ? { diamonds: data.recipientCreatorBalance } : {})
           }));
           if (data.recipientCreatorBalance !== undefined && String(data.recipient || "").toLowerCase() === String(user.username || "").toLowerCase()) {
@@ -10137,7 +10081,7 @@ export default function App() {
                         );
                       }
 
-                      const isHostOfRoom = String(party.hostUsername || "").toLowerCase() === String(user.username || "").toLowerCase();
+                      const isHostOfRoom = party.hostUsername === user.username;
                       const isAllGuestsMuted = Boolean(partyAllGuestsMuted[party.id] ?? party.allGuestsMuted);
                       const mySeatedSeat = party.seats ? party.seats.find((s: any) => s.name === user.username) : null;
                       const activeInvite = party.invites?.find((i: any) => i.username === user.username);
@@ -10545,29 +10489,6 @@ export default function App() {
                         updateMissionProgress("m-2", count);
                       };
 
-                      // Change the shared party visual theme. Persist it on the server so every
-                      // viewer/seat holder sees the same background and visual mode.
-                      const handleChangePartyView = async (themeId: PartyViewThemeId) => {
-                        const theme = getPartyViewTheme(themeId);
-                        setPartiesList(prev => prev.map(p => p.id === party.id ? { ...p, partyViewTheme: theme.id } : p));
-                        setShowPartyViewMenu(false);
-                        try {
-                          const response = await authenticatedFetch(`/api/v1/parties/${party.id}/theme`, {
-                            method: "POST",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ themeId: theme.id, username: user.username })
-                          });
-                          if (!response.ok) throw new Error(`Theme update failed: HTTP ${response.status}`);
-                          const data = await response.json();
-                          if (data?.id) {
-                            setPartiesList(prev => prev.map(p => p.id === party.id ? { ...p, ...data } : p));
-                          }
-                        } catch (error) {
-                          console.error("[PARTY VIEW] Theme update failed:", error);
-                          // Keep the selected theme in this session even if the network is temporarily unavailable.
-                        }
-                      };
-
                       // Share Party Room function
                       const handleShareParty = () => {
                         if (!party) return;
@@ -10653,23 +10574,9 @@ export default function App() {
                         }
                       };
 
-                      const partyTheme = getPartyViewTheme(party.partyViewTheme);
-                      const isDefaultView = (party.partyViewTheme || "default") === "default";
-
                       return (
-                            <div
-                              className="w-full h-full min-h-0 flex flex-col relative select-none overflow-hidden pb-3 border-x shadow-[inset_0_0_80px_rgba(0,0,0,0.9)]"
-                              style={{ borderColor: `${partyTheme.accent}55` }}
-                            >
-                              {/* Full-room scenic party background. It is visual-only; all existing controls remain above it. */}
-                              <div
-                                className="absolute inset-0 z-0 bg-gradient-to-b from-[#0a0c1a] via-[#05060f] to-[#020308] bg-cover bg-center bg-no-repeat transition-all duration-500"
-                                style={partyTheme.background ? { backgroundImage: `linear-gradient(rgba(0,0,0,0.10), rgba(0,0,0,0.18)), url(${partyTheme.background})`, backgroundSize: "cover", backgroundPosition: "center" } : undefined}
-                              />
-                              <div className="absolute inset-0 pointer-events-none z-[1]" style={{ background: partyTheme.id === "default" ? partyTheme.overlay : "rgba(0,0,0,0.08)" }} />
-                              <div className="absolute inset-0 pointer-events-none z-[1] bg-gradient-to-b from-black/5 via-black/5 to-black/20" />
-
-                              {/* Ambient Neon Gold Glow Spots */}
+                        <div className="w-full h-full flex flex-col bg-gradient-to-b from-[#0a0c1a] via-[#05060f] to-[#020308] relative select-none overflow-hidden pb-3 border-x border-amber-500/20 shadow-[inset_0_0_80px_rgba(0,0,0,0.9)]">
+                          {/* Ambient Neon Gold Glow Spots */}
                           <div className="absolute top-0 left-1/4 w-72 h-72 bg-amber-500/10 rounded-full blur-3xl pointer-events-none" />
                           <div className="absolute top-1/3 right-0 w-64 h-64 bg-yellow-500/5 rounded-full blur-3xl pointer-events-none" />
                           <div className="absolute bottom-0 left-0 w-80 h-80 bg-purple-900/10 rounded-full blur-3xl pointer-events-none" />
@@ -10745,18 +10652,6 @@ export default function App() {
                                   <span className="hidden sm:inline ml-1">GAMES</span>
                                 </button>
 
-                                {/* Party View / Background Theme Button — HOST ONLY */}
-                                {isHostOfRoom && (
-                                  <button
-                                    onClick={() => setShowPartyViewMenu(true)}
-                                    className="bg-black/40 backdrop-blur-md border border-amber-500/40 hover:border-amber-300 p-1.5 rounded-xl text-amber-400 hover:text-amber-200 transition-all cursor-pointer flex items-center justify-center w-7.5 h-7.5 shadow-md active:scale-95"
-                                    title="Host: Change Party View"
-                                    aria-label="Host: Change Party View"
-                                  >
-                                    <MoreVertical className="w-3.5 h-3.5" />
-                                  </button>
-                                )}
-
                                 {/* Share Party Room Button */}
                                 <button
                                   onClick={handleShareParty}
@@ -10777,126 +10672,86 @@ export default function App() {
                               </div>
                             </div>
 
-                            {/* PARTY VIEW / BACKGROUND THEME DRAWER */}
-                            {isHostOfRoom && showPartyViewMenu && (
-                              <div className="absolute inset-0 z-[75] flex">
-                                <button
-                                  aria-label="Close party view menu"
-                                  onClick={() => setShowPartyViewMenu(false)}
-                                  className="absolute inset-0 bg-black/45 backdrop-blur-[2px] cursor-default"
-                                />
-                                <aside className="relative z-10 h-full w-[82%] max-w-[340px] bg-[#090b10]/96 backdrop-blur-2xl border-r border-amber-500/30 shadow-[15px_0_45px_rgba(0,0,0,0.65)] p-3 overflow-y-auto animate-slide-right">
-                                  <div className="flex items-center justify-between mb-3">
-                                    <div>
-                                      <p className="text-[11px] font-black text-white uppercase tracking-wider font-mono">🎨 Party View</p>
-                                      <p className="text-[7.5px] text-gray-400 mt-0.5">Background & room design</p>
-                                    </div>
-                                    <button
-                                      onClick={() => setShowPartyViewMenu(false)}
-                                      className="w-7 h-7 rounded-full bg-white/5 border border-white/10 text-gray-300 flex items-center justify-center active:scale-95"
-                                    >
-                                      <X className="w-3.5 h-3.5" />
-                                    </button>
-                                  </div>
-
-                                  <div className="grid grid-cols-2 gap-2 pb-4">
-                                    {PARTY_VIEW_THEMES.map(theme => {
-                                      const active = (party.partyViewTheme || "default") === theme.id;
-                                      return (
-                                        <button
-                                          key={theme.id}
-                                          onClick={() => handleChangePartyView(theme.id)}
-                                          className={`relative overflow-hidden rounded-xl border text-left transition-all active:scale-[0.98] ${active ? "border-amber-300 ring-1 ring-amber-300/60" : "border-white/10 hover:border-amber-400/50"}`}
-                                          style={{ minHeight: 92 }}
-                                        >
-                                          {theme.background ? (
-                                            <img src={theme.background} alt="" className="absolute inset-0 w-full h-full object-cover opacity-70" />
-                                          ) : (
-                                            <div className="absolute inset-0 bg-gradient-to-br from-[#1c0d38] via-[#0b1220] to-[#241705]" />
-                                          )}
-                                          <div className="absolute inset-0 bg-black/45" />
-                                          <div className="relative z-10 p-2.5 h-full flex flex-col justify-end">
-                                            <span className="text-lg drop-shadow">{theme.icon}</span>
-                                            <span className="text-[8.5px] font-black text-white uppercase tracking-wide mt-1">{theme.name}</span>
-                                            <span className="text-[6.5px] text-gray-300 font-mono mt-0.5">{theme.short}</span>
-                                          </div>
-                                          {active && (
-                                            <span className="absolute top-1.5 right-1.5 w-5 h-5 rounded-full bg-amber-400 text-black flex items-center justify-center shadow-lg">
-                                              <Check className="w-3 h-3" />
-                                            </span>
-                                          )}
-                                        </button>
-                                      );
-                                    })}
-                                  </div>
-
-                                  <div className="border-t border-white/10 pt-2">
-                                    <p className="text-[6.5px] text-gray-500 font-mono leading-relaxed">
-                                      View change sirf room ki visual design/background ko change karta hai. Seats, audio, games, gifts, comments, moderation aur baqi functionality exactly same rehti hai.
-                                    </p>
-                                  </div>
-                                </aside>
-                              </div>
-                            )}
-
                             {/* 🎙️ 12-SEAT LOUNGE AUDIOGRID AREA (3 COLUMNS x 4 ROWS = 12 HEXAGON SEATS) */}
-                            <div className={`px-3 py-1.5 space-y-1.5 bg-transparent shrink-0 ${isDefaultView ? "max-h-[46vh] overflow-y-auto" : "max-h-[40vh] overflow-y-auto"}`}>
-                              {(() => {
-                                const seatCount = Number(party.maxCapacity || party.seatCount || 12) === 25 ? 25 : 12;
-                                const fullSeats = Array.from({ length: seatCount }, (_, i) => {
-                                  const sId = i + 1;
-                                  const found = party.seats?.find((s: any) => s.id === sId);
-                                  return found || { id: sId, name: null, avatar: null, vipLevel: 0, isMuted: false };
-                                });
-                                const hostSeat = fullSeats[0];
-                                const guestSeats = fullSeats.slice(1);
-                                const isDefaultView = (party.partyViewTheme || "default") === "default";
-                                const clip = "polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%)";
+                            <div className="px-3 py-2 space-y-2 bg-transparent">
+                              <div className={`grid ${Number(party.maxCapacity || party.seatCount || 12) === 25 ? "grid-cols-5 gap-x-1.5 gap-y-2" : "grid-cols-3 gap-x-2.5 gap-y-3"} bg-black/50 backdrop-blur-md border border-amber-500/30 rounded-2xl p-2 shadow-[0_0_30px_rgba(0,0,0,0.9)] relative overflow-hidden`}>
+                                {/* Ambient decorative highlights inside grid */}
+                                <div className="absolute -top-16 -left-16 w-36 h-36 rounded-full bg-amber-500/15 blur-3xl pointer-events-none" />
+                                <div className="absolute -bottom-16 -right-16 w-36 h-36 rounded-full bg-yellow-500/15 blur-3xl pointer-events-none" />
 
-                                const renderSeat = (seat: any, customView = false) => {
-                                  const isOccupied = !!seat.name;
-                                  const isMe = seat.name === user.username;
-                                  const seatIsMuted = seat.isMuted === true;
-                                  const isHostSeat = seat.id === 1;
-                                  const isLarge = isHostSeat;
-                                  const sizeClass = customView
-                                    ? (isLarge ? (seatCount === 25 ? "w-16 h-16" : "w-[72px] h-[72px]") : (seatCount === 25 ? "w-10 h-10" : "w-12 h-12"))
-                                    : (seatCount === 25 ? "w-11 h-11" : "w-14 h-14");
-                                  const accent = partyTheme.accent;
-                                  const initial = String(seat.name || "?").trim().charAt(0).toUpperCase();
+                                {(() => {
+                                  const seatCount = Number(party.maxCapacity || party.seatCount || 12) === 25 ? 25 : 12;
+                                   const fullSeats = Array.from({ length: seatCount }, (_, i) => {
+                                    const sId = i + 1;
+                                    const found = party.seats?.find((s: any) => s.id === sId);
+                                    return found || { id: sId, name: null, avatar: null, vipLevel: 0, isMuted: false };
+                                  });
 
-                                  return (
-                                    <div key={seat.id} className={`flex flex-col items-center relative bg-transparent ${customView && isHostSeat ? "min-w-[82px]" : "min-w-0"}`}>
-                                      {customView && isHostSeat && (
-                                        <span className="absolute -top-4 left-1/2 -translate-x-1/2 text-[15px] drop-shadow-[0_0_9px_rgba(245,158,11,1)] z-30 animate-bounce pointer-events-none">👑</span>
-                                      )}
+                                  return fullSeats.map((seat) => {
+                                    const isOccupied = !!seat.name;
+                                    const isMe = seat.name === user.username;
+                                    const seatIsMuted = seat.isMuted;
+                                    const isHostSeat = seat.id === 1;
 
-                                      <div
-                                        onClick={() => handleSeatClick(seat.id, seat.name)}
-                                        className={`relative cursor-pointer transition-all duration-300 hover:scale-105 active:scale-95 flex items-center justify-center ${sizeClass}`}
+                                    return (
+                                      <div 
+                                        key={seat.id} 
+                                        className="flex flex-col items-center relative bg-transparent"
                                       >
-                                        <div
-                                          className={`absolute inset-0 transition-all ${customView ? "rounded-full" : ""} ${isHostSeat ? "opacity-90 blur-md animate-pulse" : isOccupied && !seatIsMuted ? "opacity-80 blur-md animate-pulse" : "opacity-25 blur-sm"}`}
-                                          style={{ background: customView ? `radial-gradient(circle, ${accent}, ${accent}55 55%, transparent 78%)` : `linear-gradient(135deg, ${accent}, ${accent}55, ${accent})`, clipPath: customView ? "circle(50%)" : clip }}
-                                        />
+                                        {/* Golden Crown overlay for Host Seat #1 */}
+                                        {isHostSeat && (
+                                          <span className="absolute -top-3.5 left-1/2 -translate-x-1/2 text-[14px] drop-shadow-[0_0_8px_rgba(245,158,11,1)] z-20 animate-bounce pointer-events-none">
+                                            👑
+                                          </span>
+                                        )}
 
-                                        <div
-                                          className={`w-full h-full p-[2.5px] ${customView ? "rounded-full" : ""}`}
-                                          style={{
-                                            clipPath: customView ? "circle(50%)" : clip,
-                                            background: `linear-gradient(180deg, ${accent}, ${accent}99 55%, ${accent}55)`,
-                                            filter: `drop-shadow(0 0 ${customView ? (isHostSeat ? 13 : 6) : (isHostSeat ? 12 : 5)}px ${accent}${customView ? (isHostSeat ? "99" : "55") : (isHostSeat ? "88" : "55")})`
-                                          }}
+                                        {/* 🔷 GOLDEN HEXAGON SEAT FRAME */}
+                                        <div 
+                                          onClick={() => handleSeatClick(seat.id, seat.name)}
+                                          className={`relative cursor-pointer transition-all duration-300 hover:scale-108 active:scale-95 flex items-center justify-center ${
+                                            Number(party.maxCapacity || party.seatCount || 12) === 25
+                                               ? (isHostSeat ? "w-13 h-13" : "w-11 h-11")
+                                               : (isHostSeat ? "w-16 h-16" : "w-13.5 h-13.5")
+                                          }`}
                                         >
-                                          <div className={`w-full h-full bg-[#080914]/95 flex items-center justify-center relative overflow-hidden ${customView ? "rounded-full" : ""}`} style={{ clipPath: customView ? "circle(50%)" : clip }}>
-                                            <div className="absolute inset-0 pointer-events-none" style={{ background: `linear-gradient(135deg, ${accent}22, transparent 48%, #00000066)` }} />
+                                          {/* Animated Golden Glow behind Hexagon */}
+                                          <div 
+                                            className={`absolute inset-0 bg-gradient-to-tr from-amber-400 via-yellow-300 to-amber-600 transition-all ${
+                                              isHostSeat
+                                                ? "opacity-80 blur-md animate-pulse"
+                                                : isOccupied && !seatIsMuted 
+                                                  ? "opacity-90 blur-md animate-pulse" 
+                                                  : "opacity-30 blur-xs hover:opacity-60"
+                                            }`} 
+                                            style={{ clipPath: "polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%)" }} 
+                                          />
 
-                                            {isOccupied ? (
-                                              <VipAnimatedFrame vipLevel={Number(seat.vipLevel || 0)} showLevelBadge={false} frameScale={isHostSeat ? 150 : 125} className="w-full h-full">
-                                                {seat.avatar ? (
-                                                  <img
-                                                    src={seat.avatar}
-                                                    className="w-full h-full object-cover cursor-pointer hover:scale-110 transition-transform"
+                                          {/* Outer Golden Hexagon Border Frame */}
+                                          <div 
+                                            className={`w-full h-full p-[2.5px] bg-gradient-to-b ${
+                                              isHostSeat 
+                                                ? "from-amber-200 via-yellow-400 to-amber-600 shadow-[0_0_20px_rgba(245,158,11,0.8)]"
+                                                : isOccupied 
+                                                  ? isMe 
+                                                    ? "from-yellow-300 via-amber-400 to-amber-600 shadow-[0_0_15px_rgba(245,158,11,0.6)]"
+                                                    : "from-amber-300/90 via-yellow-400/90 to-amber-600/90 shadow-[0_0_10px_rgba(245,158,11,0.4)]"
+                                                  : "from-amber-400/60 via-yellow-500/40 to-amber-700/60 hover:from-amber-300 hover:to-yellow-400"
+                                            }`}
+                                            style={{ clipPath: "polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%)" }}
+                                          >
+                                            {/* Inner Hexagon Window Container */}
+                                            <div 
+                                              className="w-full h-full bg-[#080914] flex items-center justify-center relative overflow-hidden"
+                                              style={{ clipPath: "polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%)" }}
+                                            >
+                                              {/* Metallic Highlight Gradient Overlay */}
+                                              <div className="absolute inset-0 bg-gradient-to-br from-amber-300/15 via-transparent to-purple-900/20 pointer-events-none" />
+
+                                              {isOccupied ? (
+                                                <VipAnimatedFrame vipLevel={Number(seat.vipLevel || 0)} showLevelBadge={false} frameScale={Number(party.maxCapacity || party.seatCount || 12) === 25 ? 120 : 145} className="w-full h-full">
+                                                  <img 
+                                                    src={seat.avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80"} 
+                                                    className="w-full h-full object-cover cursor-pointer hover:scale-110 transition-transform" 
                                                     alt={seat.name}
                                                     onClick={(e) => {
                                                       e.stopPropagation();
@@ -10904,83 +10759,79 @@ export default function App() {
                                                     }}
                                                     title={`Click to view @${seat.name}'s Profile`}
                                                   />
-                                                ) : (
-                                                  <div
-                                                    className="w-full h-full flex items-center justify-center font-black text-white uppercase"
-                                                    style={{ fontSize: isHostSeat ? 25 : 17, background: `radial-gradient(circle at 35% 30%, ${accent}aa, #080914 70%)` }}
-                                                    onClick={(e) => {
-                                                      e.stopPropagation();
-                                                      handleOpenPartyUserProfile(seat.name, "", seat.id, undefined, Number(seat.vipLevel || 0));
-                                                    }}
-                                                  >
-                                                    {initial}
-                                                  </div>
-                                                )}
-                                              </VipAnimatedFrame>
-                                            ) : (
-                                              <div className="flex flex-col items-center justify-center text-white/80">
-                                                <span className={isHostSeat ? "text-[18px]" : "text-[13px]"}>🎙️</span>
-                                                <span className="text-[7px] font-mono font-black" style={{ color: accent }}>#{seat.id}</span>
-                                              </div>
-                                            )}
+                                                </VipAnimatedFrame>
+                                              ) : (
+                                                <div className="flex flex-col items-center justify-center bg-transparent text-amber-400">
+                                                  <span className="text-[13px] bg-transparent font-black leading-none drop-shadow-[0_0_8px_rgba(245,158,11,0.9)] animate-pulse">🎙️</span>
+                                                  <span className="text-[8px] bg-transparent font-mono text-amber-300 font-black uppercase tracking-wider mt-0.5">#{seat.id}</span>
+                                                </div>
+                                              )}
+                                            </div>
                                           </div>
+
+                                          {isOccupied && Number(seat.vipLevel || 0) > 0 && (() => {
+                                            const vipFrame = VIP_FRAMES_LIST.find(f => f.vipLevel === Number(seat.vipLevel) && f.isActive);
+                                            if (!vipFrame || !vipFrame.asset) return null;
+                                            return (
+                                              <img
+                                                src={vipFrame.asset}
+                                                alt={`VIP ${seat.vipLevel} frame`}
+                                                className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[145%] h-[145%] object-contain pointer-events-none z-25"
+                                                draggable={false}
+                                              />
+                                            );
+                                          })()}
+
+                                          {/* HOST Badge */}
+                                          {isHostSeat && (
+                                            <span className="absolute -top-0.5 left-1/2 -translate-x-1/2 bg-gradient-to-r from-amber-300 via-yellow-400 to-amber-500 text-black text-[6px] font-black px-1.5 py-0.2 rounded-full uppercase tracking-wider font-mono border border-black shadow-md z-30 pointer-events-none">
+                                              HOST
+                                            </span>
+                                          )}
+
+                                          {/* Soundwave equalizer indicator overlay if talking & unmuted */}
+                                          {isOccupied && !seatIsMuted && (
+                                            <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 bg-gradient-to-r from-amber-300 via-yellow-400 to-amber-500 text-black rounded-full px-1.5 py-0.5 flex items-center space-x-0.5 text-[5px] font-black uppercase tracking-wider border border-black animate-pulse shadow-lg z-30 pointer-events-none">
+                                              <span className="w-0.5 h-1.5 bg-black rounded-full animate-bounce"></span>
+                                              <span className="w-0.5 h-2.5 bg-black rounded-full animate-bounce delay-75"></span>
+                                              <span className="w-0.5 h-1.5 bg-black rounded-full animate-bounce delay-150"></span>
+                                            </div>
+                                          )}
+
+                                          {/* Muted indicator overlay */}
+                                          {isOccupied && seatIsMuted && (
+                                            <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 bg-red-950 border border-red-500/60 rounded-full w-4 h-4 flex items-center justify-center shadow-md z-30 pointer-events-none">
+                                              <span className="text-[7px] text-red-400 leading-none">🎙️⃠</span>
+                                            </div>
+                                          )}
+
+                                          {/* Host seat-lock indicator */}
+                                          {seat.isLocked && (
+                                            <div className="absolute top-0.5 right-0.5 bg-black/85 border border-amber-400/70 rounded-full w-4 h-4 flex items-center justify-center shadow-lg z-30 pointer-events-none">
+                                              <Lock className="w-2.5 h-2.5 text-amber-300" />
+                                            </div>
+                                          )}
                                         </div>
 
-                                        {isOccupied && Number(seat.vipLevel || 0) > 0 && (() => {
-                                          const vipFrame = VIP_FRAMES_LIST.find(f => f.vipLevel === Number(seat.vipLevel) && f.isActive);
-                                          if (!vipFrame || !vipFrame.asset) return null;
-                                          return <img src={vipFrame.asset} alt={`VIP ${seat.vipLevel} frame`} className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[145%] h-[145%] object-contain pointer-events-none z-25" draggable={false} />;
-                                        })()}
-
-                                        {isHostSeat && (
-                                          <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 text-black text-[6px] font-black px-2 py-0.5 rounded-full uppercase tracking-wider font-mono border border-black shadow-md z-30 pointer-events-none" style={{ background: accent }}>HOST</span>
-                                        )}
-
-                                        {isOccupied && !seatIsMuted && (
-                                          <div className="absolute -bottom-1.5 left-1/2 -translate-x-1/2 text-black rounded-full px-1.5 py-0.5 flex items-center space-x-0.5 text-[5px] font-black border border-black animate-pulse shadow-lg z-30 pointer-events-none" style={{ background: accent }}>
-                                            <span className="w-0.5 h-1.5 bg-black rounded-full animate-bounce" />
-                                            <span className="w-0.5 h-2.5 bg-black rounded-full animate-bounce delay-75" />
-                                            <span className="w-0.5 h-1.5 bg-black rounded-full animate-bounce delay-150" />
-                                          </div>
-                                        )}
-                                        {isOccupied && seatIsMuted && (
-                                          <div className="absolute -bottom-1.5 left-1/2 -translate-x-1/2 bg-red-950 border border-red-500/60 rounded-full w-4 h-4 flex items-center justify-center shadow-md z-30 pointer-events-none"><span className="text-[7px] text-red-400 leading-none">🎙️⃠</span></div>
-                                        )}
-                                        {seat.isLocked && (
-                                          <div className="absolute top-0.5 right-0.5 bg-black/85 border rounded-full w-4 h-4 flex items-center justify-center shadow-lg z-30 pointer-events-none" style={{ borderColor: `${accent}aa` }}><Lock className="w-2.5 h-2.5" style={{ color: accent }} /></div>
-                                        )}
+                                        {/* Seated occupant name, seat label & per-seat gifting */}
+                                        <div className="flex flex-col items-center leading-none max-w-[72px] mt-1">
+                                          <p className="text-[8.5px] font-extrabold text-amber-100/95 truncate text-center font-sans tracking-tight">
+                                            {isOccupied ? (isMe ? "You" : seat.name) : `Seat ${seat.id}`}
+                                          </p>
+                                          <span className="text-[6.5px] text-amber-400/80 font-mono font-bold mt-0.5">#{seat.id}</span>
+                                          <span
+                                            className="inline-flex items-center gap-0.5 mt-0.5 px-1 py-0.5 rounded-full bg-amber-500/10 border border-amber-400/25 text-[6.5px] text-amber-200 font-black font-mono whitespace-nowrap"
+                                            title={`Total gift value received by Seat ${seat.id} (100% display value)`}
+                                          >
+                                            <span className="text-[8px] leading-none">🎁</span>
+                                            <span>{seat.giftCoins || "0"}</span>
+                                          </span>
+                                        </div>
                                       </div>
-
-                                      <div className={`flex flex-col items-center leading-none mt-1 ${isHostSeat ? "max-w-[96px]" : "max-w-[72px]"}`}>
-                                        <p className="text-[8.5px] font-extrabold text-white/95 truncate text-center font-sans tracking-tight">{isOccupied ? (isMe ? "You" : seat.name) : `Seat ${seat.id}`}</p>
-                                        <span className="text-[6.5px] font-mono font-bold mt-0.5" style={{ color: accent }}>#{seat.id}</span>
-                                        <span className="inline-flex items-center gap-0.5 mt-0.5 px-1 py-0.5 rounded-full text-[6.5px] font-black font-mono whitespace-nowrap" style={{ background: `${accent}18`, border: `1px solid ${accent}44`, color: accent }} title={`Party gift points for Seat ${seat.id} (2x room display)`}>
-                                          <span className="text-[8px] leading-none">🎁</span>
-                                          <span>{seat.giftDisplayCoins ?? formatPartySeatGiftDisplay(seat.giftCoins)}</span>
-                                        </span>
-                                      </div>
-                                    </div>
-                                  );
-                                };
-
-                                return isDefaultView ? (
-                                  <div className="bg-black/30 backdrop-blur-[2px] border rounded-2xl p-2 shadow-[0_0_30px_rgba(0,0,0,0.75)] relative overflow-hidden" style={{ borderColor: `${partyTheme.accent}55` }}>
-                                    <div className="absolute inset-x-0 top-0 h-28 pointer-events-none" style={{ background: `radial-gradient(circle at 50% 0%, ${partyTheme.accent}22, transparent 70%)` }} />
-                                    <div className={seatCount === 25 ? "grid grid-cols-5 gap-x-1 gap-y-2" : "grid grid-cols-3 gap-x-1.5 gap-y-2.5"}>
-                                      {fullSeats.map((seat) => renderSeat(seat, false))}
-                                    </div>
-                                  </div>
-                                ) : (
-                                  <div className="bg-black/30 backdrop-blur-[2px] border rounded-3xl p-2 shadow-[0_0_35px_rgba(0,0,0,0.75)] relative overflow-hidden" style={{ borderColor: `${partyTheme.accent}70`, ...(partyTheme.background ? { backgroundImage: `linear-gradient(rgba(0,0,0,0.10), rgba(0,0,0,0.18)), url(${partyTheme.background})`, backgroundSize: "cover", backgroundPosition: "center" } : {}) }}>
-                                    <div className="relative z-10 flex justify-center pb-2">
-                                      {renderSeat(hostSeat, true)}
-                                    </div>
-                                    <div className={seatCount === 25 ? "grid grid-cols-5 gap-x-1.5 gap-y-2" : "grid grid-cols-3 gap-x-2 gap-y-2.5"}>
-                                      {guestSeats.map((seat) => renderSeat(seat, true))}
-                                    </div>
-                                  </div>
-                                );
-                              })()}
+                                    );
+                                  });
+                                })()}
+                              </div>
 
                               {/* 🎙️ AGORA REAL-TIME VOICE PIPELINE CONTROLLER */}
                               <AgoraPartyAudio
@@ -11113,7 +10964,7 @@ export default function App() {
                           )}
 
                           {/* LOWER AREA: INFORMATION CARD + COMMENTS + BOTTOM ACTIONS BAR */}
-                          <div className="flex-1 min-h-0 flex flex-col bg-transparent select-none pb-1 overflow-hidden">
+                          <div className="flex-1 min-h-0 flex flex-col justify-between bg-transparent select-none pb-1">
                             {/* 🎪 CARNIVAL WELCOME & ROOM INFO CARD (AUTO-DISMISSES AFTER 6 SECONDS OR VIA DISMISS BUTTON) */}
                             {showCarnivalWelcomeCard && (
                               <div className="mx-3 my-1 p-2.5 rounded-2xl bg-gradient-to-r from-amber-950/60 via-black/80 to-purple-950/60 border border-amber-500/40 backdrop-blur-md shadow-2xl text-left relative overflow-hidden shrink-0 animate-fadeIn transition-all duration-300">
@@ -11141,7 +10992,7 @@ export default function App() {
                             )}
 
                             {/* 💬 INTERACTIVE COMMENTS TIMELINE CHAT STREAM */}
-                            <div className="flex-1 min-h-0 mx-3 my-1 bg-black/50 border border-amber-500/20 rounded-2xl flex flex-col justify-between overflow-hidden shadow-2xl backdrop-blur-md">
+                            <div className="flex-1 min-h-[120px] mx-3 my-1 bg-black/50 border border-amber-500/20 rounded-2xl flex flex-col justify-between overflow-hidden shadow-2xl backdrop-blur-md">
                               <div className="flex-1 overflow-y-auto space-y-1.5 scrollbar-thin text-left p-2.5">
                                 {party.comments?.map((comment: any) => {
                                   if (comment.isSystem) {
@@ -11666,7 +11517,7 @@ export default function App() {
                           )}
 
                           {/* ⌨️ INTERACTIVE BOTTOM CONTROL ACTIONS ROW */}
-                          <div className="w-full min-w-0 max-w-full px-3 pt-1 pb-[calc(0.25rem+env(safe-area-inset-bottom,0px))] flex items-center gap-1 sm:gap-1.5 shrink-0 bg-transparent overflow-x-auto overflow-y-hidden">
+                          <div className="w-full min-w-0 max-w-full px-3 pt-1 pb-[calc(0.25rem+env(safe-area-inset-bottom,0px))] flex items-center gap-1.5 sm:gap-2 shrink-0 bg-transparent overflow-hidden">
                             {/* Message Input Form */}
                             <form 
                               onSubmit={(e) => {
@@ -11680,6 +11531,16 @@ export default function App() {
                               }}
                               className="flex-1 min-w-0 max-w-full flex items-center gap-1 bg-black/50 border border-amber-500/30 rounded-full px-2.5 sm:px-3.5 py-1.5 focus-within:border-amber-400 shadow-inner overflow-hidden"
                             >
+                              {isHostOfRoom && (
+                                <button
+                                  type="button"
+                                  onClick={() => setShowPartyMusicLibrary(true)}
+                                  className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 cursor-pointer border transition-all active:scale-90 ${partyMusicPlaying ? "bg-amber-400 text-black border-amber-200 shadow-[0_0_12px_rgba(245,158,11,0.55)]" : "bg-black/60 text-amber-300 border-amber-500/40"}`}
+                                  title="Host Music Library"
+                                >
+                                  <Music className="w-3.5 h-3.5" />
+                                </button>
+                              )}
                               <input
                                 name="chatMessage"
                                 type="text"
@@ -11693,19 +11554,6 @@ export default function App() {
                                 Send
                               </button>
                             </form>
-
-                            {/* Host-only Party Music button */}
-                            {isHostOfRoom && (
-                              <button
-                                type="button"
-                                onClick={() => setShowPartyMusicLibrary(true)}
-                                className={`w-9 h-9 min-w-9 rounded-full flex items-center justify-center shrink-0 cursor-pointer border transition-all active:scale-90 ${partyMusicPlaying ? "bg-amber-400 text-black border-amber-200 shadow-[0_0_12px_rgba(245,158,11,0.55)]" : "bg-black/60 text-amber-300 border-amber-500/40"}`}
-                                title="Host Music Library"
-                                aria-label="Host Music Library"
-                              >
-                                <Music className="w-4 h-4" />
-                              </button>
-                            )}
 
                             {/* Mic Toggle Button */}
                             {mySeatedSeat || isHostOfRoom ? (
@@ -11967,7 +11815,7 @@ export default function App() {
                               </div>
                             </div>
                           )}
-                            </div>
+                        </div>
                       );
                     })()}
 
