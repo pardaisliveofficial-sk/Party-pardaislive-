@@ -10839,8 +10839,11 @@ export default function App() {
                             )}
 
                             {/* 🎙️ 12-SEAT LOUNGE AUDIOGRID AREA (3 COLUMNS x 4 ROWS = 12 HEXAGON SEATS) */}
-                            <div className={`px-3 py-1.5 space-y-1.5 bg-transparent shrink-0 ${isDefaultView ? "max-h-[46vh] overflow-y-auto" : "max-h-[40vh] overflow-y-auto"}`}>
-                              {(() => {
+                            {(() => {
+                              const isDefaultView = (party.partyViewTheme || "default") === "default";
+                              return (
+                                <div className={`px-3 py-1.5 space-y-1.5 bg-transparent shrink-0 ${isDefaultView ? "max-h-[46vh] overflow-y-auto" : "max-h-[40vh] overflow-y-auto"}`}>
+                                  {(() => {
                                 const seatCount = Number(party.maxCapacity || party.seatCount || 12) === 25 ? 25 : 12;
                                 const fullSeats = Array.from({ length: seatCount }, (_, i) => {
                                   const sId = i + 1;
@@ -10849,7 +10852,6 @@ export default function App() {
                                 });
                                 const hostSeat = fullSeats[0];
                                 const guestSeats = fullSeats.slice(1);
-                                const isDefaultView = (party.partyViewTheme || "default") === "default";
                                 const clip = "polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%)";
 
                                 const renderSeat = (seat: any, customView = false) => {
@@ -10979,7 +10981,10 @@ export default function App() {
                                     </div>
                                   </div>
                                 );
-                              })()}
+                                  })()}
+                                </div>
+                              );
+                            })()}
 
                               {/* 🎙️ AGORA REAL-TIME VOICE PIPELINE CONTROLLER */}
                               <AgoraPartyAudio
