@@ -3448,7 +3448,6 @@ export default function AdminApp() {
                   </div>
 
                   {/* No preset/mock artwork: only values stored in production configuration are shown. */}
-                  </div>
                 </div>
               </div>
             </div>
