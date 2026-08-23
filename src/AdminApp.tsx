@@ -129,7 +129,15 @@ export default function AdminApp() {
 
   // Loaded database state from central APIs
   const [db, setDb] = useState<any>(() => normalizeDb(null));
-  const [isLoading, setIsLoading] = useState<boolean>(true);
+  // Never block the Admin Portal on a database request when no admin session exists.
+  // The previous implementation initialized this to true, so a fresh APK/WebView
+  // stayed forever on the "Syncing Pardais Party Ecosystem Database..." screen
+  // because fetchDb() only runs after authentication.
+  const [isLoading, setIsLoading] = useState<boolean>(() => {
+    const token = getAuthToken();
+    const session = localStorage.getItem("pardais_admin_session");
+    return Boolean(token && session);
+  });
   const [dbLoadError, setDbLoadError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<string>("dashboard");
   const [successToast, setSuccessToast] = useState<string | null>(null);
@@ -772,7 +780,15 @@ export default function AdminApp() {
   };
 
   useEffect(() => {
-    if (isAuthenticated) void fetchDb();
+    if (!isAuthenticated) {
+      // Show the admin login immediately on a fresh device/WebView.
+      setIsLoading(false);
+      return;
+    }
+
+    // A valid saved admin session exists: load the production database.
+    setIsLoading(true);
+    void fetchDb();
   }, [isAuthenticated]);
 
   // Show auto-dismiss toast helper
@@ -803,8 +819,8 @@ export default function AdminApp() {
       setIsAuthenticated(true);
       setRole(`Super Admin (${email})`);
       setPassword("");
+      setIsLoading(true);
       triggerToast("Welcome back, Administrator. Access granted.");
-      setTimeout(() => { void fetchDb(); }, 0);
     } catch (err) {
       setAuthError("Unable to reach the Admin API. Check the admin domain/API URL.");
     }
