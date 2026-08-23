@@ -5517,7 +5517,7 @@ export default function App() {
       fetch("/api/v1/gifts")
         .then(res => res.ok ? res.json() : null)
         .then(data => {
-          if (Array.isArray(data) && data.length > 0) {
+          if (Array.isArray(data)) {
             setGiftsList(data);
             saveGiftsToStorage(data);
           }
@@ -5744,7 +5744,7 @@ export default function App() {
       fetch("/api/v1/gifts")
         .then(res => res.ok ? res.json() : null)
         .then(data => {
-          if (Array.isArray(data) && data.length > 0) {
+          if (Array.isArray(data)) {
             setGiftsList(data);
             saveGiftsToStorage(data);
           }

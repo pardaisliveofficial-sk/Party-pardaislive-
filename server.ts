@@ -159,7 +159,7 @@ function saveDatabase() {
     // Asynchronously push metadata updates to Firebase Firestore only if they have actually changed
     const currentUserStr = JSON.stringify(dbData.user || {});
     if (currentUserStr !== lastSavedUserStr) {
-      writeMetadata("user_profile", dbData.user);
+      await writeMetadata("user_profile", dbData.user);
       lastSavedUserStr = currentUserStr;
     }
 
@@ -2667,8 +2667,8 @@ app.get("/api/v1/db", (req, res) => {
 // Reset database to default
 app.post("/api/v1/db/reset", (req, res) => {
   fs.unlinkSync(DB_PATH);
-  loadDatabase();
-  res.json({ message: "Database reset to defaults successfully", data: dbData });
+  saveDatabase();
+  res.json({ message: "Admin user updated successfully", data: userObj });
 });
 
 // Global configurations get/update
@@ -6005,7 +6005,7 @@ app.post("/api/v1/agencies/:id/hosts", (req, res) => {
     }
 
     saveDatabase();
-    syncDocument("users", username, dbData.users[userIndex]);
+    await syncDocument("users", username, dbData.users[userIndex]);
     res.json({ message: "Host assigned successfully", user: dbData.users[userIndex] });
   } else {
     res.status(404).json({ error: "User not found" });
@@ -6028,7 +6028,7 @@ app.delete("/api/v1/agencies/:id/hosts/:username", (req, res) => {
     }
 
     saveDatabase();
-    syncDocument("users", username, dbData.users[userIndex]);
+    await syncDocument("users", username, dbData.users[userIndex]);
     res.json({ message: "Host removed from agency" });
   } else {
     res.status(404).json({ error: "Host not found in this agency" });
@@ -6431,7 +6431,7 @@ app.put("/api/v1/purchase-requests/:id", (req, res) => {
       const userIndex = dbData.users.findIndex((u: any) => u.username === username);
       if (userIndex !== -1) {
         dbData.users[userIndex].coins = (dbData.users[userIndex].coins || 0) + coinsAmount;
-        syncDocument("users", username, dbData.users[userIndex]);
+        await syncDocument("users", username, dbData.users[userIndex]);
       }
       
       if (username === dbData.user.username) {
@@ -7169,13 +7169,13 @@ app.get("/api/v1/admin-users", (req, res) => {
       userMap.set(key, {
         id: u.id || u.numericId || `usr_${key}`,
         username: u.username || key,
-        fullName: u.fullName || u.displayName || u.username,
-        email: u.email || `${u.username}@pardais.app`,
-        phone: u.phone || u.phoneNumber || "+92 300 0000000",
-        avatar: u.avatar || u.photoURL || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100",
-        level: u.level || u.userLevel || 1,
-        vipLevel: u.vipLevel || 0,
-        coins: typeof u.coins === "number" ? u.coins : 5000,
+        fullName: u.fullName || u.displayName || "",
+        email: u.email || "",
+        phone: u.phone || u.phoneNumber || "",
+        avatar: u.avatar || u.photoURL || "",
+        level: typeof u.level === "number" ? u.level : (typeof u.userLevel === "number" ? u.userLevel : 0),
+        vipLevel: typeof u.vipLevel === "number" ? u.vipLevel : 0,
+        coins: typeof u.coins === "number" ? u.coins : 0,
         partyEnabled: u.partyEnabled !== false,
         liveEnabled: u.liveEnabled !== false,
         reelsEnabled: u.reelsEnabled !== false,
@@ -7185,7 +7185,7 @@ app.get("/api/v1/admin-users", (req, res) => {
         isVerified: u.isVerified === true,
         kycStatus: u.kycStatus || "not_submitted",
         selectedFrameId: u.selectedFrameId || null,
-        deviceId: u.deviceId || "DEV-S24-PAK8821"
+        deviceId: u.deviceId || ""
       });
     }
   });
@@ -7222,7 +7222,7 @@ app.get("/api/v1/admin-users", (req, res) => {
   res.json(list);
 });
 
-app.put("/api/v1/admin-users/:username", (req, res) => {
+app.put("/api/v1/admin-users/:username", async (req, res) => {
   const { username } = req.params;
   const updates = req.body || {};
 
@@ -7238,7 +7238,7 @@ app.put("/api/v1/admin-users/:username", (req, res) => {
   if (userIndex !== -1) {
     dbData.users[userIndex] = { ...dbData.users[userIndex], ...updates };
     userObj = dbData.users[userIndex];
-    syncDocument("users", username, dbData.users[userIndex]);
+    await syncDocument("users", username, dbData.users[userIndex]);
   } else {
     userObj = { username, ...updates };
     dbData.users.push(userObj);
@@ -7248,7 +7248,7 @@ app.put("/api/v1/admin-users/:username", (req, res) => {
   const adminIndex = dbData.adminUsersList.findIndex((u: any) => (u.username || "").toLowerCase() === key);
   if (adminIndex !== -1) {
     dbData.adminUsersList[adminIndex] = { ...dbData.adminUsersList[adminIndex], ...updates };
-    syncDocument("adminUsersList", username, dbData.adminUsersList[adminIndex]);
+    await syncDocument("adminUsersList", username, dbData.adminUsersList[adminIndex]);
   } else {
     dbData.adminUsersList.push({ username, ...updates });
   }
@@ -7256,7 +7256,7 @@ app.put("/api/v1/admin-users/:username", (req, res) => {
   // 3. Update dbData.user if current user
   if (dbData.user && (dbData.user.username || "").toLowerCase() === key) {
     dbData.user = { ...dbData.user, ...updates };
-    writeMetadata("user_profile", dbData.user);
+    await writeMetadata("user_profile", dbData.user);
   }
 
   // 4. Record Audit Log

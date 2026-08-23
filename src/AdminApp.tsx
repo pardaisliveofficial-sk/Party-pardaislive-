@@ -50,13 +50,7 @@ import {
 import { VIP_ENTRY_EFFECTS, getVipEntryEffect } from "./vipEntryConfig";
 import { VipRideAnimationOverlay } from "./components/VipRideAnimationOverlay";
 import { VipSvgMount } from "./components/VipSvgMounts";
-import { 
-  AdminGiftTab, 
-  loadGiftsFromStorage, 
-  saveGiftsToStorage, 
-  loadCategoriesFromStorage, 
-  saveCategoriesToStorage 
-} from "./components/GiftSystem";
+import { AdminGiftTab } from "./components/GiftSystem";
 import { PRODUCTION_API_BASE, getAuthToken, setAuthToken, removeAuthToken } from "./lib/apiClient";
 
 export default function AdminApp() {
@@ -101,6 +95,7 @@ export default function AdminApp() {
     const raw = data || {};
     return {
       user: raw.user || {},
+      users: Array.isArray(raw.users) ? raw.users : [],
       adminUsersList: Array.isArray(raw.adminUsersList) ? raw.adminUsersList : [],
       hosts: Array.isArray(raw.hosts) ? raw.hosts : [],
       agencies: Array.isArray(raw.agencies) ? raw.agencies : [],
@@ -109,18 +104,19 @@ export default function AdminApp() {
       kycRequests: Array.isArray(raw.kycRequests) ? raw.kycRequests : [],
       transactions: Array.isArray(raw.transactions) ? raw.transactions : [],
       gifts: Array.isArray(raw.gifts) ? raw.gifts : [],
+      categories: Array.isArray(raw.categories) ? raw.categories : [],
       events: Array.isArray(raw.events) ? raw.events : [],
       reports: Array.isArray(raw.reports) ? raw.reports : [],
       configurations: {
-        whatsappChannelUrl: "https://whatsapp.com/channel/0029Vb8u720B4hdLYUaKX00I",
-        whatsappSupportNumber: "+923001234567",
-        whatsappSupportText: "Assalam-o-Alaikum Pardais Party Support, I need assistance with my account.",
+        whatsappChannelUrl: "",
+        whatsappSupportNumber: "",
+        whatsappSupportText: "",
         agencyContacts: [],
         moderators: [],
         banners: [],
         vipFrames: [],
         maintenanceMode: false,
-        appVersion: "1.0.0",
+        appVersion: "",
         forceUpdate: false,
         ...(raw.configurations || {})
       }
@@ -190,23 +186,9 @@ export default function AdminApp() {
   // Search & Filter local states
   const [userSearch, setUserSearch] = useState<string>("");
   const [giftSearch, setGiftSearch] = useState<string>("");
-  const [adminGiftsList, setAdminGiftsList] = useState<any[]>(() => loadGiftsFromStorage());
-  const [adminCategoriesList, setAdminCategoriesList] = useState<string[]>(() => loadCategoriesFromStorage());
+  const [adminGiftsList, setAdminGiftsList] = useState<any[]>([]);
+  const [adminCategoriesList, setAdminCategoriesList] = useState<string[]>([]);
 
-  useEffect(() => {
-    const syncAdminGifts = () => {
-      setAdminGiftsList(loadGiftsFromStorage());
-      setAdminCategoriesList(loadCategoriesFromStorage());
-    };
-    window.addEventListener("pardais_gifts_updated", syncAdminGifts);
-    window.addEventListener("pardais_categories_updated", syncAdminGifts);
-    window.addEventListener("storage", syncAdminGifts);
-    return () => {
-      window.removeEventListener("pardais_gifts_updated", syncAdminGifts);
-      window.removeEventListener("pardais_categories_updated", syncAdminGifts);
-      window.removeEventListener("storage", syncAdminGifts);
-    };
-  }, []);
   const [customAppIconInput, setCustomAppIconInput] = useState<string>("");
   const [deviceSearch, setDeviceSearch] = useState<string>("");
   const [manualDeviceIdInput, setManualDeviceIdInput] = useState<string>("");
@@ -223,13 +205,13 @@ export default function AdminApp() {
 
   // WhatsApp & Support Desk Configuration state
   const [waChannelUrl, setWaChannelUrl] = useState<string>(() => {
-    return localStorage.getItem("pardais_whatsapp_channel_url") || "https://whatsapp.com/channel/0029Vb8u720B4hdLYUaKX00I";
+    return localStorage.getItem("pardais_whatsapp_channel_url") || "";
   });
   const [waSupportNumber, setWaSupportNumber] = useState<string>(() => {
-    return localStorage.getItem("pardais_whatsapp_support_number") || "+923001234567";
+    return localStorage.getItem("pardais_whatsapp_support_number") || "";
   });
   const [waSupportText, setWaSupportText] = useState<string>(() => {
-    return localStorage.getItem("pardais_whatsapp_support_text") || "Assalam-o-Alaikum Pardais Party Support, I need assistance with my account.";
+    return localStorage.getItem("pardais_whatsapp_support_text") || "";
   });
 
   const [adminAgenciesList, setAdminAgenciesList] = useState<Array<{
@@ -238,28 +220,7 @@ export default function AdminApp() {
     contactPerson: string;
     whatsapp: string;
     rateDescription: string;
-  }>>(() => {
-    const saved = localStorage.getItem("pardais_admin_agencies_list");
-    if (saved) {
-      try { return JSON.parse(saved); } catch (e) {}
-    }
-    return [
-      {
-        id: "ag-1",
-        name: "Pardais Official Pakistan Reseller",
-        contactPerson: "Chaudhry Salman",
-        whatsapp: "+923015551234",
-        rateDescription: "1 PKR = 10 Coins • Instant JazzCash & EasyPaisa"
-      },
-      {
-        id: "ag-2",
-        name: "Gulf & UAE Coin Agency",
-        contactPerson: "Sheikh Rashid",
-        whatsapp: "+971501234567",
-        rateDescription: "1 AED = 120 Coins • Bank Transfer & Botim"
-      }
-    ];
-  });
+  }>>([]);
 
   const [newAgencyForm, setNewAgencyForm] = useState({
     name: "",
@@ -280,7 +241,7 @@ export default function AdminApp() {
       if (db.configurations.whatsappSupportText) {
         setWaSupportText(db.configurations.whatsappSupportText);
       }
-      if (Array.isArray(db.configurations.agencyContacts) && db.configurations.agencyContacts.length > 0) {
+      if (Array.isArray(db.configurations.agencyContacts)) {
         setAdminAgenciesList(db.configurations.agencyContacts);
       }
     }
@@ -537,7 +498,7 @@ export default function AdminApp() {
       name: newAgencyForm.name,
       contactPerson: newAgencyForm.contactPerson || newAgencyForm.name,
       whatsapp: newAgencyForm.whatsapp,
-      rateDescription: newAgencyForm.rateDescription || "1 PKR = 10 Coins • JazzCash / EasyPaisa"
+      rateDescription: newAgencyForm.rateDescription || ""
     };
     const updated = [...adminAgenciesList, item];
     setAdminAgenciesList(updated);
@@ -567,8 +528,8 @@ export default function AdminApp() {
 
   const [newBanner, setNewBanner] = useState<any>({
     title: "",
-    image: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=800&q=80",
-    link: "event-info",
+    image: "",
+    link: "",
     active: true
   });
 
@@ -582,11 +543,11 @@ export default function AdminApp() {
   const [newHost, setNewHost] = useState<any>({
     name: "",
     role: "",
-    avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&h=150&q=80",
-    category: "video",
+    avatar: "",
+    category: "",
     statusText: "",
     bio: "",
-    agencyId: "agency-alpha"
+    agencyId: ""
   });
 
   const [editingAgency, setEditingAgency] = useState<any>(null);
@@ -676,9 +637,13 @@ export default function AdminApp() {
 
       const data = await res.json();
       setDb(normalizeDb(data));
-      if (Array.isArray(data?.gifts) && data.gifts.length > 0) {
+      if (Array.isArray(data?.gifts)) {
         setAdminGiftsList(data.gifts);
-        saveGiftsToStorage(data.gifts);
+        localStorage.removeItem("pardais_party_gifts_v1");
+      }
+      if (Array.isArray(data?.categories)) {
+        setAdminCategoriesList(data.categories);
+        localStorage.removeItem("pardais_party_gift_categories_v1");
       }
 
       // Fetch Admin Users list
@@ -898,11 +863,11 @@ export default function AdminApp() {
       setNewHost({
         name: "",
         role: "",
-        avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&h=150&q=80",
-        category: "video",
+        avatar: "",
+        category: "",
         statusText: "",
         bio: "",
-        agencyId: "agency-alpha"
+        agencyId: ""
       });
       triggerToast("New stream host deployed successfully!");
     }
@@ -1066,8 +1031,8 @@ export default function AdminApp() {
     await syncWithServer("/api/v1/config", "POST", { banners: updatedBanners });
     setNewBanner({
       title: "",
-      image: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=800&q=80",
-      link: "event-info",
+      image: "",
+      link: "",
       active: true
     });
     triggerToast("New slider advertisement banner added!");
@@ -1369,8 +1334,8 @@ export default function AdminApp() {
                 <div className="bg-[#0f0f18] border border-white/5 rounded-2xl p-5 flex items-center justify-between">
                   <div className="space-y-1 bg-transparent">
                     <p className="text-[10px] text-gray-500 uppercase font-black font-mono">System Total Users</p>
-                    <p className="text-2xl font-black text-white">{db.adminUsersList.length + 1420}</p>
-                    <span className="text-[9px] text-green-400 font-bold font-mono">📈 +14% this month</span>
+                    <p className="text-2xl font-black text-white">{(db.users || []).length}</p>
+                    <span className="text-[9px] text-gray-500 font-bold font-mono">LIVE DATABASE COUNT</span>
                   </div>
                   <div className="w-12 h-12 rounded-2xl bg-cyan-500/10 text-cyan-400 flex items-center justify-center">
                     <Users className="w-6 h-6" />
@@ -1380,8 +1345,8 @@ export default function AdminApp() {
                 <div className="bg-[#0f0f18] border border-white/5 rounded-2xl p-5 flex items-center justify-between">
                   <div className="space-y-1 bg-transparent">
                     <p className="text-[10px] text-gray-500 uppercase font-black font-mono">Registered Talent Hosts</p>
-                    <p className="text-2xl font-black text-white">{db.hosts.length + 74}</p>
-                    <span className="text-[9px] text-cyan-400 font-bold font-mono">🎤 12 stream nodes live</span>
+                    <p className="text-2xl font-black text-white">{db.hosts.length}</p>
+                    <span className="text-[9px] text-cyan-400 font-bold font-mono">{db.hosts.filter((h:any) => h?.isLive || h?.status === "live").length} LIVE NOW</span>
                   </div>
                   <div className="w-12 h-12 rounded-2xl bg-pink-500/10 text-pink-400 flex items-center justify-center">
                     <Radio className="w-6 h-6 animate-pulse" />
@@ -1391,8 +1356,8 @@ export default function AdminApp() {
                 <div className="bg-[#0f0f18] border border-white/5 rounded-2xl p-5 flex items-center justify-between">
                   <div className="space-y-1 bg-transparent">
                     <p className="text-[10px] text-gray-500 uppercase font-black font-mono">Daily Gifting Volume</p>
-                    <p className="text-2xl font-black text-white">412,500 Coins</p>
-                    <span className="text-[9px] text-[#ff007f] font-bold font-mono">💎 Approx $2,750 USD</span>
+                    <p className="text-2xl font-black text-white">{(db.transactions || []).filter((t:any) => t?.type === "gift" || t?.type === "gift_send").reduce((sum:number,t:any) => sum + Number(t?.amount || t?.coins || 0), 0).toLocaleString()} Coins</p>
+                    <span className="text-[9px] text-[#ff007f] font-bold font-mono">REAL TRANSACTION DATA</span>
                   </div>
                   <div className="w-12 h-12 rounded-2xl bg-[#ff007f]/10 text-[#ff007f] flex items-center justify-center">
                     <Gift className="w-6 h-6" />
@@ -1402,8 +1367,8 @@ export default function AdminApp() {
                 <div className="bg-[#0f0f18] border border-white/5 rounded-2xl p-5 flex items-center justify-between">
                   <div className="space-y-1 bg-transparent">
                     <p className="text-[10px] text-gray-500 uppercase font-black font-mono">Net Platform Commission</p>
-                    <p className="text-2xl font-black text-emerald-400">$8,450 USD</p>
-                    <span className="text-[9px] text-emerald-400 font-bold font-mono">🏦 Payout status: Ready</span>
+                    <p className="text-2xl font-black text-emerald-400">{(db.transactions || []).reduce((sum:number,t:any) => sum + Number(t?.commission || 0), 0).toLocaleString()} USD</p>
+                    <span className="text-[9px] text-emerald-400 font-bold font-mono">REAL COMMISSION DATA</span>
                   </div>
                   <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 text-emerald-400 flex items-center justify-center">
                     <TrendingUp className="w-6 h-6" />
@@ -1413,35 +1378,21 @@ export default function AdminApp() {
 
               {/* Dynamic Grid: Statistics Visualization & Activity */}
               <div className="grid grid-cols-1 xl:grid-cols-12 gap-6">
-                {/* Simulated Revenue Plot Graph */}
+                {/* Real transaction activity — production data only */}
                 <div className="xl:col-span-8 bg-[#0f0f18] border border-white/5 rounded-2xl p-5 space-y-4">
                   <div className="flex justify-between items-center border-b border-white/5 pb-3">
-                    <h4 className="text-sm font-black text-white uppercase tracking-wider font-mono">Pakistan Weekly Financial Revenue Streams</h4>
-                    <span className="text-[10px] font-mono text-gray-400">EasyPaisa & JazzCash Integrated ledger</span>
+                    <h4 className="text-sm font-black text-white uppercase tracking-wider font-mono">Recent Financial Activity</h4>
+                    <span className="text-[10px] font-mono text-gray-400">Production database only</span>
                   </div>
-                  
-                  {/* Custom CSS Bar Graph */}
-                  <div className="h-48 flex items-end justify-between gap-3 pt-6 px-4 bg-transparent select-none">
-                    {[
-                      { label: "Mon", val: "30%", amt: "$1.4k" },
-                      { label: "Tue", val: "45%", amt: "$2.1k" },
-                      { label: "Wed", val: "75%", amt: "$3.5k" },
-                      { label: "Thu", val: "60%", amt: "$2.8k" },
-                      { label: "Fri", val: "95%", amt: "$4.5k" },
-                      { label: "Sat", val: "85%", amt: "$4.0k" },
-                      { label: "Sun", val: "100%", amt: "$5.2k" }
-                    ].map((bar, i) => (
-                      <div key={i} className="flex-1 flex flex-col items-center bg-transparent group">
-                        <span className="text-[8px] text-pink-400 font-bold opacity-0 group-hover:opacity-100 transition-opacity mb-1 font-mono">{bar.amt}</span>
-                        <div className="w-full bg-[#161622] rounded-t-lg h-32 relative overflow-hidden flex items-end">
-                          <div 
-                            className="w-full bg-gradient-to-t from-[#7b2cbf] to-[#ff007f] rounded-t-md transition-all duration-1000"
-                            style={{ height: bar.val }}
-                          ></div>
-                        </div>
-                        <span className="text-[10px] text-gray-500 mt-2 font-semibold font-mono">{bar.label}</span>
+                  <div className="space-y-2 max-h-48 overflow-y-auto">
+                    {(db.transactions || []).slice(0, 20).map((t:any) => (
+                      <div key={t.id || `${t.timestamp}-${t.amount}`} className="flex items-center justify-between border-b border-white/5 py-2 text-[10px] font-mono">
+                        <span className="text-gray-300">{t.type || "transaction"}</span>
+                        <span className="text-white">{Number(t.amount || t.coins || 0).toLocaleString()} {t.currency || "Coins"}</span>
+                        <span className="text-gray-500">{t.timestamp ? new Date(t.timestamp).toLocaleString() : "—"}</span>
                       </div>
                     ))}
+                    {(!db.transactions || db.transactions.length === 0) && <p className="text-center text-gray-500 py-8 text-xs">No transaction data available.</p>}
                   </div>
                 </div>
 
@@ -1453,7 +1404,7 @@ export default function AdminApp() {
                     {db.hosts.map((host: any) => (
                       <div key={host.id} className="flex items-center justify-between p-2.5 rounded-xl bg-black/35 border border-white/5">
                         <div className="flex items-center space-x-2.5 bg-transparent">
-                          <img src={host.avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100"} className="w-9 h-9 rounded-full object-cover border border-white/10" />
+                          <img src={host.avatar || ""} className="w-9 h-9 rounded-full object-cover border border-white/10" />
                           <div className="bg-transparent text-left">
                             <p className="text-[11px] font-black text-white leading-tight">{host.name}</p>
                             <span className="text-[7.5px] bg-[#ff007f]/10 text-[#ff007f] border border-[#ff007f]/20 px-1 py-0.2 rounded uppercase font-black tracking-widest font-mono mt-1 inline-block">
@@ -1610,7 +1561,7 @@ export default function AdminApp() {
                       return (
                         <div key={i} className="p-3 bg-black/40 border border-white/5 rounded-xl flex items-center justify-between">
                           <div className="flex items-center space-x-2.5">
-                            <img src={u.avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100"} className="w-8 h-8 rounded-full object-cover border border-white/10" />
+                            <img src={u.avatar || ""} className="w-8 h-8 rounded-full object-cover border border-white/10" />
                             <div>
                               <p className="text-xs font-bold text-white">@{u.username}</p>
                               <p className="text-[9px] text-gray-400 font-mono">{userEmail}</p>
@@ -1685,7 +1636,7 @@ export default function AdminApp() {
                         (u.id || "").toString().includes(userSearch)
                       )
                       .map((u, i) => {
-                        const devId = u.deviceId || (u.username === "Pardais_User" ? "DEV-S24-PAK8821" : `DEV-HW-${(i + 1) * 1042}`);
+                        const devId = u.deviceId || "";
                         const isDeviceBlocked = (db?.configurations?.blockedDevices || []).includes(devId);
 
                         return (
@@ -1693,13 +1644,13 @@ export default function AdminApp() {
                             {/* Profile & ID */}
                             <td className="py-3.5 pl-2">
                               <div className="flex items-center space-x-2.5">
-                                <img src={u.avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100"} className="w-9 h-9 rounded-full object-cover border border-white/10" />
+                                <img src={u.avatar || ""} className="w-9 h-9 rounded-full object-cover border border-white/10" />
                                 <div>
                                   <p className="font-bold text-white flex items-center space-x-1">
                                     <span>@{u.username}</span>
-                                    <span className="text-[8px] text-gray-500 font-mono font-normal">(ID: #{u.id || u.numericId || "10248"})</span>
+                                    <span className="text-[8px] text-gray-500 font-mono font-normal">(ID: #{u.id || u.numericId || "N/A"})</span>
                                   </p>
-                                  <span className="text-[9px] text-gray-300 font-mono block">{u.fullName || "User Account"}</span>
+                                  <span className="text-[9px] text-gray-300 font-mono block">{u.fullName || ""}</span>
                                   {u.isBanned && (
                                     <span className="text-[7px] bg-red-600/20 text-red-400 border border-red-500/30 px-1 py-0.2 rounded font-mono uppercase font-black">
                                       🚨 BANNED
@@ -1717,8 +1668,8 @@ export default function AdminApp() {
                             {/* Email & Phone */}
                             <td className="py-3.5">
                               <div className="space-y-0.5 text-[10px] font-mono">
-                                <span className="text-gray-300 block">{u.email || `${u.username}@pardais.app`}</span>
-                                <span className="text-gray-400 block">{u.phone || "+92 300 0000000"}</span>
+                                <span className="text-gray-300 block">{u.email || ""}</span>
+                                <span className="text-gray-400 block">{u.phone || u.phoneNumber || ""}</span>
                               </div>
                             </td>
 
@@ -1740,20 +1691,20 @@ export default function AdminApp() {
                             <td className="py-3.5 font-mono">
                               <div className="space-y-1">
                                 <div className="flex items-center space-x-1.5">
-                                  <span className="font-bold text-yellow-400">💎 {typeof u.coins === "number" ? u.coins : 5000}</span>
+                                  <span className="font-bold text-yellow-400">💎 {typeof u.coins === "number" ? u.coins : 0}</span>
                                   {u.coinsFrozen && (
                                     <span className="text-[8px] bg-cyan-500/20 text-cyan-300 px-1 py-0.2 rounded font-black">FROZEN ❄️</span>
                                   )}
                                 </div>
                                 <div className="flex space-x-1">
                                   <button
-                                    onClick={() => handleUpdateCoins(u.username, u.coins || 5000, 1000)}
+                                    onClick={() => handleUpdateCoins(u.username, u.coins || 0, 1000)}
                                     className="text-[8px] bg-yellow-500/15 hover:bg-yellow-500 hover:text-black px-1.5 py-0.2 rounded border border-yellow-500/30 font-black"
                                   >
                                     +1k
                                   </button>
                                   <button
-                                    onClick={() => handleUpdateCoins(u.username, u.coins || 5000, -1000)}
+                                    onClick={() => handleUpdateCoins(u.username, u.coins || 0, -1000)}
                                     className="text-[8px] bg-red-500/15 hover:bg-red-500 hover:text-white px-1.5 py-0.2 rounded border border-red-500/30 font-black"
                                   >
                                     -1k
@@ -1882,7 +1833,7 @@ export default function AdminApp() {
                 <div className="bg-[#0f0f18] border border-white/5 rounded-2xl p-5 flex items-center justify-between">
                   <div>
                     <p className="text-[10px] font-mono uppercase text-gray-500 font-bold">Active Live Streams</p>
-                    <p className="text-2xl font-black text-white font-mono mt-1">{db.hosts.length || 3}</p>
+                    <p className="text-2xl font-black text-white font-mono mt-1">{db.hosts.length}</p>
                   </div>
                   <div className="w-10 h-10 rounded-xl bg-pink-500/10 text-pink-400 flex items-center justify-center">
                     <Radio className="w-5 h-5 animate-pulse" />
@@ -1893,7 +1844,7 @@ export default function AdminApp() {
                   <div>
                     <p className="text-[10px] font-mono uppercase text-gray-500 font-bold">Total Live Audience</p>
                     <p className="text-2xl font-black text-cyan-400 font-mono mt-1">
-                      {db.hosts.reduce((acc: number, h: any) => acc + (h.viewers || 0), 1240)}
+                      {db.hosts.reduce((acc: number, h: any) => acc + Number(h.viewers || 0), 0)}
                     </p>
                   </div>
                   <div className="w-10 h-10 rounded-xl bg-cyan-500/10 text-cyan-400 flex items-center justify-center">
@@ -1945,7 +1896,7 @@ export default function AdminApp() {
                             {/* Broadcaster */}
                             <td className="py-4 pl-2 font-sans">
                               <div className="flex items-center space-x-2.5">
-                                <img src={host.avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100"} className="w-9 h-9 rounded-full object-cover border border-white/10" />
+                                <img src={host.avatar || ""} className="w-9 h-9 rounded-full object-cover border border-white/10" />
                                 <div>
                                   <p className="font-bold text-white leading-snug">{host.name}</p>
                                   <span className="text-[9px] text-pink-400 font-mono">@{host.username || host.name.toLowerCase().replace(/\s+/g, "_")}</span>
@@ -1957,28 +1908,28 @@ export default function AdminApp() {
                             <td className="py-4">
                               <div className="space-y-0.5">
                                 <span className="text-[10px] text-cyan-400 font-bold block">{streamId}</span>
-                                <span className="text-[9.5px] text-gray-300 font-sans block">{host.statusText || "Live Singing & Chat"}</span>
+                                <span className="text-[9.5px] text-gray-300 font-sans block">{host.statusText || ""}</span>
                               </div>
                             </td>
 
                             {/* Agency */}
                             <td className="py-4 font-sans text-gray-300">
-                              {host.agencyName || "Pardais Official Agency"}
+                              {host.agencyName || ""}
                             </td>
 
                             {/* Viewers */}
                             <td className="py-4 font-bold text-cyan-400">
-                              👥 {host.viewers || 420}
+                              👥 {host.viewers || 0}
                             </td>
 
                             {/* Duration */}
                             <td className="py-4 text-gray-400 text-[10px]">
-                              ⏱️ {host.duration || "1h 45m"}
+                              ⏱️ {host.duration || ""}
                             </td>
 
                             {/* Gifts */}
                             <td className="py-4 font-bold text-yellow-400">
-                              💎 {host.gifts || "12,500"}
+                              💎 {host.gifts || 0}
                             </td>
 
                             {/* Violations */}
@@ -2269,7 +2220,7 @@ export default function AdminApp() {
                                   </div>
                                 </td>
                                 <td className="py-4 font-sans text-cyan-400 font-bold">
-                                  {r.rate || "Standard Policy"}
+                                  {r.rate || "—"}
                                 </td>
                                 <td className="py-4">
                                   <span className={`px-2 py-0.5 rounded-[3px] text-[8px] font-black uppercase font-mono ${
@@ -2454,7 +2405,7 @@ export default function AdminApp() {
                       <div key={fam.id} className="p-4 rounded-xl bg-black/45 border border-white/5 flex flex-col justify-between space-y-3.5 text-left">
                         <div className="flex justify-between items-start bg-transparent">
                           <div className="flex items-center space-x-3 bg-transparent">
-                            <img src={fam.avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100"} className="w-12 h-12 rounded-xl object-cover border border-white/10" />
+                            <img src={fam.avatar || ""} className="w-12 h-12 rounded-xl object-cover border border-white/10" />
                             <div className="bg-transparent text-left">
                               <h5 className="text-xs font-black text-white leading-normal uppercase">{fam.name}</h5>
                               <p className="text-[10px] text-gray-400 font-bold">Leader: <strong className="text-pink-500">@{fam.leader}</strong></p>
@@ -2996,7 +2947,7 @@ export default function AdminApp() {
                         return (
                           <div key={i} className="p-2.5 bg-black/30 border border-white/5 rounded-xl flex items-center justify-between">
                             <div className="flex items-center space-x-2">
-                              <img src={u.avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100"} className="w-7 h-7 rounded-full object-cover border border-white/10" />
+                              <img src={u.avatar || ""} className="w-7 h-7 rounded-full object-cover border border-white/10" />
                               <span className="text-xs font-bold text-white truncate max-w-[100px]">@{u.username}</span>
                             </div>
                             {isMod ? (
@@ -3047,7 +2998,7 @@ export default function AdminApp() {
                       <div>
                         <p className="text-xs font-bold text-white truncate">{party.title || "Party Room"}</p>
                         <p className="text-[10px] text-gray-400 font-mono">Host: @{party.hostUsername}</p>
-                        <p className="text-[10px] text-pink-400 font-mono">Category: {party.category || "Audio Party"}</p>
+                        <p className="text-[10px] text-pink-400 font-mono">Category: {party.category || ""}</p>
                       </div>
                       <button
                         disabled={modActionLoading}
@@ -3069,10 +3020,10 @@ export default function AdminApp() {
                         <span className="text-[9px] text-gray-400 font-mono">{host.category || "video"}</span>
                       </div>
                       <div className="flex items-center space-x-2.5">
-                        <img src={host.avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100"} className="w-8 h-8 rounded-full object-cover border border-white/10" />
+                        <img src={host.avatar || ""} className="w-8 h-8 rounded-full object-cover border border-white/10" />
                         <div className="truncate">
                           <p className="text-xs font-bold text-white truncate">@{host.hostUsername || host.name}</p>
-                          <p className="text-[10px] text-gray-400 truncate">{host.statusText || "Live Broadcast"}</p>
+                          <p className="text-[10px] text-gray-400 truncate">{host.statusText || ""}</p>
                         </div>
                       </div>
                       <button
@@ -3181,7 +3132,7 @@ export default function AdminApp() {
                       <label className="text-[9px] uppercase font-mono font-bold text-gray-400">Target Device Hardware ID</label>
                       <input
                         type="text"
-                        placeholder="e.g. DEV-HW-HXHYKI or IP/Hardware ID"
+                        placeholder="Enter device hardware ID"
                         value={modTargetDevice}
                         onChange={(e) => setModTargetDevice(e.target.value)}
                         className="w-full bg-black/60 border border-white/10 rounded-xl px-3 py-2 text-xs text-white font-mono focus:border-pink-500 focus:outline-none"
@@ -3189,9 +3140,9 @@ export default function AdminApp() {
                     </div>
 
                     <div className="text-[10px] text-gray-400 font-mono bg-black/20 p-2.5 rounded-lg border border-white/5">
-                      Quick select from logged user device: <span className="text-white font-bold">{db?.user?.deviceId || "DEV-HW-HXHYKI"}</span>
+                      Quick select from logged user device: <span className="text-white font-bold">{db?.user?.deviceId || "—"}</span>
                       <button
-                        onClick={() => setModTargetDevice(db?.user?.deviceId || "DEV-HW-HXHYKI")}
+                        onClick={() => setModTargetDevice(db?.user?.deviceId || "")}
                         className="ml-2 text-[9px] bg-pink-500/20 text-pink-300 px-2 py-0.5 rounded border border-pink-500/30 font-bold uppercase cursor-pointer"
                       >
                         Use My Device ID
@@ -3352,7 +3303,7 @@ export default function AdminApp() {
                   {db.configurations.banners.map((banner: any) => (
                     <div key={banner.id} className="p-4 rounded-xl bg-black/40 border border-white/5 flex flex-col md:flex-row md:items-center justify-between gap-4">
                       <div className="flex items-center space-x-4 bg-transparent text-left">
-                        <img src={banner.image || "https://images.unsplash.com/photo-1511512578047-dfb367046420?w=300"} className="w-20 h-12 object-cover rounded-lg border border-white/10" />
+                        <img src={banner.image || ""} className="w-20 h-12 object-cover rounded-lg border border-white/10" />
                         <div className="bg-transparent">
                           <p className="text-xs font-black text-white">{banner.title}</p>
                           <span className="text-[8px] text-gray-500 font-mono font-bold block mt-1">ID: {banner.id}</span>
@@ -3496,94 +3447,7 @@ export default function AdminApp() {
                     </div>
                   </div>
 
-                  {/* Option 3: Presets Grid */}
-                  <div className="space-y-3 pt-4 border-t border-white/5">
-                    <label className="text-xs font-bold text-gray-300 uppercase tracking-wider block font-mono">
-                      3. Quick Presets (Click to instantly set)
-                    </label>
-
-                    <div className="grid grid-cols-3 sm:grid-cols-6 gap-3">
-                      {[
-                        { title: "Golden Crown", url: "https://images.unsplash.com/photo-1579783902614-a3fb3927b675?auto=format&fit=crop&w=300&q=80" },
-                        { title: "Cyber DJ", url: "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?auto=format&fit=crop&w=300&q=80" },
-                        { title: "Gold Crest", url: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=300&q=80" },
-                        { title: "Disco Party", url: "https://images.unsplash.com/photo-1514525253161-7a46d19cd819?auto=format&fit=crop&w=300&q=80" },
-                        { title: "Royal Lion", url: "https://images.unsplash.com/photo-1534447677768-be436bb09401?auto=format&fit=crop&w=300&q=80" },
-                        { title: "Diamond VIP", url: "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?auto=format&fit=crop&w=300&q=80" }
-                      ].map((preset) => (
-                        <button
-                          key={preset.title}
-                          type="button"
-                          onClick={() => {
-                            setCustomAppIconInput(preset.url);
-                            handleUpdateAppIcon(preset.url);
-                          }}
-                          className="bg-black/40 hover:bg-white/10 border border-white/10 hover:border-pink-500/60 p-2 rounded-xl flex flex-col items-center space-y-1.5 transition-all group cursor-pointer"
-                        >
-                          <div className="w-12 h-12 rounded-xl overflow-hidden border border-white/20 group-hover:scale-110 transition-transform">
-                            <img src={preset.url} alt={preset.title} className="w-full h-full object-cover" />
-                          </div>
-                          <span className="text-[9px] font-bold text-gray-300 group-hover:text-pink-300 truncate w-full text-center">
-                            {preset.title}
-                          </span>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Right Col: Live Icon Previews */}
-                <div className="bg-[#0f0f18] border border-white/10 p-6 rounded-2xl space-y-6 shadow-xl text-center">
-                  <h4 className="text-sm font-black text-white uppercase tracking-wider font-mono border-b border-white/10 pb-3">
-                    📱 Live Device Preview
-                  </h4>
-
-                  <div className="space-y-6 flex flex-col items-center justify-center pt-2">
-                    {/* Preview 1: App Launcher Icon */}
-                    <div className="space-y-2">
-                      <span className="text-[10px] text-gray-400 font-mono font-bold uppercase block">
-                        App Launcher Icon (128x128)
-                      </span>
-                      <div className="w-28 h-28 mx-auto rounded-[28%] bg-[#0d0d15] p-2 border-2 border-pink-500 shadow-[0_0_25px_rgba(255,0,127,0.5)] flex items-center justify-center overflow-hidden relative">
-                        {customAppIconInput || db?.configurations?.appIconUrl ? (
-                          <img
-                            src={customAppIconInput || db?.configurations?.appIconUrl}
-                            alt="App Icon Preview"
-                            className="w-full h-full object-cover rounded-[20%]"
-                          />
-                        ) : (
-                          <div className="w-full h-full bg-gradient-to-tr from-[#ff007f] to-purple-600 rounded-[20%] flex items-center justify-center font-black text-white text-xl">
-                            👑
-                          </div>
-                        )}
-                        <span className="absolute -top-1 -right-1 flex h-4 w-4">
-                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                          <span className="relative inline-flex rounded-full h-4 w-4 bg-emerald-500 border border-black"></span>
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* Preview 2: Header / Navigation Icon */}
-                    <div className="space-y-1.5 w-full">
-                      <span className="text-[10px] text-gray-400 font-mono font-bold uppercase block">
-                        App Navigation Header (40x40)
-                      </span>
-                      <div className="bg-black/60 border border-white/10 p-2.5 rounded-xl flex items-center justify-between max-w-xs mx-auto">
-                        <div className="flex items-center space-x-2">
-                          <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-[#00e676] to-emerald-500 p-0.5">
-                            <div className="w-full h-full bg-black rounded-[10px] overflow-hidden flex items-center justify-center">
-                              {customAppIconInput || db?.configurations?.appIconUrl ? (
-                                <img src={customAppIconInput || db?.configurations?.appIconUrl} alt="Nav Preview" className="w-full h-full object-cover" />
-                              ) : (
-                                <span className="text-xs">👑</span>
-                              )}
-                            </div>
-                          </div>
-                          <span className="text-xs font-black text-white">Pardais Live</span>
-                        </div>
-                        <span className="text-[8px] bg-emerald-500/20 text-emerald-400 font-mono font-bold px-2 py-0.5 rounded">LIVE</span>
-                      </div>
-                    </div>
+                  {/* No preset/mock artwork: only values stored in production configuration are shown. */}
                   </div>
                 </div>
               </div>
@@ -3601,9 +3465,9 @@ export default function AdminApp() {
             const deviceGroupMap: { [key: string]: { deviceId: string; deviceModel: string; deviceLocation: string; users: any[] } } = {};
 
             allUsersList.forEach((u: any, idx: number) => {
-              const dId = u.deviceId || (u.username === "Pardais_User" ? "DEV-S24-PAK8821" : `DEV-HW-${(idx + 1) * 1042}`);
-              const dModel = u.deviceModel || (idx % 2 === 0 ? "Samsung Galaxy S24 Ultra (Android 14)" : "iPhone 15 Pro Max (iOS 17.4)");
-              const dLoc = u.deviceLocation || "Lahore, Pakistan • Asia/Karachi [en-US]";
+              const dId = u.deviceId || "";
+              const dModel = u.deviceModel || "";
+              const dLoc = u.deviceLocation || "";
 
               if (!deviceGroupMap[dId]) {
                 deviceGroupMap[dId] = {
@@ -3826,7 +3690,7 @@ export default function AdminApp() {
                                     key={uIdx}
                                     className="bg-black/60 border border-white/10 px-3 py-1.5 rounded-xl flex items-center space-x-2"
                                   >
-                                    <img src={u.avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100"} className="w-5 h-5 rounded-full object-cover border border-white/20" />
+                                    <img src={u.avatar || ""} className="w-5 h-5 rounded-full object-cover border border-white/20" />
                                     <div className="text-[10px]">
                                       <span className="font-bold text-white">@{u.username}</span>
                                       <span className="text-gray-400 font-mono ml-1.5">(ID #{u.uniqueId || "N/A"})</span>
@@ -4019,7 +3883,7 @@ export default function AdminApp() {
                           <input
                             type="text"
                             required
-                            placeholder="e.g. Lahore Star Agency"
+                            placeholder="Agency / Seller name"
                             value={newAgencyForm.name}
                             onChange={(e) => setNewAgencyForm({ ...newAgencyForm, name: e.target.value })}
                             className="w-full bg-black/60 border border-white/10 rounded-lg p-2 text-xs text-white focus:outline-none focus:border-[#25D366]"
@@ -4378,7 +4242,7 @@ export default function AdminApp() {
                   <label className="text-[9px] uppercase font-mono font-bold text-gray-400">Coins Balance</label>
                   <input
                     type="number"
-                    value={editingUserModal.coins ?? 5000}
+                    value={editingUserModal.coins ?? 0}
                     onChange={(e) => setEditingUserModal({ ...editingUserModal, coins: Number(e.target.value) })}
                     className="w-full bg-black/40 border border-white/10 rounded-xl p-2 text-xs text-white focus:outline-none font-mono"
                   />
@@ -4505,8 +4369,8 @@ export default function AdminApp() {
             </div>
             <div className="space-y-3 font-mono text-xs max-h-[60vh] overflow-y-auto pr-1">
               <div className="p-3 bg-white/5 rounded-xl border border-white/5 space-y-1">
-                <p className="text-gray-400 text-[10px]">Account ID: <span className="text-white font-bold">{userHistoryModal.id || "10248"}</span></p>
-                <p className="text-gray-400 text-[10px]">Email: <span className="text-cyan-400">{userHistoryModal.email || `${userHistoryModal.username}@pardais.app`}</span></p>
+                <p className="text-gray-400 text-[10px]">Account ID: <span className="text-white font-bold">{userHistoryModal.id || "N/A"}</span></p>
+                <p className="text-gray-400 text-[10px]">Email: <span className="text-cyan-400">{userHistoryModal.email || "N/A"}</span></p>
                 <p className="text-gray-400 text-[10px]">Status: <span className="text-emerald-400 font-bold uppercase">{userHistoryModal.isBanned ? "Banned" : userHistoryModal.isSuspended ? "Suspended" : "Active"}</span></p>
               </div>
 
