@@ -5985,7 +5985,7 @@ app.get("/api/v1/agencies/:id/hosts", (req, res) => {
   res.json(agencyHosts);
 });
 
-app.post("/api/v1/agencies/:id/hosts", (req, res) => {
+app.post("/api/v1/agencies/:id/hosts", async (req, res) => {
   const { id } = req.params;
   const { username } = req.body;
   if (!username) return res.status(400).json({ error: "Username required" });
@@ -6012,7 +6012,7 @@ app.post("/api/v1/agencies/:id/hosts", (req, res) => {
   }
 });
 
-app.delete("/api/v1/agencies/:id/hosts/:username", (req, res) => {
+app.delete("/api/v1/agencies/:id/hosts/:username", async (req, res) => {
   const { id, username } = req.params;
   const userIndex = (dbData.users || []).findIndex((u: any) => u.username === username && u.agencyId === id);
 
@@ -6414,7 +6414,7 @@ app.post("/api/v1/purchase-requests", (req, res) => {
   res.status(201).json(newReq);
 });
 
-app.put("/api/v1/purchase-requests/:id", (req, res) => {
+app.put("/api/v1/purchase-requests/:id", async (req, res) => {
   const { id } = req.params;
   const { status } = req.body; // Approved or Rejected
   if (!dbData.purchaseRequests) dbData.purchaseRequests = [];
