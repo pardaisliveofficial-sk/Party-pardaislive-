@@ -1,4 +1,5 @@
 import { dbDataCache } from "./db/firebaseDb";
+import { getInitialAvatarData } from "./lib/avatarFallback";
 import { getHostLevelFromName, getVipLevelFromUserLevel } from "./levelUtils";
 
 export interface RankItem {
@@ -41,7 +42,7 @@ export function getRankingData(
     return {
       rank: 0,
       name: u.fullName || u.username || "User",
-      avatar: u.avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80",
+      avatar: u.avatar || getInitialAvatarData(u.fullName || u.username),
       score,
       level: calculatedLevel,
       vipLevel: calculatedVip,

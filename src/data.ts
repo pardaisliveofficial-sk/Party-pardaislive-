@@ -3,8 +3,8 @@ import { Gift, GiftType, HostProfile, UserProfile, Family, Agency } from "./type
 export const DEFAULT_USER: UserProfile = {
   username: "Pardais_User",
   uniqueId: "pardes_1001",
-  avatar: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80",
-  coverPhoto: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=800&q=80",
+  avatar: "",
+  coverPhoto: "",
   bio: "Welcome to Pardes Party! 🌟",
   gender: "Male",
   country: "Pakistan",

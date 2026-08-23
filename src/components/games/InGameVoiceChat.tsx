@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { getInitialAvatarData } from "../../lib/avatarFallback";
 import { Mic, MicOff, Volume2, VolumeX, MessageSquare, Smile, Send } from "lucide-react";
 import { UserProfile } from "../../types";
 
@@ -67,7 +68,7 @@ export const InGameVoiceChat: React.FC<InGameVoiceChatProps> = ({
                 title={`${p.username} (${p.isTalking ? "Talking" : "Connected"})`}
               >
                 <img
-                  src={p.avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=50&h=50&q=80"}
+                  src={p.avatar || getInitialAvatarData(p.username)}
                   alt={p.username}
                   className="w-full h-full object-cover"
                 />

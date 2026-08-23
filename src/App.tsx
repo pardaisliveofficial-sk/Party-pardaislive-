@@ -104,6 +104,7 @@ import {
   LogIn
 } from "lucide-react";
 import { Gift, GiftType, ChatMessage, HostProfile, UserProfile, Family, Agency, Transaction, LiveAnnouncement, KycRequest, UserStory } from "./types";
+import { getInitialAvatarData } from "./lib/avatarFallback";
 import { DEFAULT_USER, MOCK_GIFTS, MOCK_HOSTS, MOCK_FAMILIES, MOCK_AGENCIES, DAILY_MISSIONS, STATIC_COMMENTS_POOL } from "./data";
 import { isAuthorizedAdmin, syncNominatedAdminEmails } from "./adminConfig";
 import { getRankingData } from "./rankingData";
@@ -875,19 +876,23 @@ export default function App() {
   }, []);
 
   // Helper to save user profile changes locally and sync to backend server & Firestore
-  const saveAndSyncUserProfile = (updatedUser: UserProfile) => {
+  const saveAndSyncUserProfile = async (updatedUser: UserProfile) => {
+    try {
+      const res = await authenticatedFetch("/api/v1/user", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(updatedUser)
+      });
+      const payload: any = await res.json().catch(() => ({}));
+      if (res.ok && payload?.user) updatedUser = { ...updatedUser, ...payload.user };
+    } catch (err) {
+      console.warn("[PARDAIS PROFILE SYNC] Backend sync notice:", err);
+    }
     setUser(updatedUser);
     localStorage.setItem("pardais_user_profile", JSON.stringify(updatedUser));
-    if (updatedUser.avatar) {
-      localStorage.setItem("pardais_avatar_user_set", "true");
-    }
+    localStorage.setItem("pardais_avatar_user_set", updatedUser.avatar ? "true" : "false");
     lastSavedUserRef.current = JSON.stringify(updatedUser);
-
-    authenticatedFetch("/api/v1/user", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(updatedUser)
-    }).catch(err => console.warn("[PARDAIS PROFILE SYNC] Backend sync notice:", err));
+    return updatedUser;
   };
 
   // Automatically persist user profile state locally whenever updated
@@ -953,12 +958,12 @@ export default function App() {
             // A user-selected DP is sticky. If a freshly cached backend response is
             // temporarily older than the locally saved profile, never let the old
             // avatar overwrite the newer user-selected photo during refresh.
-            const backendAvatarTime = Date.parse(String(data.user.avatarUpdatedAt || data.user.profileUpdatedAt || "")) || 0;
-            const localAvatarTime = Date.parse(String(localProfile?.avatarUpdatedAt || localProfile?.profileUpdatedAt || "")) || 0;
-            const localCustomAvatar = Boolean(localProfile?.avatar && localProfile.avatarSource === "user-upload");
-            const useLocalAvatar = Boolean(localProfile?.avatar && localCustomAvatar && localAvatarTime > backendAvatarTime);
-            const preservedAvatar = useLocalAvatar ? localProfile!.avatar : (data.user.avatar || localProfile?.avatar || "");
-            const preservedAvatarUpdatedAt = useLocalAvatar ? localProfile!.avatarUpdatedAt : (data.user.avatarUpdatedAt || localProfile?.avatarUpdatedAt);
+            const backendHasAvatar = Boolean(String(data.user.avatar || data.user.avatarUrl || "").trim());
+            const preservedAvatar = backendHasAvatar ? String(data.user.avatar || data.user.avatarUrl) : String(localProfile?.avatar || localProfile?.avatarUrl || "");
+            const preservedAvatarUpdatedAt = data.user.avatarUpdatedAt || localProfile?.avatarUpdatedAt;
+            const backendHasCover = Boolean(String(data.user.coverPhoto || "").trim());
+            const preservedCoverPhoto = backendHasCover ? String(data.user.coverPhoto) : String(localProfile?.coverPhoto || "");
+            const preservedCoverUpdatedAt = data.user.coverPhotoUpdatedAt || localProfile?.coverPhotoUpdatedAt;
             const mergedUser: UserProfile = {
               ...data.user,
               // Backend is authoritative for account identity. Never reuse a previous
@@ -967,9 +972,12 @@ export default function App() {
               username: data.user.username || "",
               uniqueId: data.user.uniqueId || "",
               avatar: preservedAvatar,
-              avatarUrl: useLocalAvatar ? localProfile!.avatarUrl || preservedAvatar : (data.user.avatarUrl || preservedAvatar),
+              avatarUrl: data.user.avatarUrl || preservedAvatar,
               avatarUpdatedAt: preservedAvatarUpdatedAt,
-              avatarSource: (useLocalAvatar ? localProfile!.avatarSource : data.user.avatarSource) || (preservedAvatar ? "user-upload" : "default"),
+              avatarSource: data.user.avatarSource || (preservedAvatar ? "user-upload" : "default"),
+              coverPhoto: preservedCoverPhoto,
+              coverPhotoUpdatedAt: preservedCoverUpdatedAt,
+              coverPhotoSource: data.user.coverPhotoSource || (preservedCoverPhoto ? "user-upload" : "default"),
               profileUpdatedAt: data.user.profileUpdatedAt || localProfile?.profileUpdatedAt,
               bio: localProfile?.bio || data.user.bio,
               gender: localProfile?.gender || data.user.gender,
@@ -1000,8 +1008,10 @@ export default function App() {
   // Edit Profile States
   const [isEditingProfile, setIsEditingProfile] = useState<boolean>(false);
   const [editFullName, setEditFullName] = useState<string>(DEFAULT_USER.fullName || "");
-  const [editAvatar, setEditAvatar] = useState<string>(DEFAULT_USER.avatar);
+  const [editAvatar, setEditAvatar] = useState<string>("");
   const [editAvatarFile, setEditAvatarFile] = useState<File | null>(null);
+  const [editCoverFile, setEditCoverFile] = useState<File | null>(null);
+  const [editCoverPreview, setEditCoverPreview] = useState<string>("");
   const [isSavingProfile, setIsSavingProfile] = useState(false);
   const [editDob, setEditDob] = useState<string>(DEFAULT_USER.dob || "");
   const [editGender, setEditGender] = useState<string>(DEFAULT_USER.gender);
@@ -1264,7 +1274,7 @@ export default function App() {
         return {
           id: doc.id,
           creator: data.creator || "Anonymous Creator",
-          avatar: data.avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80",
+          avatar: data.avatar || getInitialAvatarData(data.creator),
           caption: data.caption || "",
           song: data.song || "Original Sound",
           videoBg: data.videoBg || "bg-gradient-to-tr from-[#ff007f] via-[#12121a] to-[#7b2cbf]",
@@ -2574,7 +2584,7 @@ export default function App() {
     id: "offline-host",
     name: "No Host Active",
     role: "Offline",
-    avatar: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80",
+    avatar: "",
     viewers: 0,
     likes: 0,
     category: "video",
@@ -2607,14 +2617,14 @@ export default function App() {
 
   // Audio Room State (10 Seat Grid)
   const [audioSeats, setAudioSeats] = useState<Array<{ id: number; name: string | null; avatar: string | null; isMuted: boolean; isLocked: boolean }>>([
-    { id: 1, name: "Host Mehak 🎙️", avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&h=150&q=80", isMuted: false, isLocked: false },
-    { id: 2, name: "VIP Prince_Pardais", avatar: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80", isMuted: false, isLocked: false },
+    { id: 1, name: "Host Mehak 🎙️", avatar: "", isMuted: false, isLocked: false },
+    { id: 2, name: "VIP Prince_Pardais", avatar: "", isMuted: false, isLocked: false },
     { id: 3, name: null, avatar: null, isMuted: false, isLocked: false },
-    { id: 4, name: "Ali_99", avatar: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=100&h=100&q=80", isMuted: true, isLocked: false },
+    { id: 4, name: "Ali_99", avatar: "", isMuted: true, isLocked: false },
     { id: 5, name: null, avatar: null, isMuted: false, isLocked: true },
-    { id: 6, name: "Sana_Khan", avatar: "https://images.unsplash.com/photo-1517841905240-472988babdf9?auto=format&fit=crop&w=100&h=100&q=80", isMuted: false, isLocked: false },
+    { id: 6, name: "Sana_Khan", avatar: "", isMuted: false, isLocked: false },
     { id: 7, name: null, avatar: null, isMuted: false, isLocked: false },
-    { id: 8, name: "DJ_Sam", avatar: "https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?auto=format&fit=crop&w=100&h=100&q=80", isMuted: false, isLocked: false },
+    { id: 8, name: "DJ_Sam", avatar: "", isMuted: false, isLocked: false },
     { id: 9, name: null, avatar: null, isMuted: false, isLocked: false },
     { id: 10, name: null, avatar: null, isMuted: false, isLocked: true }
   ]);
@@ -3582,7 +3592,7 @@ export default function App() {
       list.push({
         rank: 1,
         name: pairName,
-        avatar1: user.avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80",
+        avatar1: user.avatar || getInitialAvatarData(user.fullName || user.username),
         avatar2: host1.avatar,
         cp: baseCp,
         lvl: Math.floor(baseCp / 8000),
@@ -3613,7 +3623,7 @@ export default function App() {
       list.push({
         rank: 2,
         name: pairName,
-        avatar1: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=100&h=100&q=80",
+        avatar1: "",
         avatar2: hA.avatar,
         cp: baseCp,
         lvl: Math.floor(baseCp / 8000),
@@ -3683,7 +3693,7 @@ export default function App() {
         targetUsername: targetUsername || user?.username || "all",
         actionType,
         actionId,
-        userAvatar: userAvatar || user?.avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80",
+        userAvatar: userAvatar || user?.avatar || getInitialAvatarData(user?.fullName || user?.username),
         timestamp: new Date().toISOString()
       };
       const response = await fetch("/api/v1/notifications", {
@@ -3913,7 +3923,7 @@ export default function App() {
       giftName: giftName,
       giftIcon: giftIcon,
       count: count,
-      avatar: giftEvt.senderAvatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=100&q=80"
+      avatar: giftEvt.senderAvatar || getInitialAvatarData(giftEvt.senderUsername)
     };
     setUserLiveGiftToasts(prev => [newToast, ...prev.slice(0, 1)]);
     setTimeout(() => {
@@ -4220,7 +4230,7 @@ export default function App() {
   }, []);
 
   const liveBroadcasterName = clientView === "user-live" ? user.username : (activeHost?.name || "Broadcaster");
-  const liveBroadcasterAvatar = clientView === "user-live" ? (user.avatar || DEFAULT_USER.avatar) : (activeHost?.avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80");
+  const liveBroadcasterAvatar = clientView === "user-live" ? (user.avatar || getInitialAvatarData(user.fullName || user.username)) : (activeHost?.avatar || getInitialAvatarData(activeHost?.name || activeHost?.username));
   const liveBroadcasterLevel = clientView === "user-live" ? (user.userLevel || 1) : (activeHost?.hostLevel || activeHost?.level || 1);
   const [userLiveChatVisible, setUserLiveChatVisible] = useState<boolean>(true);
 
@@ -4363,7 +4373,7 @@ export default function App() {
                 setUserLiveCoHost({
                   username: otherHost.username,
                   userId: otherHost.userId || otherHost.username,
-                  avatar: otherHost.avatar || "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=100&q=80",
+                  avatar: otherHost.avatar || getInitialAvatarData(otherHost.name || otherHost.username),
                   level: Number(otherHost.level) || 1,
                   vipLevel: Number(otherHost.vipLevel) || 0,
                   fans: otherHost.fans || "10K fans"
@@ -4404,7 +4414,7 @@ export default function App() {
               setUserLiveCoHost({
                 username: otherHost.username,
                 userId: otherHost.userId || otherHost.username,
-                avatar: otherHost.avatar || "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=100&q=80",
+                avatar: otherHost.avatar || getInitialAvatarData(otherHost.name || otherHost.username),
                 level: Number(otherHost.level) || 1,
                 vipLevel: Number(otherHost.vipLevel) || 0,
                 fans: otherHost.fans || "10K fans"
@@ -4821,7 +4831,7 @@ export default function App() {
 
       const reelData = {
         creator: user.fullName || user.username || "Pardais Creator",
-        avatar: user.avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80",
+        avatar: user.avatar || getInitialAvatarData(user.fullName || user.username),
         caption: newReelCaption.trim() || "New dynamic stream highlight! 🔥 #viral #pardaisparty",
         song: newReelSong.trim() || "Original Audio - " + (user.fullName || user.username || "Pardais User"),
         videoBg: newReelVideoBg,
@@ -5473,24 +5483,26 @@ export default function App() {
                 prev && ((prev.uid && data.uid && prev.uid === data.uid) ||
                 (prev.email && data.email && String(prev.email).toLowerCase() === String(data.email).toLowerCase()))
               );
-              const backendAvatarTime = Date.parse(String(data.avatarUpdatedAt || data.profileUpdatedAt || "")) || 0;
-              const localAvatarTime = Date.parse(String(prev?.avatarUpdatedAt || prev?.profileUpdatedAt || "")) || 0;
-              const keepNewerLocalAvatar = Boolean(
-                sameAccount && prev?.avatar && prev.avatarSource === "user-upload" && localAvatarTime > backendAvatarTime
-              );
+              const backendAvatar = String(data.avatar || data.avatarUrl || "").trim();
+              const backendCover = String(data.coverPhoto || "").trim();
               return {
                 ...prev,
                 ...data,
-                avatar: keepNewerLocalAvatar ? prev!.avatar : (data.avatar || prev?.avatar || ""),
-                avatarUrl: keepNewerLocalAvatar ? (prev!.avatarUrl || prev!.avatar) : (data.avatarUrl || data.avatar || prev?.avatar || ""),
-                avatarUpdatedAt: keepNewerLocalAvatar ? prev!.avatarUpdatedAt : data.avatarUpdatedAt,
-                avatarSource: keepNewerLocalAvatar ? prev!.avatarSource : (data.avatarSource || (data.avatar ? "user-upload" : "default")),
+                avatar: backendAvatar || (sameAccount ? (prev?.avatar || "") : ""),
+                avatarUrl: data.avatarUrl || backendAvatar || (sameAccount ? (prev?.avatarUrl || prev?.avatar || "") : ""),
+                avatarUpdatedAt: data.avatarUpdatedAt || (sameAccount ? prev?.avatarUpdatedAt : undefined),
+                avatarSource: data.avatarSource || (backendAvatar ? "user-upload" : "default"),
+                coverPhoto: backendCover || (sameAccount ? (prev?.coverPhoto || "") : ""),
+                coverPhotoUpdatedAt: data.coverPhotoUpdatedAt || (sameAccount ? prev?.coverPhotoUpdatedAt : undefined),
+                coverPhotoSource: data.coverPhotoSource || (backendCover ? "user-upload" : "default"),
               } as UserProfile;
             });
             lastSavedUserRef.current = JSON.stringify(data);
             // Sync default fields for editing
             setEditFullName(data.fullName || "");
             setEditAvatar(data.avatar || "");
+            setEditCoverFile(null);
+            setEditCoverPreview("");
             setEditDob(data.dob || "");
             setEditGender(data.gender || "Male");
             setEditPhoneNumber(data.phoneNumber || "");
@@ -6322,15 +6334,14 @@ export default function App() {
   const handleCoverPhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    setEditCoverFile(file.size > 0 ? file : null);
     const reader = new FileReader();
     reader.onloadend = () => {
       const base64String = reader.result as string;
-      setUser(prev => ({
-        ...prev,
-        coverPhoto: base64String
-      }));
+      if (base64String) setEditCoverPreview(base64String);
     };
     reader.readAsDataURL(file);
+    e.currentTarget.value = "";
   };
 
   // Save profile edits
@@ -6428,6 +6439,25 @@ export default function App() {
         }
       }
 
+      // Production cover photo upload: store a durable R2/API URL before committing profile metadata.
+      let persistentCoverPhoto = (user.coverPhoto && !user.coverPhoto.startsWith("data:image/")) ? user.coverPhoto : "";
+      if (editCoverFile) {
+        const formData = new FormData();
+        formData.append("cover", editCoverFile, editCoverFile.name || `cover-${Date.now()}.jpg`);
+        const controller = new AbortController();
+        const timeoutId = window.setTimeout(() => controller.abort(), 45000);
+        try {
+          const coverRes = await authenticatedFetch("/api/v1/user/cover", { method: "POST", body: formData, signal: controller.signal });
+          const coverData: any = await coverRes.json().catch(() => ({}));
+          if (coverRes.ok && coverData?.url) persistentCoverPhoto = coverData.url;
+          else console.warn("[PARDAIS PROFILE] Cover upload notice:", coverData?.error || "Upload failed");
+        } catch (coverErr) {
+          console.warn("[PARDAIS PROFILE] Cover upload network notice:", coverErr);
+        } finally {
+          window.clearTimeout(timeoutId);
+        }
+      }
+
       const updatedUser: UserProfile = {
         ...user,
         // Username is the permanent account identity and cannot be changed here.
@@ -6436,6 +6466,9 @@ export default function App() {
         avatarUrl: persistentAvatar,
         avatarUpdatedAt: persistentAvatar ? (user.avatarUpdatedAt || new Date().toISOString()) : undefined,
         avatarSource: persistentAvatar ? "user-upload" : "default",
+        coverPhoto: persistentCoverPhoto,
+        coverPhotoUpdatedAt: persistentCoverPhoto ? (user.coverPhotoUpdatedAt || new Date().toISOString()) : undefined,
+        coverPhotoSource: persistentCoverPhoto ? "user-upload" : "default",
         profileUpdatedAt: new Date().toISOString(),
         gender: editGender,
         fullName: editFullName.trim(),
@@ -6451,9 +6484,12 @@ export default function App() {
       localStorage.removeItem("pardais_custom_avatar");
       localStorage.setItem("pardais_avatar_user_set", persistentAvatar ? "true" : "false");
 
-      saveAndSyncUserProfile(updatedUser);
+      const syncedProfile = await saveAndSyncUserProfile(updatedUser);
+      saveAccountToDevice(syncedProfile, localStorage.getItem("pardais_auth_token") || undefined);
       setEditAvatar(persistentAvatar);
       setEditAvatarFile(null);
+      setEditCoverFile(null);
+      setEditCoverPreview("");
       setIsEditingProfile(false);
     } catch (err: any) {
       console.warn("[PARDAIS PROFILE] Profile save notice:", err?.message || err);
@@ -6464,7 +6500,7 @@ export default function App() {
         dob: editDob,
         phoneNumber: editPhoneNumber,
       };
-      saveAndSyncUserProfile(fallbackUser);
+      await saveAndSyncUserProfile(fallbackUser);
       setIsEditingProfile(false);
     } finally {
       setIsSavingProfile(false);
@@ -6931,7 +6967,7 @@ export default function App() {
         updated.push({
           id: `u-${user.uniqueId || Date.now()}`,
           username: user.username,
-          avatar: user.avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=100&h=100&q=80",
+          avatar: user.avatar || getInitialAvatarData(user.fullName || user.username),
           coinsContributed: totalCost
         });
       }
@@ -6991,7 +7027,7 @@ export default function App() {
       giftName: gift.name,
       giftIcon: gift.icon,
       count: newComboCount,
-      avatar: user.avatarUrl || user.avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=100&q=80"
+      avatar: user.avatarUrl || user.avatar || getInitialAvatarData(user.fullName || user.username)
     };
     setUserLiveGiftToasts(prev => [newGiftToast, ...prev.slice(0, 1)]);
     setTimeout(() => {
@@ -7244,7 +7280,7 @@ export default function App() {
         copy[0] = {
           id: 1,
           name: topReq.username || topReq.name || "Guest",
-          avatar: topReq.avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&h=150&q=80",
+          avatar: topReq.avatar || getInitialAvatarData(topReq.username),
           vipLevel: topReq.vipLevel || 0,
           isMuted: false,
           isCamMuted: false,
@@ -7275,7 +7311,7 @@ export default function App() {
           copy[0] = {
             id: 1,
             name: "Alex (Guest)",
-            avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&h=150&q=80",
+            avatar: "",
             vipLevel: 0,
             isMuted: false,
             isCamMuted: false,
@@ -7366,12 +7402,12 @@ export default function App() {
       id: hostId,
       hostUserId: user.uniqueId || user.username || user.id,
       hostName: user.username || user.fullName || "Pardais Broadcaster",
-      hostAvatar: user.avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80",
+      hostAvatar: user.avatar || getInitialAvatarData(user.fullName || user.username),
       hostUsername: user.username,
       hostUid: user.uniqueId || user.username,
       name: user.username || "Pardais Broadcaster",
       role: "Broadcaster",
-      avatar: user.avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80",
+      avatar: user.avatar || getInitialAvatarData(user.fullName || user.username),
       viewers: 0,
       likes: 0,
       category: liveCategory,
@@ -8417,7 +8453,7 @@ export default function App() {
     const createEmptySeats = (count: number) => Array.from({ length: count }, (_, index) => ({
       id: index + 1,
       name: index === 0 ? validHost : null,
-      avatar: index === 0 ? (user.avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80") : null,
+      avatar: index === 0 ? (user.avatar || getInitialAvatarData(user.fullName || user.username)) : null,
       vipLevel: index === 0 ? (user.vipLevel || 0) : 0,
       isMuted: false,
       isLocked: false
@@ -8427,7 +8463,7 @@ export default function App() {
       id: tempId,
       title: finalRoomTitle,
       hostUsername: validHost,
-      hostAvatar: user.avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80",
+      hostAvatar: user.avatar || getInitialAvatarData(user.fullName || user.username),
       category: partyFormCategory || "Music",
       participantCount: 1,
       maxCapacity: seatCapacity,
@@ -9543,7 +9579,7 @@ export default function App() {
                                           : "bg-[#222230] border border-white/10"
                                       }`}
                                     >
-                                      <img src={user.avatar || DEFAULT_USER.avatar} className="w-full h-full rounded-full object-cover" alt="My avatar" />
+                                      <img src={user.avatar || getInitialAvatarData(user.fullName || user.username)} className="w-full h-full rounded-full object-cover" alt="My avatar" />
                                     </div>
 
                                     {/* Add Story (+) button */}
@@ -9578,7 +9614,7 @@ export default function App() {
                                 >
                                   <div className="w-14 h-14 rounded-full p-[2px] bg-gradient-to-tr from-[#ff007f] via-[#7b2cbf] to-amber-400 group-hover:scale-105 transition-all bg-transparent">
                                     <div className="w-full h-full rounded-full overflow-hidden border border-[#12121a] bg-transparent">
-                                      <img src={story.avatar || DEFAULT_USER.avatar} className="w-full h-full object-cover" alt={story.fullName} />
+                                      <img src={story.avatar || getInitialAvatarData(story.fullName || story.username)} className="w-full h-full object-cover" alt={story.fullName} />
                                     </div>
                                   </div>
                                   <span className="text-[8px] font-semibold text-gray-400 group-hover:text-white truncate max-w-[65px] bg-transparent">
@@ -9812,14 +9848,14 @@ export default function App() {
                                   (user.uniqueId && (host.hostUid === user.uniqueId || host.hostUid === user.username)) ||
                                   (host.id === `h-${user.uniqueId || user.username}`)
                                 );
-                                const displayAvatar = host.hostAvatar || host.avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80";
+                                const displayAvatar = host.hostAvatar || host.avatar || getInitialAvatarData(host.name || host.hostUsername);
                                 const displayName = host.hostUsername ? `@${host.hostUsername}` : host.name;
                                 const displayViewerCount = host.realViewerCount !== undefined ? host.realViewerCount : (host.viewers || 0);
 
                                 const hostCat = host.category || "video";
                                 const hostSubCat = (host.subCategory || "").toLowerCase();
                                 const isPkCard = hostCat === "pk" || hostSubCat === "pk" || hostSubCat === "1v1" || host.inPk === true || host.pkActive === true;
-                                const opponentAvatar = host.coHostAvatar || host.opponentAvatar || "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=150&h=150&q=80";
+                                const opponentAvatar = host.coHostAvatar || host.opponentAvatar || getInitialAvatarData(opponentName);
                                 const opponentName = host.coHostName || (host.coHostUsername ? `@${host.coHostUsername}` : "Opponent");
 
                                 const hostLevelNum = host.level || host.userLevel || host.hostLevel || 1;
@@ -9855,7 +9891,7 @@ export default function App() {
                                           <div className="relative z-10 -mr-2">
                                             <div className="absolute -inset-1 rounded-full bg-gradient-to-r from-red-600 to-amber-500 animate-ping opacity-60"></div>
                                             <div className="relative p-[1.5px] rounded-full bg-gradient-to-tr from-red-600 via-amber-400 to-yellow-400 shadow-lg">
-                                              <img src={displayAvatar || DEFAULT_USER.avatar} className="w-11 h-11 rounded-full object-cover group-hover:scale-105 transition-all" alt="Host A" />
+                                              <img src={displayAvatar || getInitialAvatarData(host.name || host.hostUsername)} className="w-11 h-11 rounded-full object-cover group-hover:scale-105 transition-all" alt="Host A" />
                                             </div>
                                             <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 bg-red-600 text-white text-[6px] font-black px-1 py-0.2 rounded-full uppercase tracking-tighter shadow">HOST</span>
                                           </div>
@@ -9869,7 +9905,7 @@ export default function App() {
                                           <div className="relative z-10 -ml-2">
                                             <div className="absolute -inset-1 rounded-full bg-gradient-to-r from-blue-600 to-amber-500 animate-ping opacity-60"></div>
                                             <div className="relative p-[1.5px] rounded-full bg-gradient-to-tr from-blue-600 via-cyan-400 to-amber-400 shadow-lg">
-                                              <img src={opponentAvatar || DEFAULT_USER.avatar} className="w-11 h-11 rounded-full object-cover group-hover:scale-105 transition-all" alt="Host B" />
+                                              <img src={opponentAvatar || getInitialAvatarData(opponentName)} className="w-11 h-11 rounded-full object-cover group-hover:scale-105 transition-all" alt="Host B" />
                                             </div>
                                             <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 bg-blue-600 text-white text-[6px] font-black px-1 py-0.2 rounded-full uppercase tracking-tighter shadow">OPP</span>
                                           </div>
@@ -9883,7 +9919,7 @@ export default function App() {
                                           <div className="absolute -inset-1 rounded-full bg-gradient-to-r from-amber-400 via-yellow-300 to-amber-500 animate-pulse shadow-[0_0_16px_rgba(251,191,36,0.9)]"></div>
                                           {/* Avatar Image Frame */}
                                           <div className="relative w-14 h-14 rounded-full p-[2px] bg-gradient-to-tr from-amber-400 via-yellow-200 to-amber-600 shadow-2xl group-hover:scale-105 transition-all">
-                                            <img src={displayAvatar || DEFAULT_USER.avatar} className="w-full h-full rounded-full object-cover" alt="host" />
+                                            <img src={displayAvatar || getInitialAvatarData(host.name || host.hostUsername)} className="w-full h-full rounded-full object-cover" alt="host" />
                                           </div>
                                         </div>
                                       )}
@@ -10370,7 +10406,7 @@ export default function App() {
                           giftName: gift.name,
                           giftIcon: giftIconChar,
                           count: newComboCount,
-                          avatar: (user as any).avatarUrl || user.avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=100&q=80"
+                          avatar: (user as any).avatarUrl || user.avatar || getInitialAvatarData(user.fullName || user.username)
                         };
                         setUserLiveGiftToasts(prev => [newGiftToast, ...prev.slice(0, 1)]);
                         setTimeout(() => {
@@ -10472,7 +10508,7 @@ export default function App() {
 
                         setPartyUserProfile({
                           username: targetUsername,
-                          avatar: avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80",
+                          avatar: avatar || getInitialAvatarData(targetUsername),
                           userId: resolvedUserId,
                           userLevel: resolvedLevel,
                           vipLevel: resolvedVip,
@@ -10691,7 +10727,7 @@ export default function App() {
                                               {isOccupied ? (
                                                 <VipAnimatedFrame vipLevel={Number(seat.vipLevel || 0)} showLevelBadge={false} frameScale={Number(party.maxCapacity || party.seatCount || 12) === 25 ? 120 : 145} className="w-full h-full">
                                                   <img 
-                                                    src={seat.avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80"} 
+                                                    src={seat.avatar || getInitialAvatarData(seat.name)} 
                                                     className="w-full h-full object-cover cursor-pointer hover:scale-110 transition-transform" 
                                                     alt={seat.name}
                                                     onClick={(e) => {
@@ -11166,7 +11202,7 @@ export default function App() {
                                   activeRequests.map((req: any) => (
                                     <div key={req.username} className="flex items-center justify-between p-2 rounded-xl bg-black/40 border border-white/5">
                                       <div className="flex items-center space-x-2 bg-transparent">
-                                        <img src={req.avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80"} className="w-7 h-7 rounded-full object-cover border border-amber-400/40" alt="avatar" />
+                                        <img src={req.avatar || getInitialAvatarData(req.username)} className="w-7 h-7 rounded-full object-cover border border-amber-400/40" alt="avatar" />
                                         <div className="bg-transparent text-left">
                                           <p className="text-[9px] font-bold text-white uppercase font-mono">@{req.username}</p>
                                           <p className="text-[7.5px] text-amber-400 font-mono">Requested Seat {req.seatId}</p>
@@ -11225,7 +11261,7 @@ export default function App() {
                                   return unseatedViewers.map((viewer: any) => (
                                     <div key={viewer.username} className="flex items-center justify-between p-2 rounded-xl bg-black/40 border border-white/5">
                                       <div className="flex items-center space-x-2 bg-transparent">
-                                        <img src={viewer.avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80"} className="w-7 h-7 rounded-full object-cover border border-amber-400/40" alt="avatar" />
+                                        <img src={viewer.avatar || getInitialAvatarData(viewer.username)} className="w-7 h-7 rounded-full object-cover border border-amber-400/40" alt="avatar" />
                                         <p className="text-[9px] font-bold text-white uppercase font-mono bg-transparent">@{viewer.username}</p>
                                       </div>
                                       <button
@@ -11349,7 +11385,7 @@ export default function App() {
                             <div className="absolute left-3 bottom-24 space-y-1 z-35 pointer-events-none">
                               {userLiveGiftToasts.map(toast => (
                                 <div key={toast.id} className="bg-gradient-to-r from-black/90 via-amber-950/90 to-yellow-600/80 border border-amber-400/50 rounded-full py-1 px-3 flex items-center space-x-2 text-white shadow-xl animate-slide-up">
-                                  <img src={toast.avatar || DEFAULT_USER.avatar} className="w-6 h-6 rounded-full object-cover border border-amber-400" alt="avatar" />
+                                  <img src={toast.avatar || getInitialAvatarData(toast.username)} className="w-6 h-6 rounded-full object-cover border border-amber-400" alt="avatar" />
                                   <div className="text-left leading-tight">
                                     <p className="text-[9px] font-bold text-amber-200">@{toast.username}</p>
                                     <p className="text-[8px] text-amber-300/90 font-mono">Sent {toast.giftName} {toast.giftIcon}</p>
@@ -11562,7 +11598,7 @@ export default function App() {
                                 <div className="relative inline-block mt-1">
                                   <div className="w-20 h-20 rounded-full p-[2px] bg-gradient-to-tr from-[#ff007f] via-purple-500 to-cyan-400 shadow-xl mx-auto">
                                     <img
-                                      src={partyUserProfile.avatar || DEFAULT_USER.avatar}
+                                      src={partyUserProfile.avatar || getInitialAvatarData(partyUserProfile.username)}
                                       alt={partyUserProfile.username}
                                       className="w-full h-full rounded-full object-cover border-2 border-[#150d2a]"
                                     />
@@ -11830,7 +11866,7 @@ export default function App() {
                               <div className="flex items-center space-x-2 bg-black/40 backdrop-blur-md px-2 py-1 rounded-full border border-white/10 shadow-lg">
                                 <div className="relative">
                                   <img
-                                    src={activeHost.avatar || DEFAULT_USER.avatar}
+                                    src={activeHost.avatar || getInitialAvatarData(activeHost.name || activeHost.username)}
                                     className="w-8 h-8 rounded-full border border-pink-500 object-cover"
                                   />
                                   <span className="absolute bottom-0 right-0 bg-blue-500 text-white rounded-full p-0.5 text-[5px] flex items-center justify-center border border-white">
@@ -11858,7 +11894,7 @@ export default function App() {
                               <div className="flex items-center space-x-1.5">
                                 {liveRoomTopGifters.map((viewer, idx) => (
                                   <div key={viewer.id || idx} className="flex flex-col items-center bg-transparent">
-                                    <img src={viewer.avatar || DEFAULT_USER.avatar} className="w-6.5 h-6.5 rounded-full border border-white/20 object-cover shadow" title={viewer.username} />
+                                    <img src={viewer.avatar || getInitialAvatarData(viewer.username)} className="w-6.5 h-6.5 rounded-full border border-white/20 object-cover shadow" title={viewer.username} />
                                     <span className="text-[7px] text-gray-200 font-black font-mono scale-90 mt-0.5">
                                       {viewer.coinsContributed >= 1000 ? `${(viewer.coinsContributed / 1000).toFixed(1)}K` : viewer.coinsContributed}
                                     </span>
@@ -11946,7 +11982,7 @@ export default function App() {
                                       <div className="w-full h-full relative flex items-center justify-center animate-fade-in">
                                         {!pinnedGuest.isCamMuted ? (
                                           <img
-                                            src={pinnedGuest.avatar || DEFAULT_USER.avatar}
+                                            src={pinnedGuest.avatar || getInitialAvatarData(pinnedGuest.name)}
                                             className="w-full h-full object-cover"
                                             alt="Pinned guest portrait"
                                           />
@@ -11975,7 +12011,7 @@ export default function App() {
                                         <div className="absolute bottom-2.5 right-2.5 w-16 h-22 rounded-xl overflow-hidden border border-pink-500/40 bg-[#0e0c15] shadow-2xl flex items-center justify-center z-15">
                                           {cameraActive ? (
                                             <img
-                                              src={activeHost.avatar || DEFAULT_USER.avatar}
+                                              src={activeHost.avatar || getInitialAvatarData(activeHost.name || activeHost.username)}
                                               style={{ transform: `rotate(${hostCamRotation}deg)`, transition: "transform 0.3s ease" }}
                                               className="w-full h-full object-cover"
                                               alt="Host thumbnail"
@@ -11995,13 +12031,13 @@ export default function App() {
                                       <div className="w-full h-full relative flex items-center justify-center bg-[#0d0a16]">
                                         {(activeHost.showCoverPhoto !== false && (activeHost.coverPhoto || userLiveCoverPhoto)) ? (
                                           <img
-                                            src={activeHost.coverPhoto || userLiveCoverPhoto || DEFAULT_USER.coverPhoto}
+                                            src={activeHost.coverPhoto || userLiveCoverPhoto || ""}
                                             className="w-full h-full object-cover transition-all duration-300"
                                             alt="Host Frame Photo"
                                           />
                                         ) : cameraActive ? (
                                           <img
-                                            src={activeHost.avatar || liveBroadcasterAvatar || DEFAULT_USER.avatar}
+                                            src={activeHost.avatar || liveBroadcasterAvatar || getInitialAvatarData(liveBroadcasterName)}
                                             style={{ transform: `rotate(${hostCamRotation}deg)`, transition: "transform 0.3s ease" }}
                                             className="w-full h-full object-cover"
                                             alt="Host screen"
@@ -12009,13 +12045,13 @@ export default function App() {
                                         ) : (
                                           <div className="relative w-full h-full flex flex-col items-center justify-center bg-gradient-to-b from-[#181328] via-[#0d0918] to-[#181328] overflow-hidden select-none">
                                             <img 
-                                              src={activeHost.avatar || liveBroadcasterAvatar || DEFAULT_USER.avatar}
+                                              src={activeHost.avatar || liveBroadcasterAvatar || getInitialAvatarData(liveBroadcasterName)}
                                               className="absolute inset-0 w-full h-full object-cover opacity-20 blur-2xl scale-125"
                                               alt="blur background"
                                             />
                                             <div className="relative z-10 flex flex-col items-center justify-center space-y-2 p-4">
                                               <img
-                                                src={activeHost.avatar || liveBroadcasterAvatar || DEFAULT_USER.avatar}
+                                                src={activeHost.avatar || liveBroadcasterAvatar || getInitialAvatarData(liveBroadcasterName)}
                                                 className="w-24 h-24 rounded-full object-cover border-4 border-pink-500/80 shadow-2xl"
                                                 alt={activeHost.name || "Host"}
                                               />
@@ -12135,7 +12171,7 @@ export default function App() {
                                         {!seat.isCamMuted ? (
                                           <>
                                             <img 
-                                              src={seat.avatar || DEFAULT_USER.avatar} 
+                                              src={seat.avatar || getInitialAvatarData(seat.name)} 
                                               style={{ transform: `rotate(${seat.rotation || 0}deg)`, transition: "transform 0.3s ease" }}
                                               className="absolute inset-0 w-full h-full object-cover opacity-85" 
                                               alt="guest avatar" 
@@ -12446,7 +12482,7 @@ export default function App() {
 
                               const hostAName = activeHost.name || "Pardais User";
                               const hostBName = activeHost.coHostUsername || activeHost.coHostName || activeHost.opponentName || "Connected Host";
-                              const hostBAvatar = activeHost.coHostAvatar || activeHost.opponentAvatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&h=150&q=80";
+                              const hostBAvatar = activeHost.coHostAvatar || activeHost.opponentAvatar || getInitialAvatarData(hostBName);
 
                               const scoreMy = Number(pkScoreHost) || 0;
                               const scoreOther = Number(pkScoreOpponent) || 0;
@@ -12478,7 +12514,7 @@ export default function App() {
                                           <VipAnimatedFrame vipLevel={Number(activeHost.vipLevel || 0)} showLevelBadge={false} frameScale={145} className="w-7 h-7 shrink-0">
                                             <div className="w-7 h-7 rounded-full bg-purple-900 border border-purple-400 flex items-center justify-center font-black text-white text-xs overflow-hidden">
                                               {activeHost.avatar ? (
-                                                <img src={activeHost.avatar || DEFAULT_USER.avatar} className="w-full h-full object-cover" alt={hostAName} />
+                                                <img src={activeHost.avatar || getInitialAvatarData(activeHost.name || activeHost.username)} className="w-full h-full object-cover" alt={hostAName} />
                                               ) : (
                                                 <span>Y</span>
                                               )}
@@ -12586,7 +12622,7 @@ export default function App() {
                                       <div className="w-1/2 h-full border-r border-white/10 relative flex flex-col justify-center items-center p-2 bg-gradient-to-b from-[#140f26] via-[#0d091a] to-[#07050e]">
                                         <div className="w-16 h-16 rounded-full bg-gray-800 border-2 border-pink-500/80 flex items-center justify-center overflow-hidden shadow-2xl mb-1.5 relative">
                                           {activeHost.avatar ? (
-                                            <img src={activeHost.avatar || DEFAULT_USER.avatar} className="w-full h-full object-cover" alt={hostAName} />
+                                            <img src={activeHost.avatar || getInitialAvatarData(activeHost.name || activeHost.username)} className="w-full h-full object-cover" alt={hostAName} />
                                           ) : (
                                             <span className="text-xl font-black text-white">S</span>
                                           )}
@@ -12612,7 +12648,7 @@ export default function App() {
                                       <div className="w-1/2 h-full relative flex flex-col justify-center items-center p-2 bg-gradient-to-b from-[#101328] via-[#0a0d1d] to-[#07050e]">
                                         <div className="w-16 h-16 rounded-full bg-gray-800 border-2 border-cyan-400/80 flex items-center justify-center overflow-hidden shadow-2xl mb-1.5 relative">
                                           {hostBAvatar ? (
-                                            <img src={hostBAvatar || DEFAULT_USER.avatar} className="w-full h-full object-cover" alt={hostBName} />
+                                            <img src={hostBAvatar || getInitialAvatarData(hostBName)} className="w-full h-full object-cover" alt={hostBName} />
                                           ) : (
                                             <span className="text-xl font-black text-white">C</span>
                                           )}
@@ -12813,7 +12849,7 @@ export default function App() {
                                                 className="flex flex-col items-center space-y-1 min-w-[62px] p-1.5 rounded-xl bg-white/5 hover:bg-pink-500/20 border border-white/5 hover:border-pink-500/40 transition-all cursor-pointer group shrink-0"
                                               >
                                                 <img
-                                                  src={usr.avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=100&h=100&q=80"}
+                                                  src={usr.avatar || getInitialAvatarData(usr.fullName || usr.username)}
                                                   className="w-10 h-10 rounded-full object-cover border border-pink-500/50 group-hover:scale-105 transition-transform"
                                                   alt={usr.username}
                                                 />
@@ -13015,7 +13051,7 @@ export default function App() {
                                     activeHost.coHostName ||
                                     activeHost.inPk
                                   )}
-                                  coHostAvatar={activeHost.coHostAvatar || activeHost.opponentAvatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&h=150&q=80"}
+                                  coHostAvatar={activeHost.coHostAvatar || activeHost.opponentAvatar || getInitialAvatarData(hostBName)}
                                   coHostName={activeHost.coHostUsername || activeHost.coHostName || activeHost.opponentName || "Captain_Leo"}
                                   coHostVideoMuted={activeHost.coHostCamOff}
                                 />
@@ -13034,7 +13070,7 @@ export default function App() {
                                         <div className="relative">
                                           {seat.avatar ? (
                                             <div className="w-10 h-10 rounded-full border-2 border-[#7b2cbf] p-0.5 relative">
-                                              <img src={seat.avatar || DEFAULT_USER.avatar} className="w-full h-full rounded-full object-cover" alt="avatar" />
+                                              <img src={seat.avatar || getInitialAvatarData(seat.name)} className="w-full h-full rounded-full object-cover" alt="avatar" />
                                             </div>
                                           ) : (
                                             <div className="w-10 h-10 rounded-full border border-dashed border-gray-500 flex items-center justify-center bg-[#1e1e2d]">
@@ -13069,7 +13105,7 @@ export default function App() {
                                   {/* Host Profile Picture */}
                                   <div className="relative shrink-0">
                                     <img
-                                      src={activeHost.avatar || activeHost.hostAvatar || liveBroadcasterAvatar || DEFAULT_USER.avatar}
+                                      src={activeHost.avatar || activeHost.hostAvatar || liveBroadcasterAvatar || getInitialAvatarData(liveBroadcasterName)}
                                       className="w-8.5 h-8.5 rounded-full border-2 border-pink-500 object-cover shadow"
                                       alt={activeHost.name || "Host"}
                                     />
@@ -13249,19 +13285,19 @@ export default function App() {
                                       {(pkHostASupporters.length > 0 ? pkHostASupporters : liveRoomTopGifters.slice(0, 3)).map((sup, idx) => (
                                         <div key={sup.id || idx} className="relative bg-transparent">
                                           {idx === 0 && <span className="absolute -top-3 left-1/2 -translate-x-1/2 text-[9px] animate-bounce z-20">👑</span>}
-                                          <img src={sup.avatar || DEFAULT_USER.avatar} className="w-5 h-5 rounded-full border border-amber-400 object-cover" title={sup.username} />
+                                          <img src={sup.avatar || getInitialAvatarData(sup.username)} className="w-5 h-5 rounded-full border border-amber-400 object-cover" title={sup.username} />
                                         </div>
                                       ))}
                                     </div>
                                     <div className="absolute bottom-20 right-2 z-20 flex items-center space-x-1 select-none bg-black/50 backdrop-blur-md px-1.5 py-0.5 rounded-full border border-white/10">
                                       <span className="text-[7px] font-bold text-cyan-400 mr-0.5">Top:</span>
                                       {(pkHostBSupporters.length > 0 ? pkHostBSupporters : [
-                                        { id: "b1", avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=50&q=80", username: "Alpha_Gifter" },
-                                        { id: "b2", avatar: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=50&q=80", username: "Lion_King" }
+                                        { id: "b1", avatar: "", username: "Alpha_Gifter" },
+                                        { id: "b2", avatar: "", username: "Lion_King" }
                                       ]).map((sup, idx) => (
                                         <div key={sup.id || idx} className="relative bg-transparent">
                                           {idx === 0 && <span className="absolute -top-3 left-1/2 -translate-x-1/2 text-[9px] animate-bounce z-20">👑</span>}
-                                          <img src={sup.avatar || DEFAULT_USER.avatar} className="w-5 h-5 rounded-full border border-blue-400 object-cover" title={sup.username} />
+                                          <img src={sup.avatar || getInitialAvatarData(sup.username)} className="w-5 h-5 rounded-full border border-blue-400 object-cover" title={sup.username} />
                                         </div>
                                       ))}
                                     </div>
@@ -13772,7 +13808,7 @@ export default function App() {
                                 <div className="space-y-3.5 animate-fade-in bg-transparent">
                                   <div className="flex items-center space-x-3 bg-transparent">
                                     <div className="relative bg-transparent">
-                                      <img src={seat.avatar || DEFAULT_USER.avatar} className="w-11 h-11 rounded-full object-cover border-2 border-purple-500/80 shadow-md shadow-purple-500/20" />
+                                      <img src={seat.avatar || getInitialAvatarData(seat.name)} className="w-11 h-11 rounded-full object-cover border-2 border-purple-500/80 shadow-md shadow-purple-500/20" />
                                       {seat.isModerator && (
                                         <span className="absolute -bottom-1 -right-1 bg-blue-500 text-white rounded-full p-0.5 text-[5px] border border-black font-bold">🛡️</span>
                                       )}
@@ -14211,7 +14247,7 @@ export default function App() {
                             onChange={handleCoverPhotoUpload}
                           />
 
-                          <img src={user.coverPhoto || DEFAULT_USER.coverPhoto} className="w-full h-36 object-cover" alt="cover" />
+                          <img src={editCoverPreview || user.coverPhoto || ""} className="w-full h-36 object-cover" alt="cover" />
                           
                           {/* LARGER PROFILE PICTURE WITH STORIES RINGS AND ACTION BUTTONS */}
                           {(() => {
@@ -14246,7 +14282,7 @@ export default function App() {
                                       showLevelBadge={true}
                                     >
                                       <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-full overflow-hidden border-2 border-[#12121a] bg-[#1a1a24] relative shadow-lg">
-                                        <img src={user.avatar || DEFAULT_USER.avatar} className="w-full h-full object-cover" alt="avatar" />
+                                        <img src={user.avatar || getInitialAvatarData(user.fullName || user.username)} className="w-full h-full object-cover" alt="avatar" />
                                       </div>
                                     </VipAnimatedFrame>
                                   </div>
@@ -14299,6 +14335,8 @@ export default function App() {
                                       } else {
                                         setEditFullName(user.fullName || "");
                                         setEditAvatar(user.avatar);
+                                        setEditCoverPreview("");
+                                        setEditCoverFile(null);
                                         setEditDob(user.dob || "1998-05-15");
                                         setEditGender(user.gender);
                                         setEditPhoneNumber(user.phoneNumber || "+92 300 4567890");
@@ -14381,11 +14419,11 @@ export default function App() {
                                     {/* Current avatar preview thumbnail */}
                                     <div className="relative w-12 h-12 rounded-full overflow-hidden border-2 border-[#ff007f] shrink-0 bg-black shadow-md">
                                       <img
-                                        src={editAvatar || DEFAULT_USER.avatar}
+                                        src={editAvatar || getInitialAvatarData(editFullName || user.username)}
                                         alt="Avatar Preview"
                                         className="w-full h-full object-cover"
                                         onError={(e) => {
-                                          (e.target as HTMLImageElement).src = "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80";
+                                          (e.target as HTMLImageElement).src = getInitialAvatarData(editFullName || user.username);
                                         }}
                                       />
                                     </div>
@@ -14893,7 +14931,7 @@ export default function App() {
                                       <div className="shrink-0 my-1">
                                         <VipAnimatedFrame frameId={frame.id} showLevelBadge={false}>
                                           <div className="w-8 h-8 rounded-full overflow-hidden bg-gray-900 border border-black/80 flex items-center justify-center text-[11px] shadow">
-                                            <img src={user.avatar || DEFAULT_USER.avatar} className="w-full h-full object-cover" alt="preview" />
+                                            <img src={user.avatar || getInitialAvatarData(user.fullName || user.username)} className="w-full h-full object-cover" alt="preview" />
                                           </div>
                                         </VipAnimatedFrame>
                                       </div>
@@ -15640,7 +15678,7 @@ export default function App() {
                                                       {agencyHosts.slice(0, 5).map((host: any) => (
                                                         <div key={host.username} className="p-2 rounded-xl bg-[#1e1e2d] border border-white/5 flex justify-between items-center text-[8px] font-mono">
                                                           <div className="flex items-center space-x-2">
-                                                            <img src={host.avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=100&q=80"} alt="Host Avatar" className="w-7 h-7 rounded-full border border-purple-400/40 object-cover" />
+                                                            <img src={host.avatar || getInitialAvatarData(host.name || host.username)} alt="Host Avatar" className="w-7 h-7 rounded-full border border-purple-400/40 object-cover" />
                                                             <div>
                                                               <span className="text-white font-bold block">{host.fullName || host.username}</span>
                                                               <span className="text-gray-400 text-[7px]">@{host.username} • LVL {host.hostLevel || 1}</span>
@@ -15697,7 +15735,7 @@ export default function App() {
                                                       <div key={host.username} className="p-2.5 rounded-xl bg-[#1e1e2d] border border-white/5 space-y-2 text-left font-mono">
                                                         <div className="flex justify-between items-start">
                                                           <div className="flex items-center space-x-2">
-                                                            <img src={host.avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=120&q=80"} alt="Host" className="w-8 h-8 rounded-full border border-purple-400/40 object-cover" />
+                                                            <img src={host.avatar || getInitialAvatarData(host.name || host.username)} alt="Host" className="w-8 h-8 rounded-full border border-purple-400/40 object-cover" />
                                                             <div>
                                                               <h5 className="text-[9.5px] font-bold text-white flex items-center space-x-1">
                                                                 <span>{host.fullName || host.username}</span>
@@ -16458,7 +16496,7 @@ export default function App() {
                               <div className="p-3 bg-gradient-to-b from-black/90 to-transparent flex items-center justify-between z-10">
                                 <div className="flex items-center space-x-2">
                                   <div className="w-6 h-6 rounded-full overflow-hidden border border-[#ff007f]">
-                                    <img src={user.avatar || DEFAULT_USER.avatar} className="w-full h-full object-cover" alt="avatar" />
+                                    <img src={user.avatar || getInitialAvatarData(user.fullName || user.username)} className="w-full h-full object-cover" alt="avatar" />
                                   </div>
                                   <div>
                                     <div className="flex items-center space-x-1 bg-transparent">
@@ -17020,7 +17058,7 @@ export default function App() {
                                 {/* Profile Avatar & Follow Button */}
                                 <div className="relative group flex flex-col items-center">
                                   <div className="w-10 h-10 rounded-full border-2 border-[#ff007f] overflow-hidden bg-[#1e1e2d] shadow-xl transition-all hover:scale-105 active:scale-95">
-                                    <img src={currentReel.avatar || DEFAULT_USER.avatar} className="w-full h-full object-cover" alt="creator" />
+                                    <img src={currentReel.avatar || getInitialAvatarData(currentReel.username || currentReel.fullName)} className="w-full h-full object-cover" alt="creator" />
                                   </div>
                                   
                                   {/* Follow Toggle badge */}
@@ -17322,7 +17360,7 @@ export default function App() {
                                           {/* Main Comment */}
                                           <div className="flex items-start space-x-2">
                                             <img
-                                              src={comment.userAvatar || DEFAULT_USER.avatar}
+                                              src={comment.userAvatar || getInitialAvatarData(comment.username || comment.fullName)}
                                               className="w-7 h-7 rounded-full border border-white/10 shrink-0"
                                               alt="user"
                                             />
@@ -17378,7 +17416,7 @@ export default function App() {
                                               {comment.replies.map((reply: any) => (
                                                 <div key={reply.id} className="flex items-start space-x-2">
                                                   <img
-                                                    src={reply.userAvatar || DEFAULT_USER.avatar}
+                                                    src={reply.userAvatar || getInitialAvatarData(reply.fullName || reply.username)}
                                                     className="w-5.5 h-5.5 rounded-full border border-white/10 shrink-0"
                                                     alt="user-reply"
                                                   />
@@ -17614,7 +17652,7 @@ export default function App() {
                             <div className="relative">
                               <div className="w-24 h-24 rounded-full p-1 bg-gradient-to-tr from-pink-500 via-purple-500 to-cyan-400 shadow-[0_0_35px_rgba(255,0,127,0.5)] animate-pulse">
                                 <img 
-                                  src={user.avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=800&q=80"}
+                                  src={user.avatar || getInitialAvatarData(user.fullName || user.username)}
                                   className="w-full h-full object-cover rounded-full border-2 border-black"
                                   alt="Host Audio Avatar"
                                 />
@@ -17814,7 +17852,7 @@ export default function App() {
                               >
                                 {prepCoverPhoto ? (
                                   <>
-                                    <img src={prepCoverPhoto || DEFAULT_USER.coverPhoto} className="w-full h-full object-cover group-hover:scale-105 transition-transform" alt="Stream Cover" />
+                                    <img src={prepCoverPhoto || ""} className="w-full h-full object-cover group-hover:scale-105 transition-transform" alt="Stream Cover" />
                                     <div className="absolute inset-0 bg-black/40 group-hover:bg-black/20 flex items-center justify-center transition-colors">
                                       <div className="w-5 h-5 rounded-full bg-pink-600 text-white flex items-center justify-center shadow-md">
                                         <Plus className="w-3.5 h-3.5" />
@@ -18359,7 +18397,7 @@ export default function App() {
                                     muted={!userLiveMic}
                                     videoMuted={!userLiveCam}
                                     facingMode={cameraFacingMode}
-                                    hostAvatar={user.avatar || DEFAULT_USER.avatar}
+                                    hostAvatar={user.avatar || getInitialAvatarData(user.fullName || user.username)}
                                     hostName={user.username || DEFAULT_USER.username}
                                     vipLevel={Number(user.vipLevel || 0)}
                                     coHostVipLevel={Number(userLiveCoHost?.vipLevel || 0)}
@@ -18387,7 +18425,7 @@ export default function App() {
                                   <div className="flex items-center space-x-2 bg-black/40 backdrop-blur-md px-2 py-1 rounded-full border border-white/10 shadow-lg">
                                     <div className="relative">
                                       <img
-                                        src={liveBroadcasterAvatar || DEFAULT_USER.avatar}
+                                        src={liveBroadcasterAvatar || getInitialAvatarData(liveBroadcasterName)}
                                         className="w-8 h-8 rounded-full border border-pink-500 object-cover"
                                       />
                                       <span className="absolute bottom-0 right-0 bg-blue-500 text-white rounded-full p-0.5 text-[5px] flex items-center justify-center border border-white">
@@ -18410,7 +18448,7 @@ export default function App() {
                                   <div className="flex items-center space-x-1.5">
                                     {liveRoomTopGifters.map((viewer, idx) => (
                                       <div key={viewer.id || idx} className="flex flex-col items-center bg-transparent">
-                                        <img src={viewer.avatar || DEFAULT_USER.avatar} className="w-6.5 h-6.5 rounded-full border border-white/20 object-cover shadow" title={viewer.username} />
+                                        <img src={viewer.avatar || getInitialAvatarData(viewer.username)} className="w-6.5 h-6.5 rounded-full border border-white/20 object-cover shadow" title={viewer.username} />
                                         <span className="text-[7px] text-gray-200 font-black font-mono scale-90 mt-0.5">
                                           {viewer.coinsContributed >= 1000 ? `${(viewer.coinsContributed / 1000).toFixed(1)}K` : viewer.coinsContributed}
                                         </span>
@@ -18488,7 +18526,7 @@ export default function App() {
                                   <div className="absolute inset-x-2 top-16 z-40 pointer-events-none flex flex-col items-center justify-center space-y-1.5 animate-fade-in">
                                     {userLiveGiftToasts.map(toast => (
                                       <div key={toast.id} className="bg-gradient-to-r from-purple-900/95 via-pink-900/95 to-black/95 backdrop-blur-md border border-pink-400/50 px-3 py-1.5 rounded-2xl shadow-2xl animate-pop-gift flex items-center space-x-2">
-                                        <img src={toast.avatar || user.avatar || DEFAULT_USER.avatar} className="w-6 h-6 rounded-full object-cover border border-yellow-400" />
+                                        <img src={toast.avatar || user.avatar || getInitialAvatarData(user.fullName || user.username)} className="w-6 h-6 rounded-full object-cover border border-yellow-400" />
                                         <div className="flex flex-col text-left">
                                           <span className="text-[8.5px] font-black text-white flex items-center space-x-1">
                                             <span className="text-yellow-300">@{toast.username}</span>
@@ -18515,7 +18553,7 @@ export default function App() {
                                             {!pinnedGuest.isCamMuted ? (
                                               <>
                                                 <img
-                                                  src={pinnedGuest.avatar || DEFAULT_USER.avatar}
+                                                  src={pinnedGuest.avatar || getInitialAvatarData(pinnedGuest.name)}
                                                   className="w-full h-full object-cover"
                                                   alt="Pinned guest portrait"
                                                 />
@@ -18570,7 +18608,7 @@ export default function App() {
                                                 <div className="relative w-full h-full flex flex-col items-center justify-center bg-[#120e24] p-1 text-center overflow-hidden">
                                                   <VipAnimatedFrame vipLevel={Number(user.vipLevel || 0)} showLevelBadge={false} frameScale={145} className="w-10 h-10">
                                                     <img 
-                                                      src={user.avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80"}
+                                                      src={user.avatar || getInitialAvatarData(user.fullName || user.username)}
                                                       className="w-full h-full rounded-full object-cover border-2 border-pink-500/60 shadow"
                                                       alt={user.username}
                                                     />
@@ -18587,13 +18625,13 @@ export default function App() {
                                           <div className="w-full h-full relative flex items-center justify-center bg-[#0d0918]">
                                             {userLiveShowCoverPhoto && userLiveCoverPhoto ? (
                                               <img
-                                                src={userLiveCoverPhoto || DEFAULT_USER.coverPhoto}
+                                                src={userLiveCoverPhoto || ""}
                                                 className="w-full h-full object-cover transition-all duration-300"
                                                 alt="Host Frame Photo"
                                               />
                                             ) : userLiveCam ? (
                                               <img
-                                                src={user.avatar || liveBroadcasterAvatar || DEFAULT_USER.avatar}
+                                                src={user.avatar || liveBroadcasterAvatar || getInitialAvatarData(liveBroadcasterName)}
                                                 className="w-full h-full object-cover transition-all duration-300"
                                                 alt="Host screen"
                                                 style={{
@@ -18604,7 +18642,7 @@ export default function App() {
                                             ) : (
                                               <div className="relative w-full h-full flex flex-col items-center justify-center bg-gradient-to-b from-[#181328] via-[#0d0918] to-[#181328] overflow-hidden select-none">
                                                 <img 
-                                                  src={user.avatar || liveBroadcasterAvatar || DEFAULT_USER.avatar}
+                                                  src={user.avatar || liveBroadcasterAvatar || getInitialAvatarData(liveBroadcasterName)}
                                                   className="absolute inset-0 w-full h-full object-cover opacity-20 blur-2xl scale-125"
                                                   alt="blur background"
                                                 />
@@ -18612,7 +18650,7 @@ export default function App() {
                                                   <div className="relative">
                                                     <VipAnimatedFrame vipLevel={Number(user.vipLevel || 0)} showLevelBadge={false} frameScale={145} className="w-24 h-24">
                                                       <img
-                                                        src={user.avatar || liveBroadcasterAvatar || DEFAULT_USER.avatar}
+                                                        src={user.avatar || liveBroadcasterAvatar || getInitialAvatarData(liveBroadcasterName)}
                                                         className="w-full h-full rounded-full object-cover border-4 border-pink-500/80 shadow-2xl"
                                                         alt={user.username}
                                                       />
@@ -18696,7 +18734,7 @@ export default function App() {
                                             {!seat.isCamMuted ? (
                                               <>
                                                 <img 
-                                                  src={seat.avatar || DEFAULT_USER.avatar} 
+                                                  src={seat.avatar || getInitialAvatarData(seat.name)} 
                                                   style={{ transform: `rotate(${seat.rotation || 0}deg)`, transition: "transform 0.3s ease" }}
                                                   className="absolute inset-0 w-full h-full object-cover opacity-85" 
                                                   alt="guest avatar" 
@@ -18921,7 +18959,7 @@ export default function App() {
                                     <div className="flex items-center space-x-2 bg-white/5 px-2 py-1 rounded-full border border-white/5 shadow-lg">
                                       <div className="relative">
                                         <img
-                                          src={user.avatar || liveBroadcasterAvatar || DEFAULT_USER.avatar}
+                                          src={user.avatar || liveBroadcasterAvatar || getInitialAvatarData(liveBroadcasterName)}
                                           className="w-7 h-7 rounded-full border border-pink-500 object-cover"
                                           alt={user.username}
                                         />
@@ -19045,7 +19083,7 @@ export default function App() {
                                       publishCameraTrack={userLiveCam}
                                       publishMicrophoneTrack={userLiveMic}
                                       videoMuted={!userLiveCam}
-                                      hostAvatar={user.avatar || DEFAULT_USER.avatar}
+                                      hostAvatar={user.avatar || getInitialAvatarData(user.fullName || user.username)}
                                       hostName={user.username || DEFAULT_USER.username}
                                       vipLevel={Number(user.vipLevel || 0)}
                                       isCoHostMode={true}
@@ -19146,13 +19184,13 @@ export default function App() {
                                             {userLiveCam ? null : (
                                               <div className="relative w-full h-full flex flex-col items-center justify-center bg-[#130f24] overflow-hidden select-none p-2">
                                                 <img 
-                                                  src={user.avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80"}
+                                                  src={user.avatar || getInitialAvatarData(user.fullName || user.username)}
                                                   className="absolute inset-0 w-full h-full object-cover opacity-20 blur-xl scale-125"
                                                   alt="blur"
                                                 />
                                                 <div className="relative z-10 flex flex-col items-center justify-center space-y-1.5 text-center">
                                                   <img
-                                                    src={user.avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80"}
+                                                    src={user.avatar || getInitialAvatarData(user.fullName || user.username)}
                                                     className="w-14 h-14 rounded-full object-cover border-2 border-pink-500/70 shadow-lg"
                                                     alt={user.username}
                                                   />
@@ -19174,7 +19212,7 @@ export default function App() {
                                                       <span className="absolute -top-3.5 left-1/2 -translate-x-1/2 text-[10px] animate-bounce z-20">👑</span>
                                                     )}
                                                     <img 
-                                                      src={sup.avatar || DEFAULT_USER.avatar} 
+                                                      src={sup.avatar || getInitialAvatarData(sup.username)} 
                                                       className={`w-6 h-6 rounded-full object-cover shadow-md bg-black/40 ${isMVP ? 'border-2 border-yellow-400' : 'border border-white/20'}`} 
                                                       alt={sup.name} 
                                                     />
@@ -19237,13 +19275,13 @@ export default function App() {
                                             {userLiveCoHost?.isCamOff ? (
                                               <div className="relative w-full h-full flex flex-col items-center justify-center bg-[#0d1220] overflow-hidden select-none p-2">
                                                 <img 
-                                                  src={userLiveCoHost?.avatar || "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=400&q=80"}
+                                                  src={userLiveCoHost?.avatar || getInitialAvatarData(userLiveCoHost?.username)}
                                                   className="absolute inset-0 w-full h-full object-cover opacity-20 blur-xl scale-125"
                                                   alt="blur"
                                                 />
                                                 <div className="relative z-10 flex flex-col items-center justify-center space-y-1.5 text-center">
                                                   <img
-                                                    src={userLiveCoHost?.avatar || "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=400&q=80"}
+                                                    src={userLiveCoHost?.avatar || getInitialAvatarData(userLiveCoHost?.username)}
                                                     className="w-14 h-14 rounded-full object-cover border-2 border-blue-500/70 shadow-lg"
                                                     alt={userLiveCoHost?.username || "Co-Host"}
                                                   />
@@ -19265,7 +19303,7 @@ export default function App() {
                                                       <span className="absolute -top-3.5 left-1/2 -translate-x-1/2 text-[10px] animate-bounce z-20">👑</span>
                                                     )}
                                                     <img 
-                                                      src={sup.avatar || DEFAULT_USER.avatar} 
+                                                      src={sup.avatar || getInitialAvatarData(sup.username)} 
                                                       className={`w-6 h-6 rounded-full object-cover shadow-md bg-black/40 ${isMVP ? 'border-2 border-yellow-400' : 'border border-white/20'}`} 
                                                       alt={(sup as any).name || sup.username} 
                                                     />
@@ -19412,7 +19450,7 @@ export default function App() {
                                         key={toast.id}
                                         className="bg-black/80 backdrop-blur-sm border border-white/5 p-0.5 rounded-full flex items-center space-x-1.5 pr-2 animate-slide-in shadow text-left"
                                       >
-                                        <img src={toast.avatar || DEFAULT_USER.avatar} className="w-6 h-6 rounded-full border border-pink-500/30 object-cover shrink-0" />
+                                        <img src={toast.avatar || getInitialAvatarData(toast.username)} className="w-6 h-6 rounded-full border border-pink-500/30 object-cover shrink-0" />
                                         <div className="flex-1 min-w-0">
                                           <p className="text-[7.5px] text-white font-black truncate">{toast.username}</p>
                                           <p className="text-[6px] text-pink-300 font-bold truncate">sent {toast.giftName}</p>
@@ -19713,7 +19751,7 @@ export default function App() {
                               <div className="flex items-center space-x-2 bg-black/40 backdrop-blur-md px-2 py-1 rounded-full border border-white/10 shadow-lg">
                                 <div className="relative">
                                   <img
-                                    src={liveBroadcasterAvatar || DEFAULT_USER.avatar}
+                                    src={liveBroadcasterAvatar || getInitialAvatarData(liveBroadcasterName)}
                                     className="w-8 h-8 rounded-full border border-pink-500 object-cover"
                                   />
                                   <span className="absolute bottom-0 right-0 bg-blue-500 text-white rounded-full p-0.5 text-[5px] flex items-center justify-center border border-white">
@@ -19738,7 +19776,7 @@ export default function App() {
                                   userLiveViewerList.map((viewer, idx) => (
                                     <div key={(viewer as any).userId || viewer.username || idx} className="flex flex-col items-center bg-transparent shrink-0">
                                       <img
-                                        src={viewer.avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=100&q=80"}
+                                        src={viewer.avatar || getInitialAvatarData(viewer.username)}
                                         className="w-6.5 h-6.5 rounded-full border border-emerald-400/80 object-cover shadow"
                                         title={`@${viewer.username} (Lv.${viewer.level || 1})`}
                                       />
@@ -19750,7 +19788,7 @@ export default function App() {
                                 ) : (
                                   liveRoomTopGifters.map((viewer, idx) => (
                                     <div key={viewer.id || idx} className="flex flex-col items-center bg-transparent shrink-0">
-                                      <img src={viewer.avatar || DEFAULT_USER.avatar} className="w-6.5 h-6.5 rounded-full border border-white/20 object-cover shadow" title={viewer.username} />
+                                      <img src={viewer.avatar || getInitialAvatarData(viewer.username)} className="w-6.5 h-6.5 rounded-full border border-white/20 object-cover shadow" title={viewer.username} />
                                       <span className="text-[7px] text-gray-200 font-black font-mono scale-90 mt-0.5">
                                         {viewer.coinsContributed >= 1000 ? `${(viewer.coinsContributed / 1000).toFixed(1)}K` : viewer.coinsContributed}
                                       </span>
@@ -19844,7 +19882,7 @@ export default function App() {
                               <div className="mx-3 my-2 z-30 bg-[#160f2e]/95 backdrop-blur-md border border-pink-500/50 rounded-2xl p-2.5 shadow-[0_0_20px_rgba(255,0,127,0.35)] flex items-center justify-between animate-bounce select-none">
                                 <div className="flex items-center space-x-2 min-w-0">
                                   <div className="relative shrink-0">
-                                    <img src={userLiveGuestRequests[0].avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&h=150&q=80"} className="w-8 h-8 rounded-full object-cover border-2 border-pink-500 shadow" alt="avatar" />
+                                    <img src={userLiveGuestRequests[0].avatar || getInitialAvatarData(userLiveGuestRequests[0].username)} className="w-8 h-8 rounded-full object-cover border-2 border-pink-500 shadow" alt="avatar" />
                                     <span className="absolute -bottom-1 -right-1 bg-pink-600 text-white text-[6px] font-black px-1 py-0.2 rounded-full font-mono">REQ</span>
                                   </div>
                                   <div className="flex flex-col min-w-0 text-left">
@@ -19868,7 +19906,7 @@ export default function App() {
                                       updated[emptySeatIdx] = {
                                         id: updated[emptySeatIdx].id,
                                         name: req.username || "Guest",
-                                        avatar: req.avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&h=150&q=80",
+                                        avatar: req.avatar || getInitialAvatarData(req.username),
                                         diamonds: "1.2K",
                                         isMuted: false,
                                         isCamMuted: false,
@@ -20002,7 +20040,7 @@ export default function App() {
                                     <div className="flex items-center space-x-1 bg-transparent">
                                       <div className="flex -space-x-1.5 bg-transparent shrink-0">
                                         {pkHostASupporters.map((sup) => (
-                                          <img key={sup.id} src={sup.avatar || DEFAULT_USER.avatar} className="w-4.5 h-4.5 rounded-full border border-red-500/50 object-cover" alt={sup.username} title={sup.username} />
+                                          <img key={sup.id} src={sup.avatar || getInitialAvatarData(sup.username)} className="w-4.5 h-4.5 rounded-full border border-red-500/50 object-cover" alt={sup.username} title={sup.username} />
                                         ))}
                                       </div>
                                       {pkHostASupporters.length > 0 && (
@@ -20029,7 +20067,7 @@ export default function App() {
                                       )}
                                       <div className="flex -space-x-1.5 bg-transparent shrink-0">
                                         {pkHostBSupporters.map((sup) => (
-                                          <img key={sup.id} src={sup.avatar || DEFAULT_USER.avatar} className="w-4.5 h-4.5 rounded-full border border-blue-500/50 object-cover" alt={sup.username} title={sup.username} />
+                                          <img key={sup.id} src={sup.avatar || getInitialAvatarData(sup.username)} className="w-4.5 h-4.5 rounded-full border border-blue-500/50 object-cover" alt={sup.username} title={sup.username} />
                                         ))}
                                       </div>
                                     </div>
@@ -20065,7 +20103,7 @@ export default function App() {
                                         <span className="text-pink-400 font-black">{pkHostASupporters.length}x</span>
                                         <div className="flex -space-x-1">
                                           {pkHostASupporters.slice(0, 3).map((sup) => (
-                                            <img key={sup.id} src={sup.avatar || DEFAULT_USER.avatar} className="w-3.5 h-3.5 rounded-full border border-pink-500/50 object-cover" alt={sup.username} />
+                                            <img key={sup.id} src={sup.avatar || getInitialAvatarData(sup.username)} className="w-3.5 h-3.5 rounded-full border border-pink-500/50 object-cover" alt={sup.username} />
                                           ))}
                                         </div>
                                       </>
@@ -20083,7 +20121,7 @@ export default function App() {
                                         <span className="text-blue-400 font-black">{pkHostBSupporters.length}x</span>
                                         <div className="flex -space-x-1">
                                           {pkHostBSupporters.slice(0, 3).map((sup) => (
-                                            <img key={sup.id} src={sup.avatar || DEFAULT_USER.avatar} className="w-3.5 h-3.5 rounded-full border border-blue-500/50 object-cover" alt={sup.username} />
+                                            <img key={sup.id} src={sup.avatar || getInitialAvatarData(sup.username)} className="w-3.5 h-3.5 rounded-full border border-blue-500/50 object-cover" alt={sup.username} />
                                           ))}
                                         </div>
                                       </>
@@ -20297,7 +20335,7 @@ export default function App() {
                                   <div className="flex items-center justify-center space-x-3 py-2 px-3 bg-white/5 rounded-xl border border-white/10">
                                     <div className="flex flex-col items-center">
                                       <img 
-                                        src={user.avatar || DEFAULT_USER.avatar} 
+                                        src={user.avatar || getInitialAvatarData(user.fullName || user.username)} 
                                         className="w-9 h-9 rounded-full border border-pink-500 object-cover" 
                                         alt={user.username}
                                       />
@@ -20306,7 +20344,7 @@ export default function App() {
                                     <span className="text-pink-500 font-black text-sm font-mono">VS</span>
                                     <div className="flex flex-col items-center">
                                       <img 
-                                        src={userLiveCoHost?.avatar || "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=100&q=80"} 
+                                        src={userLiveCoHost?.avatar || getInitialAvatarData(userLiveCoHost?.username)} 
                                         className="w-9 h-9 rounded-full border border-purple-500 object-cover" 
                                         alt={userLiveCoHost?.username || "Opponent"}
                                       />
@@ -20380,7 +20418,7 @@ export default function App() {
                                   <div className="flex flex-col items-center space-y-2 text-center bg-transparent">
                                     <div className="w-14 h-14 rounded-full overflow-hidden border-2 border-purple-500/60 flex items-center justify-center shadow-lg relative bg-purple-950">
                                       <img 
-                                        src={incoming1v1Invite.inviterAvatar || incoming1v1Invite.fromAvatar || "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=100&q=80"} 
+                                        src={incoming1v1Invite.inviterAvatar || incoming1v1Invite.fromAvatar || getInitialAvatarData(incoming1v1Invite.inviterUsername || incoming1v1Invite.fromUsername)} 
                                         className="w-full h-full object-cover"
                                         alt={incoming1v1Invite.inviterName || incoming1v1Invite.fromUsername || "Host"}
                                       />
@@ -20430,7 +20468,7 @@ export default function App() {
                                               setUserLiveCoHost({
                                                 username: incoming1v1Invite.inviterName || incoming1v1Invite.fromUsername,
                                                 userId: incoming1v1Invite.inviterUserId || incoming1v1Invite.fromUserId,
-                                                avatar: incoming1v1Invite.inviterAvatar || incoming1v1Invite.fromAvatar || "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=100&q=80",
+                                                avatar: incoming1v1Invite.inviterAvatar || incoming1v1Invite.fromAvatar || getInitialAvatarData(incoming1v1Invite.inviterUsername || incoming1v1Invite.fromUsername),
                                                 level: incoming1v1Invite.fromLevel || 1,
                                                 fans: incoming1v1Invite.fromFans || "10K fans"
                                               });
@@ -20676,7 +20714,7 @@ export default function App() {
                                             className="p-2 rounded-xl bg-purple-950/25 hover:bg-purple-900/30 border border-purple-500/10 hover:border-purple-500/30 flex items-center justify-between transition-all cursor-pointer"
                                           >
                                             <div className="flex items-center space-x-2 w-5/12 bg-transparent">
-                                              <img src={match.hostA?.avatar || "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=100&q=80"} className="w-6 h-6 rounded-full object-cover border border-pink-500/40" />
+                                              <img src={match.hostA?.avatar || getInitialAvatarData(match.hostA?.username)} className="w-6 h-6 rounded-full object-cover border border-pink-500/40" />
                                               <span className="text-[8.5px] font-black text-white truncate">@{match.hostA?.username}</span>
                                             </div>
                                             <div className="flex flex-col items-center justify-center w-2/12 bg-transparent">
@@ -20685,7 +20723,7 @@ export default function App() {
                                             </div>
                                             <div className="flex items-center space-x-2 justify-end w-5/12 bg-transparent">
                                               <span className="text-[8.5px] font-black text-white truncate text-right">@{match.hostB?.username}</span>
-                                              <img src={match.hostB?.avatar || "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=100&q=80"} className="w-6 h-6 rounded-full object-cover border border-blue-500/40" />
+                                              <img src={match.hostB?.avatar || getInitialAvatarData(match.hostB?.username)} className="w-6 h-6 rounded-full object-cover border border-blue-500/40" />
                                             </div>
                                           </div>
                                         ))
@@ -20715,7 +20753,7 @@ export default function App() {
                                         }}
                                         className="p-3 rounded-xl bg-pink-900/40 hover:bg-pink-800/50 border border-pink-500/30 flex flex-col items-center space-y-2 transition-all cursor-pointer text-center"
                                       >
-                                        <img src={selectedPkMatch.hostA.avatar || DEFAULT_USER.avatar} className="w-10 h-10 rounded-full border-2 border-pink-500 object-cover" />
+                                        <img src={selectedPkMatch.hostA.avatar || getInitialAvatarData(selectedPkMatch.hostA.username)} className="w-10 h-10 rounded-full border-2 border-pink-500 object-cover" />
                                         <div className="text-center bg-transparent">
                                           <span className="text-[8.5px] font-black text-white block truncate w-24">{selectedPkMatch.hostA.username}</span>
                                           <span className="text-[7.5px] text-pink-300 font-bold block mt-0.5">Host A</span>
@@ -20741,7 +20779,7 @@ export default function App() {
                                         }}
                                         className="p-3 rounded-xl bg-blue-900/40 hover:bg-blue-800/50 border border-blue-500/30 flex flex-col items-center space-y-2 transition-all cursor-pointer text-center"
                                       >
-                                        <img src={selectedPkMatch.hostB.avatar || DEFAULT_USER.avatar} className="w-10 h-10 rounded-full border-2 border-blue-500 object-cover" />
+                                        <img src={selectedPkMatch.hostB.avatar || getInitialAvatarData(selectedPkMatch.hostB.username)} className="w-10 h-10 rounded-full border-2 border-blue-500 object-cover" />
                                         <div className="text-center bg-transparent">
                                           <span className="text-[8.5px] font-black text-white block truncate w-24">{selectedPkMatch.hostB.username}</span>
                                           <span className="text-[7.5px] text-blue-300 font-bold block mt-0.5">Host B</span>
@@ -20776,7 +20814,7 @@ export default function App() {
                                       {
                                         id: "h1",
                                         name: "Aisha_Khan 🌸",
-                                        avatar: "https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=150&h=150&q=80",
+                                        avatar: "",
                                         title: "Pardais music room - beautiful tracks! 🎵",
                                         viewers: "12.4K",
                                         level: 35
@@ -20784,7 +20822,7 @@ export default function App() {
                                       {
                                         id: "h2",
                                         name: "Zain_Killer 🔥",
-                                        avatar: "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=150&h=150&q=80",
+                                        avatar: "",
                                         title: "High energy battle! Join now ⚡",
                                         viewers: "8.5K",
                                         level: 50
@@ -20792,7 +20830,7 @@ export default function App() {
                                       {
                                         id: "h3",
                                         name: "Ali_Shah_PK",
-                                        avatar: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=100&q=80",
+                                        avatar: "",
                                         title: "Friendly chit chat room! 🎤",
                                         viewers: "14.1K",
                                         level: 45
@@ -20800,7 +20838,7 @@ export default function App() {
                                       {
                                         id: "h4",
                                         name: "Tarkan_Lover 🇹🇷",
-                                        avatar: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80",
+                                        avatar: "",
                                         title: "Istanbul evening tunes! 🕌",
                                         viewers: "9.2K",
                                         level: 28
@@ -20823,7 +20861,7 @@ export default function App() {
                                         className="p-2 rounded-xl bg-white/3 hover:bg-white/8 border border-white/5 hover:border-pink-500/25 flex flex-col text-left space-y-1.5 transition-all cursor-pointer"
                                       >
                                         <div className="flex items-center space-x-1.5 bg-transparent">
-                                          <img src={host.avatar || DEFAULT_USER.avatar} className="w-5 h-5 rounded-full object-cover border border-pink-500/20" />
+                                          <img src={host.avatar || getInitialAvatarData(host.name || host.username)} className="w-5 h-5 rounded-full object-cover border border-pink-500/20" />
                                           <div className="min-w-0 flex-1 bg-transparent">
                                             <span className="text-[8px] font-black text-white block truncate">{host.name}</span>
                                             <span className="text-[6.5px] text-gray-400 font-mono block">Lvl {host.level}</span>
@@ -20987,12 +21025,12 @@ export default function App() {
                                   <p className="text-gray-400 font-medium">Currently requesting viewers to join audio/video slots:</p>
                                   <div className="space-y-2 bg-transparent">
                                     {[
-                                      { username: "Zain_Fan_99", avatar: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=50&q=80", type: "Audio seat" },
-                                      { username: "Alina_Malik", avatar: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=50&q=80", type: "Video seat" }
+                                      { username: "Zain_Fan_99", avatar: "", type: "Audio seat" },
+                                      { username: "Alina_Malik", avatar: "", type: "Video seat" }
                                     ].map((req, idx) => (
                                       <div key={idx} className="flex justify-between items-center bg-white/5 p-2 rounded-lg border border-white/5">
                                         <div className="flex items-center space-x-1.5 bg-transparent">
-                                          <img src={req.avatar || DEFAULT_USER.avatar} className="w-5 h-5 rounded-full object-cover shrink-0" />
+                                          <img src={req.avatar || getInitialAvatarData(req.username)} className="w-5 h-5 rounded-full object-cover shrink-0" />
                                           <div className="bg-transparent">
                                             <p className="font-bold text-white text-[8px]">{req.username}</p>
                                             <p className="text-[7px] text-gray-400">{req.type}</p>
@@ -21043,7 +21081,7 @@ export default function App() {
                                     {userLiveGuestRequests.map(req => (
                                       <div key={req.id} className="flex items-center justify-between bg-white/3 p-2 rounded-xl border border-white/5">
                                         <div className="flex items-center space-x-2">
-                                          <img src={req.avatar || DEFAULT_USER.avatar} className="w-7 h-7 rounded-full object-cover border border-purple-500/20" />
+                                          <img src={req.avatar || getInitialAvatarData(req.username)} className="w-7 h-7 rounded-full object-cover border border-purple-500/20" />
                                           <div className="flex flex-col">
                                             <span className="text-[9px] font-black text-white">{req.username}</span>
                                             <span className="text-[7px] text-purple-400 font-mono">Level {req.level}</span>
@@ -21125,7 +21163,7 @@ export default function App() {
                                     return (
                                       <div key={idx} className="flex items-center justify-between bg-white/3 p-2 rounded-xl border border-white/5">
                                         <div className="flex items-center space-x-2">
-                                          <img src={viewer.avatar || DEFAULT_USER.avatar} className="w-7 h-7 rounded-full object-cover" />
+                                          <img src={viewer.avatar || getInitialAvatarData(viewer.username)} className="w-7 h-7 rounded-full object-cover" />
                                           <div className="flex flex-col">
                                             <span className="text-[9px] font-black text-white">{viewer.username}</span>
                                             <span className="text-[7px] text-indigo-400 font-mono">Level {viewer.level}</span>
@@ -21342,7 +21380,7 @@ export default function App() {
                                       <div className="flex items-center justify-between bg-white/3 p-2.5 rounded-xl border border-white/5">
                                         <div className="flex items-center space-x-2.5 bg-transparent">
                                           <div className="relative">
-                                            <img src={seat.avatar || DEFAULT_USER.avatar} className="w-11 h-11 rounded-full object-cover border-2 border-purple-500 shadow-lg" />
+                                            <img src={seat.avatar || getInitialAvatarData(seat.name)} className="w-11 h-11 rounded-full object-cover border-2 border-purple-500 shadow-lg" />
                                             {(seat as any).isModerator && (
                                               <span className="absolute -bottom-1 -right-1 bg-blue-600 text-[6px] text-white px-1 rounded-full font-black border border-[#0c0919]">🛡️</span>
                                             )}
@@ -21566,7 +21604,7 @@ export default function App() {
                                           ...updatedSeats[seatIdx],
                                           id: targetSeatId,
                                           name: user.username || "You (Guest)",
-                                          avatar: user.avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=100&q=80",
+                                          avatar: user.avatar || getInitialAvatarData(user.fullName || user.username),
                                           diamonds: "0.0K",
                                           isMuted: false
                                         };
@@ -21657,7 +21695,7 @@ export default function App() {
                                     >
                                       {userLiveShowCoverPhoto && userLiveCoverPhoto ? (
                                         <>
-                                          <img src={userLiveCoverPhoto || DEFAULT_USER.coverPhoto} className="w-full h-full object-cover group-hover:scale-105 transition-transform" alt="Current Cover" />
+                                          <img src={userLiveCoverPhoto || ""} className="w-full h-full object-cover group-hover:scale-105 transition-transform" alt="Current Cover" />
                                           <div className="absolute inset-0 bg-black/40 group-hover:bg-black/20 flex items-center justify-center">
                                             <div className="w-6 h-6 rounded-full bg-pink-600 text-white flex items-center justify-center shadow-lg">
                                               <Plus className="w-4 h-4" />
@@ -22176,7 +22214,7 @@ export default function App() {
                                       .map((u: any) => ({
                                         id: String(u.id || u.userId || u.username),
                                         username: String(u.username || "User"),
-                                        avatar: String(u.avatar || "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=100&q=80"),
+                                        avatar: String(u.avatar || getInitialAvatarData(u.fullName || u.username)),
                                         fans: String(u.fans || "10K fans"),
                                         level: Number(u.level || 1),
                                         flag: "🇵🇰",
@@ -22218,7 +22256,7 @@ export default function App() {
                                         >
                                           <div className="flex items-center space-x-2.5 text-left bg-transparent">
                                             <div className="relative shrink-0">
-                                              <img src={host.avatar || DEFAULT_USER.avatar} className="w-8 h-8 rounded-full object-cover border border-purple-500/30" />
+                                              <img src={host.avatar || getInitialAvatarData(host.name || host.username)} className="w-8 h-8 rounded-full object-cover border border-purple-500/30" />
                                               <span className="absolute bottom-0 right-0 w-2 h-2 bg-green-500 rounded-full border border-black animate-pulse"></span>
                                             </div>
                                             <div className="flex flex-col bg-transparent">
@@ -23274,7 +23312,7 @@ export default function App() {
                             <>
                               <div className="flex items-center space-x-2.5">
                                 <div className="w-10 h-10 rounded-lg overflow-hidden border border-yellow-500">
-                                  <img src={familiesList[0].avatar || DEFAULT_USER.avatar} className="w-full h-full object-cover" alt="fam" />
+                                  <img src={familiesList[0].avatar || getInitialAvatarData(familiesList[0].name)} className="w-full h-full object-cover" alt="fam" />
                                 </div>
                                 <div>
                                   <p className="text-xs font-black text-white">{familiesList[0].name}</p>
@@ -23366,8 +23404,8 @@ export default function App() {
                                     </span>
                                     
                                     <div className="flex -space-x-2.5 relative items-center">
-                                      <img src={couple.avatar1 || DEFAULT_USER.avatar} className="w-7 h-7 rounded-full object-cover border border-amber-400" alt="p1" referrerPolicy="no-referrer" />
-                                      <img src={couple.avatar2 || DEFAULT_USER.avatar} className="w-7 h-7 rounded-full object-cover border border-yellow-500" alt="p2" referrerPolicy="no-referrer" />
+                                      <img src={couple.avatar1 || getInitialAvatarData(couple.name.split(" & ")[0])} className="w-7 h-7 rounded-full object-cover border border-amber-400" alt="p1" referrerPolicy="no-referrer" />
+                                      <img src={couple.avatar2 || getInitialAvatarData(couple.name.split(" & ")[1])} className="w-7 h-7 rounded-full object-cover border border-yellow-500" alt="p2" referrerPolicy="no-referrer" />
                                     </div>
 
                                     <div>
@@ -23457,7 +23495,7 @@ export default function App() {
                                           const contact = {
                                             name: u.fullName || u.username,
                                             username: u.username,
-                                            avatar: u.avatar || "https://api.dicebear.com/7.x/adventurer/svg?seed=" + u.username,
+                                            avatar: u.avatar || getInitialAvatarData(u.fullName || u.username),
                                             bio: u.bio || "Official Pardais Party member 🌟",
                                             followersCount: u.followersCount || 0,
                                             followingCount: u.followingCount || 0,
@@ -23497,7 +23535,7 @@ export default function App() {
                                         className="flex items-center space-x-2.5 p-2 rounded-xl bg-[#141008] hover:bg-amber-500/15 border border-amber-500/30 cursor-pointer transition-all active:scale-95 group"
                                       >
                                         <div className="relative">
-                                          <img src={u.avatar || "https://api.dicebear.com/7.x/adventurer/svg?seed=" + u.username} className="w-8 h-8 rounded-full object-cover border border-amber-400 shrink-0" alt="" referrerPolicy="no-referrer" />
+                                          <img src={u.avatar || getInitialAvatarData(u.fullName || u.username)} className="w-8 h-8 rounded-full object-cover border border-amber-400 shrink-0" alt="" referrerPolicy="no-referrer" />
                                           {u.isOnline && (
                                             <span className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-green-500 rounded-full border border-[#141008]" />
                                           )}
@@ -23538,7 +23576,7 @@ export default function App() {
                                   const otherUser = allRegisteredUsers.find(u => u.username === otherUsername) || {
                                     username: otherUsername,
                                     fullName: otherUsername,
-                                    avatar: "https://api.dicebear.com/7.x/adventurer/svg?seed=" + otherUsername,
+                                    avatar: getInitialAvatarData(otherUsername),
                                     bio: "Pardais Party member 🇵🇰",
                                     followersCount: 0,
                                     followingCount: 0,
@@ -23582,7 +23620,7 @@ export default function App() {
                                           }}
                                           title="View profile photo"
                                         >
-                                          <img src={otherUser.avatar || DEFAULT_USER.avatar} className="w-full h-full object-cover" alt="avatar" referrerPolicy="no-referrer" />
+                                          <img src={otherUser.avatar || getInitialAvatarData(otherUser.fullName || otherUser.username)} className="w-full h-full object-cover" alt="avatar" referrerPolicy="no-referrer" />
                                           {otherUser.isOnline && (
                                             <span className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-green-500 rounded-full border border-[#141008]" />
                                           )}
@@ -23642,7 +23680,7 @@ export default function App() {
                                                 const contact = {
                                                   name: u.fullName || u.username,
                                                   username: u.username,
-                                                  avatar: u.avatar || "https://api.dicebear.com/7.x/adventurer/svg?seed=" + u.username,
+                                                  avatar: u.avatar || getInitialAvatarData(u.fullName || u.username),
                                                   bio: u.bio || "Pardais Party member 🇵🇰",
                                                   followersCount: u.followersCount || 0,
                                                   followingCount: u.followingCount || 0,
@@ -23680,7 +23718,7 @@ export default function App() {
                                               className="flex items-center justify-between p-2 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 transition-all border border-amber-500/20 cursor-pointer text-xs"
                                             >
                                               <div className="flex items-center space-x-2 min-w-0">
-                                                <img src={u.avatar || "https://api.dicebear.com/7.x/adventurer/svg?seed=" + u.username} className="w-7 h-7 rounded-full object-cover border border-amber-400" alt="" referrerPolicy="no-referrer" />
+                                                <img src={u.avatar || getInitialAvatarData(u.fullName || u.username)} className="w-7 h-7 rounded-full object-cover border border-amber-400" alt="" referrerPolicy="no-referrer" />
                                                 <div className="min-w-0">
                                                   <p className="font-bold text-amber-100 text-[11px] truncate">{u.fullName || u.username}</p>
                                                   <p className="text-[8.5px] text-amber-200/60 truncate">@{u.username}</p>
@@ -23730,7 +23768,7 @@ export default function App() {
                                   className="w-8.5 h-8.5 rounded-full overflow-hidden border-2 border-amber-400 mr-2 shrink-0 cursor-pointer hover:scale-105 active:scale-95 transition-transform shadow-[0_0_10px_rgba(245,158,11,0.4)]"
                                   title="View Photo"
                                 >
-                                  <img src={activeChatContact.avatar || DEFAULT_USER.avatar} className="w-full h-full object-cover" alt="avatar" />
+                                  <img src={activeChatContact.avatar || getInitialAvatarData(activeChatContact.fullName || activeChatContact.username)} className="w-full h-full object-cover" alt="avatar" />
                                 </div>
 
                                 {/* Visit Profile Trigger */}
@@ -24211,7 +24249,7 @@ export default function App() {
                             <div className="max-w-xs w-full bg-[#1a1a24] border border-[#ff007f] rounded-2xl p-4 text-center shadow-2xl relative" onClick={(e) => e.stopPropagation()}>
                               <h3 className="text-xs font-black text-white mb-2.5 font-mono text-center">{showActiveChatDPModal.name}</h3>
                               <div className="w-full aspect-square rounded-xl overflow-hidden border border-[#303040] mb-3.5">
-                                <img src={showActiveChatDPModal.avatar || DEFAULT_USER.avatar} className="w-full h-full object-cover" alt="Full profile photo" referrerPolicy="no-referrer" />
+                                <img src={showActiveChatDPModal.avatar || getInitialAvatarData(showActiveChatDPModal.name)} className="w-full h-full object-cover" alt="Full profile photo" referrerPolicy="no-referrer" />
                               </div>
                               <button
                                 type="button"
@@ -24244,7 +24282,7 @@ export default function App() {
                                   setShowActiveChatDPModal({ name: showActiveChatProfileModal.name, avatar: showActiveChatProfileModal.avatar });
                                   setShowActiveChatProfileModal(null);
                                 }}>
-                                  <img src={showActiveChatProfileModal.avatar || DEFAULT_USER.avatar} className="w-full h-full object-cover" alt="Profile pic" referrerPolicy="no-referrer" />
+                                  <img src={showActiveChatProfileModal.avatar || getInitialAvatarData(showActiveChatProfileModal.name)} className="w-full h-full object-cover" alt="Profile pic" referrerPolicy="no-referrer" />
                                 </div>
                                 <h4 className="text-xs font-black text-white">{showActiveChatProfileModal.name}</h4>
                                 <span className="text-[8px] bg-[#ff007f]/20 text-[#ff007f] px-2 py-0.5 rounded-full font-bold font-mono mt-1">Verified Creator Badge ✔</span>
@@ -24502,7 +24540,7 @@ export default function App() {
                                           <div className="flex flex-col items-center w-[30%] text-center animate-fade-in">
                                             <div className="relative">
                                               <Crown className="w-5 h-5 text-gray-300 absolute -top-4 left-1/2 -translate-x-1/2 drop-shadow-md" />
-                                              <img src={r2.avatar || DEFAULT_USER.avatar} className="w-11 h-11 rounded-full border-2 border-gray-400 object-cover shadow-lg" alt="silver" />
+                                              <img src={r2.avatar || getInitialAvatarData(r2.username || r2.name)} className="w-11 h-11 rounded-full border-2 border-gray-400 object-cover shadow-lg" alt="silver" />
                                               <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 bg-gray-400 text-black text-[7px] font-black rounded-full px-1.5 py-0.2 leading-none font-mono">2nd</span>
                                             </div>
                                             <p className="text-[9px] font-black text-white mt-2 truncate w-full leading-tight">{r2.name}</p>
@@ -24523,7 +24561,7 @@ export default function App() {
                                             <div className="relative">
                                               <Crown className="w-6 h-6 text-yellow-400 absolute -top-5 left-1/2 -translate-x-1/2 drop-shadow-lg animate-bounce" />
                                               <div className="p-0.5 bg-gradient-to-tr from-yellow-400 via-amber-300 to-yellow-500 rounded-full animate-pulse shadow-xl">
-                                                <img src={r1.avatar || DEFAULT_USER.avatar} className="w-13 h-13 rounded-full border border-black object-cover" alt="gold" />
+                                                <img src={r1.avatar || getInitialAvatarData(r1.username || r1.name)} className="w-13 h-13 rounded-full border border-black object-cover" alt="gold" />
                                               </div>
                                               <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 bg-yellow-400 text-black text-[7.5px] font-black rounded-full px-2 py-0.2 leading-none font-mono shadow-md border border-black/10">1st</span>
                                             </div>
@@ -24544,7 +24582,7 @@ export default function App() {
                                           <div className="flex flex-col items-center w-[30%] text-center animate-fade-in">
                                             <div className="relative">
                                               <Crown className="w-5 h-5 text-amber-600 absolute -top-4 left-1/2 -translate-x-1/2 drop-shadow-md" />
-                                              <img src={r3.avatar || DEFAULT_USER.avatar} className="w-11 h-11 rounded-full border-2 border-amber-600 object-cover shadow-lg" alt="bronze" />
+                                              <img src={r3.avatar || getInitialAvatarData(r3.username || r3.name)} className="w-11 h-11 rounded-full border-2 border-amber-600 object-cover shadow-lg" alt="bronze" />
                                               <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 bg-amber-600 text-white text-[7px] font-black rounded-full px-1.5 py-0.2 leading-none font-mono">3rd</span>
                                             </div>
                                             <p className="text-[9px] font-black text-white mt-2 truncate w-full leading-tight">{r3.name}</p>
@@ -24579,7 +24617,7 @@ export default function App() {
 
                                           {/* Avatar with optional live ring */}
                                           <div className="relative shrink-0">
-                                            <img src={item.avatar || DEFAULT_USER.avatar} className="w-8.5 h-8.5 rounded-full object-cover border border-white/10" alt="avatar" />
+                                            <img src={item.avatar || getInitialAvatarData(item.username || item.name)} className="w-8.5 h-8.5 rounded-full object-cover border border-white/10" alt="avatar" />
                                             {item.isLive && (
                                               <span className="absolute -bottom-0.5 -right-0.5 bg-red-500 text-white text-[5.5px] font-black px-1 rounded-full border border-black animate-pulse font-mono scale-90">LIVE</span>
                                             )}
@@ -24704,7 +24742,7 @@ export default function App() {
                         const icon = getIconForType(notif.type);
                         const badgeStyle = getBgColorForType(notif.type);
                         const isUnread = notif.isNew;
-                        const avatar = notif.userAvatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80";
+                        const avatar = notif.userAvatar || getInitialAvatarData(notif.targetUsername || notif.title);
                         
                         const handleItemClick = async () => {
                           if (isUnread) {
@@ -24756,7 +24794,7 @@ export default function App() {
                           >
                             <div className="relative shrink-0">
                               <div className="w-9 h-9 rounded-full overflow-hidden border border-[#2a2a3a]">
-                                <img src={avatar || DEFAULT_USER.avatar} className="w-full h-full object-cover" alt="avatar" referrerPolicy="no-referrer" />
+                                <img src={avatar || getInitialAvatarData(name)} className="w-full h-full object-cover" alt="avatar" referrerPolicy="no-referrer" />
                               </div>
                               <span className={`absolute -bottom-1 -right-1 text-[10px] w-4 h-4 rounded-full flex items-center justify-center border border-[#0e0e15] ${badgeStyle} p-0.5`}>
                                 {icon}
@@ -25954,7 +25992,7 @@ export default function App() {
                                     {/* User metadata */}
                                     <div className="min-w-0 flex-1 z-10 bg-transparent">
                                       <div className="flex items-center space-x-1 border-b border-[#303040]/50 pb-1.5 bg-transparent">
-                                        <img src={viewingUser.avatar || user.avatar || DEFAULT_USER.avatar} className="w-5 h-5 rounded-full object-cover border border-[#ff007f]" alt="av" />
+                                        <img src={viewingUser.avatar || user.avatar || getInitialAvatarData(user.fullName || user.username)} className="w-5 h-5 rounded-full object-cover border border-[#ff007f]" alt="av" />
                                         <p className="text-xs font-black text-white truncate max-w-[120px] bg-transparent">{viewingUser.fullName || viewingUser.username}</p>
                                         {currentVip > 0 && (
                                           <span className="text-[7.5px] bg-amber-500/20 text-amber-300 border border-amber-400/50 px-1 py-0.5 rounded-full font-black ml-1">
@@ -26145,7 +26183,7 @@ export default function App() {
                               <div className="flex items-center space-x-2 min-w-0 flex-1">
                                 <div className="relative shrink-0">
                                   <img 
-                                    src={user.avatar || DEFAULT_USER.avatar} 
+                                    src={user.avatar || getInitialAvatarData(user.fullName || user.username)} 
                                     className="w-8 h-8 rounded-full object-cover border border-pink-500/60 shadow" 
                                     alt="Active" 
                                   />
@@ -26196,7 +26234,7 @@ export default function App() {
                                       >
                                         <div className="flex items-center space-x-2 min-w-0 flex-1">
                                           <img 
-                                            src={acc.avatar || DEFAULT_USER.avatar} 
+                                            src={acc.avatar || getInitialAvatarData(acc.fullName || acc.username)} 
                                             className="w-7 h-7 rounded-full object-cover border border-white/10" 
                                             alt={acc.username}
                                           />
@@ -26717,7 +26755,7 @@ export default function App() {
                                       return (
                                         <div key={host.id} className="flex items-center justify-between bg-black/20 p-1 rounded border border-white/5">
                                           <div className="flex items-center space-x-1.5 bg-transparent">
-                                            <img src={host.avatar || DEFAULT_USER.avatar} className="w-4 h-4 rounded-full object-cover" />
+                                            <img src={host.avatar || getInitialAvatarData(host.name || host.username)} className="w-4 h-4 rounded-full object-cover" />
                                             <span className="text-[9px] text-white font-medium">{host.name}</span>
                                           </div>
                                           <button
@@ -29594,7 +29632,7 @@ export default function App() {
                             <div className="flex justify-between items-center bg-transparent">
                               <div className="flex items-center space-x-2.5 bg-transparent">
                                 <div className="w-9 h-9 rounded-full p-[1.5px] bg-gradient-to-tr from-[#ff007f] via-purple-600 to-amber-400">
-                                  <img src={currentStory.avatar || DEFAULT_USER.avatar} className="w-full h-full rounded-full object-cover border border-black" alt={currentStory.fullName} />
+                                  <img src={currentStory.avatar || getInitialAvatarData(currentStory.fullName || currentStory.username)} className="w-full h-full rounded-full object-cover border border-black" alt={currentStory.fullName} />
                                 </div>
                                 <div className="bg-transparent leading-none">
                                   <h4 className="text-[10px] font-black text-white tracking-wide flex items-center space-x-1.5 bg-transparent">
@@ -29757,7 +29795,7 @@ export default function App() {
                                 ) : (
                                   currentStory.replies.map((reply) => (
                                     <div key={reply.id} className="flex space-x-2 bg-white/5 p-1.5 rounded-xl border border-white/5 align-top">
-                                      <img src={reply.avatar || DEFAULT_USER.avatar} className="w-5 h-5 rounded-full object-cover shrink-0" alt={reply.fullName} />
+                                      <img src={reply.avatar || getInitialAvatarData(reply.fullName || reply.username)} className="w-5 h-5 rounded-full object-cover shrink-0" alt={reply.fullName} />
                                       <div className="bg-transparent flex-1 text-left">
                                         <div className="flex justify-between items-baseline bg-transparent">
                                           <span className="text-[7.5px] font-black text-pink-400">@{reply.username}</span>
@@ -30961,7 +30999,7 @@ export default function App() {
       {/* ===================================================================== */}
       {showCoHostMenuModal && (() => {
         const coHostName = activeHost.coHostUsername || activeHost.coHostName || activeHost.opponentName || "Captain_Leo";
-        const coHostAvatar = activeHost.coHostAvatar || activeHost.opponentAvatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&h=150&q=80";
+        const coHostAvatar = activeHost.coHostAvatar || activeHost.opponentAvatar || getInitialAvatarData(hostBName);
         const coHostLevel = getHostLevelFromName(coHostName);
         const isFollowing = followedUsers.includes(coHostName);
 
@@ -30978,7 +31016,7 @@ export default function App() {
               {/* Header Profile Section */}
               <div className="flex items-center space-x-3 pb-3 border-b border-white/10">
                 <div className="w-14 h-14 rounded-full border-2 border-cyan-400 overflow-hidden shadow-lg shrink-0">
-                  <img src={coHostAvatar || DEFAULT_USER.avatar} className="w-full h-full object-cover" alt={coHostName} />
+                  <img src={coHostAvatar || getInitialAvatarData(userLiveCoHost?.username)} className="w-full h-full object-cover" alt={coHostName} />
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center space-x-1.5">
@@ -31028,7 +31066,7 @@ export default function App() {
                   onClick={() => {
                     // Swap perspective to Co-Host!
                     const currentMainName = activeHost.name || "Host_A";
-                    const currentMainAvatar = activeHost.avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&h=150&q=80";
+                    const currentMainAvatar = activeHost.avatar || getInitialAvatarData(activeHost.name || activeHost.username);
 
                     setActiveHost({
                       ...activeHost,
@@ -31079,7 +31117,7 @@ export default function App() {
                   <p className="text-[10px] text-gray-500 text-center py-8">No active viewers yet.</p>
                 ) : viewers.map((v: any, i: number) => (
                   <div key={`${v.username || "viewer"}-${i}`} className="flex items-center gap-2.5 p-2 rounded-xl bg-white/5 border border-white/5">
-                    <img src={v.avatar || DEFAULT_USER.avatar} className="w-9 h-9 rounded-full object-cover border border-cyan-400/30" />
+                    <img src={v.avatar || getInitialAvatarData(v.username)} className="w-9 h-9 rounded-full object-cover border border-cyan-400/30" />
                     <div className="min-w-0 flex-1">
                       <p className="text-[10px] font-black text-white truncate">@{v.username || "Viewer"}</p>
                       <p className="text-[7.5px] text-gray-400 font-mono">Lv.{v.userLevel || v.level || 1}{v.vipLevel ? ` • VIP ${v.vipLevel}` : ""}</p>
@@ -31139,7 +31177,7 @@ export default function App() {
                 ) : gifterRows.map((row, i) => (
                   <div key={row.username} className="flex items-center gap-2 p-2 rounded-xl bg-white/5 border border-amber-400/10">
                     <span className="w-6 text-center text-[11px] font-black text-amber-300">#{i + 1}</span>
-                    <img src={row.avatar || DEFAULT_USER.avatar} className="w-8 h-8 rounded-full object-cover" />
+                    <img src={row.avatar || getInitialAvatarData(row.username)} className="w-8 h-8 rounded-full object-cover" />
                     <div className="flex-1 min-w-0"><p className="text-[9px] font-black text-white truncate">@{row.username}</p><p className="text-[7px] text-gray-400">{row.gifts} gift action{row.gifts === 1 ? "" : "s"}</p></div>
                     <span className="text-[8px] font-black text-amber-300">{row.coins.toLocaleString()} 🪙</span>
                   </div>
@@ -31148,7 +31186,7 @@ export default function App() {
                 ) : hostRows.map((row: any, i: number) => (
                   <div key={row.username} className="flex items-center gap-2 p-2 rounded-xl bg-white/5 border border-purple-400/10">
                     <span className="w-6 text-center text-[11px] font-black text-purple-300">#{i + 1}</span>
-                    <img src={row.avatar || DEFAULT_USER.avatar} className="w-8 h-8 rounded-full object-cover" />
+                    <img src={row.avatar || getInitialAvatarData(row.username)} className="w-8 h-8 rounded-full object-cover" />
                     <div className="flex-1 min-w-0"><p className="text-[9px] font-black text-white truncate">@{row.username}{row.isHost ? " 👑" : ""}</p><p className="text-[7px] text-gray-400">Audience {row.audience} • Gifts {row.giftCoins.toLocaleString()}</p></div>
                     <span className="text-[8px] font-black text-purple-300">Score {Math.round(row.score).toLocaleString()}</span>
                   </div>
@@ -31190,7 +31228,7 @@ export default function App() {
                   const name = v.username || "User";
                   const level = v.level || v.userLevel || getHostLevelFromName(name);
                   const vip = v.vipLevel || v.vip || getVipLevelFromUserLevel(level);
-                  const avatar = v.avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=50&h=50&q=80";
+                  const avatar = v.avatar || getInitialAvatarData(v.username);
                   const tag = vip > 0 ? `VIP ${vip} 👑` : (level >= 30 ? "Elite 🦁" : "Viewer 👋");
                   return (
                     <div
@@ -31206,7 +31244,7 @@ export default function App() {
                       className="flex items-center justify-between p-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/5 cursor-pointer hover:border-purple-500/30 transition-all group text-left"
                     >
                       <div className="flex items-center space-x-2.5 bg-transparent">
-                        <img src={avatar || DEFAULT_USER.avatar} className="w-8 h-8 rounded-full object-cover border border-white/10 shrink-0" referrerPolicy="no-referrer" />
+                        <img src={avatar || getInitialAvatarData(name)} className="w-8 h-8 rounded-full object-cover border border-white/10 shrink-0" referrerPolicy="no-referrer" />
                         <div className="bg-transparent">
                           <div className="flex items-center space-x-1 bg-transparent">
                             <span className="text-[10px] font-black text-white group-hover:text-pink-400 transition-colors">@{name}</span>

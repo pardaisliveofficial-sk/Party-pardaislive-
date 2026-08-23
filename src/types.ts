@@ -43,6 +43,8 @@ export interface UserProfile {
   avatarUrl?: string;
   avatarUpdatedAt?: string;
   avatarSource?: "user-upload" | "default";
+  coverPhotoUpdatedAt?: string;
+  coverPhotoSource?: "user-upload" | "default";
   profileUpdatedAt?: string;
   coverPhoto: string;
   bio: string;

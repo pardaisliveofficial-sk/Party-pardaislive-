@@ -140,7 +140,7 @@ export const dbDataCache: any = {
   user: {
     username: "Pardais_User",
     uniqueId: "pardes_1001",
-    avatar: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80",
+    avatar: "",
     coverPhoto: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=800&q=80",
     bio: "Welcome to Pardes Party!",
     gender: "Male",

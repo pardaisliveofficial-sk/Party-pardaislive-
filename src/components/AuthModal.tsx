@@ -27,6 +27,7 @@ import {
 } from "../lib/apiClient";
 import { getSavedAccounts, saveAccountToDevice } from "../lib/accountStorage";
 import { SavedAccount } from "../types";
+import { getInitialAvatarData } from "../lib/avatarFallback";
 import { DEFAULT_USER } from "../data";
 
 interface AuthModalProps {
@@ -426,7 +427,7 @@ export default function AuthModal({
                       >
                         <div className="flex items-center space-x-2 min-w-0 flex-1">
                           <img
-                            src={acc.avatar || DEFAULT_USER.avatar}
+                            src={acc.avatar || getInitialAvatarData(acc.fullName || acc.username)}
                             alt={acc.username}
                             className="w-7 h-7 rounded-full object-cover border border-white/10"
                           />

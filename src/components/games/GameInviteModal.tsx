@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { getInitialAvatarData } from "../../lib/avatarFallback";
 import { X, Users, UserCheck, Sparkles, Trophy, Send, Coins, Bot, ShieldCheck } from "lucide-react";
 import { UserProfile } from "../../types";
 
@@ -112,7 +113,7 @@ export const GameInviteModal: React.FC<GameInviteModalProps> = ({
                   >
                     <div className="flex items-center space-x-2 min-w-0">
                       <img
-                        src={guest.avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=60&h=60&q=80"}
+                        src={guest.avatar || getInitialAvatarData(guest.username)}
                         alt={guest.username}
                         className="w-8 h-8 rounded-full object-cover border border-white/10"
                       />

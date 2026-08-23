@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
+import { getInitialAvatarData } from "../../lib/avatarFallback";
 import { ArrowLeft, Sparkles, Trophy, RotateCw, Volume2, Users, Bot, ShieldCheck } from "lucide-react";
 import { UserProfile } from "../../types";
 import { InGameVoiceChat } from "./InGameVoiceChat";
@@ -39,7 +40,7 @@ export const LudoGame: React.FC<LudoGameProps> = ({
     {
       id: "red",
       name: user.username || "You",
-      avatar: user.avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=100&h=100&q=80",
+      avatar: user.avatar || getInitialAvatarData(user.fullName || user.username),
       color: "#ef4444",
       bgGrad: "from-red-600 to-rose-700",
       tokens: [-1, -1, 0, 4] // Start with 2 tokens on track for fast & fun action!

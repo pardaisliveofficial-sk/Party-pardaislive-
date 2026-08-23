@@ -283,7 +283,7 @@ async function authenticateUser(req: any, res: any, next: any) {
       uniqueId: cleanEmail ? stablePardaisId(cleanEmail) : `pardes_${uid.slice(-10)}`,
       fullName: "",
       avatar: "",
-      coverPhoto: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=800&q=80",
+      coverPhoto: "",
       bio: "Pardais Party Member 🇵🇰",
       gender: "Male",
       country: "Pakistan",
@@ -1232,7 +1232,7 @@ app.post("/api/v1/auth/google-login", async (req, res) => {
       username: "",
       uniqueId,
       fullName: displayName?.trim() || "",
-      avatar: photoURL?.trim() || `https://api.dicebear.com/7.x/adventurer/svg?seed=${encodeURIComponent(cleanEmail)}`,
+      avatar: photoURL?.trim() || "",
       coverPhoto: "",
       bio: "",
       gender: "",
@@ -1673,7 +1673,7 @@ app.post("/api/v1/auth/verify-email-otp", async (req, res) => {
       uniqueId: stablePardaisId(cleanEmail),
       fullName: "",
       avatar: "",
-      coverPhoto: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=800&q=80",
+      coverPhoto: "",
       bio: "Pardais Party Member 🇵🇰",
       gender: "Male",
       country: "Pakistan",
@@ -1771,7 +1771,7 @@ app.post("/api/v1/auth/recover-email-session", async (req, res) => {
       username: cleanEmail.split("@")[0].replace(/[^a-zA-Z0-9_]/g, "_") || `user_${Math.floor(1000 + Math.random() * 9000)}`,
       uniqueId: stablePardaisId(cleanEmail),
       fullName: "", avatar: "",
-      coverPhoto: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=800&q=80",
+      coverPhoto: "",
       bio: "Pardais Party Member 🇵🇰", gender: "Male", country: "Pakistan", language: "Urdu / Hinglish",
       coins: 0, diamonds: 0, vipLevel: 0, userLevel: 1, hostLevel: 1, wealthLevel: 1, xp: 0,
       familyId: "", agencyId: "", isVerified: true, isBanned: false, twoFactorEnabled: false,
@@ -2525,7 +2525,7 @@ app.post("/api/v1/auth/guest-login", (req, res) => {
         username: requestedUsername,
         uniqueId: `pardais_${Math.floor(1000 + Math.random() * 9000)}`,
         fullName: req.body?.fullName || "Pardais Member",
-        avatar: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80",
+        avatar: "",
         bio: "Pardais Party Member 🇵🇰",
         gender: "Male",
         country: "Pakistan",
@@ -2591,7 +2591,7 @@ app.post("/api/v1/auth/refresh-session", async (req, res) => {
       uniqueId: `pardais_${Math.floor(1000 + Math.random() * 9000)}`,
       email: requestedEmail,
       fullName: req.body?.fullName || "Pardais Member",
-      avatar: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80",
+      avatar: "",
       bio: "Pardais Party Member 🇵🇰",
       gender: "Male",
       country: "Pakistan",
@@ -2725,7 +2725,7 @@ app.post("/api/v1/user", authenticateUser, async (req: any, res: any) => {
 
   // Only editable profile fields are permitted: DP (avatar), fullName, dob/age, phoneNumber, bio, gender, country, language.
   // Permanent identity fields (username, uniqueId, email, passwordHash, coins, diamonds, vipLevel) cannot be altered via profile edit.
-  const allowedFields = ["avatar", "fullName", "dob", "phoneNumber", "bio", "gender", "country", "language"];
+  const allowedFields = ["avatar", "coverPhoto", "fullName", "dob", "phoneNumber", "bio", "gender", "country", "language"];
   const profileUpdates: Record<string, any> = {};
   for (const field of allowedFields) {
     if (req.body && req.body[field] !== undefined) {
@@ -2746,6 +2746,10 @@ app.post("/api/v1/user", authenticateUser, async (req: any, res: any) => {
   if (profileUpdates.avatar !== undefined) {
     updatedUser.avatarUpdatedAt = profileUpdatedAt;
     updatedUser.avatarSource = profileUpdates.avatar ? "user-upload" : "default";
+  }
+  if (profileUpdates.coverPhoto !== undefined) {
+    updatedUser.coverPhotoUpdatedAt = profileUpdatedAt;
+    updatedUser.coverPhotoSource = profileUpdates.coverPhoto ? "user-upload" : "default";
   }
   req.user = updatedUser;
   
@@ -7707,6 +7711,83 @@ app.get('/api/v1/gifts/animation', async (req: any, res: any) => {
 // R2 objects are private in some production configurations, so the client must
 // never depend on the R2_PUBLIC_URL being directly readable. The API proxies only
 // objects under the avatars/ prefix and preserves the stored image content type.
+const coverMulterUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 25 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    const mime = String(file.mimetype || "").toLowerCase();
+    const name = String(file.originalname || "").toLowerCase();
+    cb(null, mime.startsWith("image/") || /\.(jpg|jpeg|png|webp|gif|avif|heic|heif)$/i.test(name));
+  }
+});
+
+app.get("/api/v1/user/cover-media", async (req: any, res: any) => {
+  try {
+    const objectKey = typeof req.query?.key === "string" ? req.query.key : "";
+    if (!objectKey || !objectKey.startsWith("covers/") || objectKey.includes("..")) return res.status(400).json({ error: "Invalid cover media key." });
+    if (!process.env.R2_ACCESS_KEY_ID || !process.env.R2_SECRET_ACCESS_KEY || !process.env.R2_ENDPOINT) return res.status(503).json({ error: "Profile media storage is temporarily unavailable." });
+    const result: any = await getS3Client().send(new GetObjectCommand({ Bucket: process.env.R2_BUCKET_NAME || "pardaisparty-reels", Key: objectKey }));
+    res.setHeader("Content-Type", String(result.ContentType || "image/webp"));
+    res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+    if (result.ContentLength != null) res.setHeader("Content-Length", String(result.ContentLength));
+    if (result.Body && typeof result.Body.pipe === "function") result.Body.pipe(res);
+    else if (result.Body) res.end(Buffer.from(await result.Body.transformToByteArray()));
+    else res.status(404).json({ error: "Cover photo not found." });
+  } catch (err: any) {
+    console.error("[PARDAIS-PARTY COVER MEDIA] Playback failed:", err?.message || err);
+    return res.status(404).json({ error: "Cover photo not found." });
+  }
+});
+
+app.post("/api/v1/user/cover", authenticateUser, (req: any, res: any, next: any) => {
+  coverMulterUpload.single("cover")(req, res, (uploadErr: any) => {
+    if (uploadErr) return res.status(400).json({ success: false, error: uploadErr?.message || "Cover photo upload could not be read." });
+    next();
+  });
+}, async (req: any, res: any) => {
+  try {
+    if (!req.user) return res.status(401).json({ success: false, error: "Unauthorized. Please log in." });
+    const file = req.file;
+    if (!file?.buffer || file.size <= 0) return res.status(400).json({ success: false, error: "No valid cover photo was uploaded." });
+    let uploadBuffer = file.buffer;
+    let uploadContentType = String(file.mimetype || "image/jpeg").toLowerCase();
+    let uploadExtension = uploadContentType === "image/png" ? "png" : uploadContentType === "image/webp" ? "webp" : "jpg";
+    try {
+      uploadBuffer = await sharp(file.buffer).rotate().resize(1600, 900, { fit: "cover", withoutEnlargement: true }).webp({ quality: 86 }).toBuffer();
+      uploadContentType = "image/webp"; uploadExtension = "webp";
+    } catch (e: any) { console.warn("[PARDAIS-PARTY COVER] Image optimization skipped:", e?.message || e); }
+    const safeUserId = String(req.user.uid || req.user.username || "user").replace(/[^a-zA-Z0-9_-]/g, "_");
+    const objectKey = `covers/${safeUserId}/${Date.now()}-${crypto.randomBytes(5).toString("hex")}.${uploadExtension}`;
+    let coverUrl = "";
+    try {
+      const bucketName = process.env.R2_BUCKET_NAME || "pardaisparty-reels";
+      await Promise.race([
+        getS3Client().send(new PutObjectCommand({ Bucket: bucketName, Key: objectKey, Body: uploadBuffer, ContentType: uploadContentType, ContentLength: uploadBuffer.length, CacheControl: "public, max-age=31536000, immutable" })),
+        new Promise((_, reject) => setTimeout(() => reject(new Error("R2 cover upload timeout")), 10000))
+      ]);
+      coverUrl = `${PUBLIC_API_BASE}/api/v1/user/cover-media?key=${encodeURIComponent(objectKey)}`;
+    } catch (r2Err: any) {
+      console.warn("[PARDAIS-PARTY COVER] R2 unavailable; using API storage fallback:", r2Err?.message || r2Err);
+      const uploadsDir = path.join(process.cwd(), "public", "uploads");
+      fs.mkdirSync(uploadsDir, { recursive: true });
+      const fallbackName = `cover_${safeUserId}_${Date.now()}_${crypto.randomBytes(4).toString("hex")}.webp`;
+      fs.writeFileSync(path.join(uploadsDir, fallbackName), uploadBuffer);
+      coverUrl = `${PUBLIC_API_BASE}/uploads/${fallbackName}`;
+    }
+    const updatedAt = new Date().toISOString();
+    const updatedUser = { ...req.user, coverPhoto: coverUrl, coverPhotoUpdatedAt: updatedAt, coverPhotoSource: "user-upload", profileUpdatedAt: updatedAt };
+    req.user = updatedUser;
+    const idx = dbData.users.findIndex((u: any) => (updatedUser.uid && u.uid === updatedUser.uid) || (updatedUser.email && String(u.email || "").toLowerCase().trim() === String(updatedUser.email || "").toLowerCase().trim()) || (updatedUser.username && u.username === updatedUser.username));
+    if (idx !== -1) dbData.users[idx] = { ...dbData.users[idx], ...updatedUser }; else dbData.users.push(updatedUser);
+    saveDatabase();
+    await persistUserDurably(updatedUser);
+    return res.json({ success: true, url: coverUrl, coverPhoto: coverUrl, message: "Cover photo updated successfully." });
+  } catch (err: any) {
+    console.error("[PARDAIS-PARTY COVER] Upload failed:", err);
+    return res.status(500).json({ success: false, error: err?.message || "Cover photo upload failed." });
+  }
+});
+
 app.get("/api/v1/user/avatar-media", async (req: any, res: any) => {
   try {
     const objectKey = typeof req.query?.key === "string" ? req.query.key : "";
