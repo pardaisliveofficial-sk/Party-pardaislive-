@@ -10838,89 +10838,148 @@ export default function App() {
                               </div>
                             )}
 
-                            {/* 🎙️ PARTY SEAT AREA — DEFAULT LOUNGE IS PRESERVED; ONLY CUSTOM VIEWS GET THE NEW ROUND DESIGN */}
+                            {/* 🎙️ 12-SEAT LOUNGE AUDIOGRID AREA (3 COLUMNS x 4 ROWS = 12 HEXAGON SEATS) */}
                             <div className="px-3 py-2 space-y-2 bg-transparent">
                               {(() => {
                                 const seatCount = Number(party.maxCapacity || party.seatCount || 12) === 25 ? 25 : 12;
                                 const fullSeats = Array.from({ length: seatCount }, (_, i) => {
                                   const sId = i + 1;
                                   const found = party.seats?.find((s: any) => s.id === sId);
-                                  return found || { id: sId, name: null, avatar: null, vipLevel: 0, isMuted: false, isLocked: false, giftCoins: 0 };
+                                  return found || { id: sId, name: null, avatar: null, vipLevel: 0, isMuted: false };
                                 });
-                                const isDefaultView = (party.partyViewTheme || "default") === "default";
                                 const hostSeat = fullSeats[0];
                                 const guestSeats = fullSeats.slice(1);
-                                const accent = partyTheme.accent;
-                                const hexClip = "polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%)";
+                                const isDefaultView = (party.partyViewTheme || "default") === "default";
+                                const clip = "polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%)";
 
-                                const renderSeat = (seat: any, customView: boolean) => {
+                                const renderSeat = (seat: any, customView = false) => {
                                   const isOccupied = !!seat.name;
                                   const isMe = seat.name === user.username;
                                   const seatIsMuted = seat.isMuted === true;
                                   const isHostSeat = seat.id === 1;
-                                  const initial = String(seat.name || "?").trim().charAt(0).toUpperCase();
+                                  const isLarge = isHostSeat;
                                   const sizeClass = customView
-                                    ? (isHostSeat ? (seatCount === 25 ? "w-20 h-20" : "w-24 h-24") : (seatCount === 25 ? "w-11 h-11" : "w-14 h-14"))
+                                    ? (isLarge ? (seatCount === 25 ? "w-20 h-20" : "w-24 h-24") : (seatCount === 25 ? "w-11 h-11" : "w-14 h-14"))
                                     : (seatCount === 25 ? "w-11 h-11" : "w-14 h-14");
+                                  const accent = partyTheme.accent;
+                                  const initial = String(seat.name || "?").trim().charAt(0).toUpperCase();
 
                                   return (
-                                    <div key={seat.id} className={`flex flex-col items-center relative ${customView && isHostSeat ? "min-w-[105px]" : "min-w-0"}`}>
-                                      {customView && isHostSeat && <span className="absolute -top-4 left-1/2 -translate-x-1/2 text-[15px] z-30 pointer-events-none">👑</span>}
-                                      <div onClick={() => handleSeatClick(seat.id, seat.name)} className={`relative cursor-pointer transition-all duration-300 hover:scale-105 active:scale-95 flex items-center justify-center ${sizeClass}`}>
-                                        {customView ? (
-                                          <>
-                                            <div className={`absolute inset-0 rounded-full ${isHostSeat ? "opacity-90 blur-md" : isOccupied && !seatIsMuted ? "opacity-75 blur-md" : "opacity-25 blur-sm"}`} style={{ background: `radial-gradient(circle, ${accent}, ${accent}55 55%, transparent 78%)` }} />
-                                            <div className="w-full h-full rounded-full p-[2.5px]" style={{ background: `linear-gradient(180deg, ${accent}, ${accent}99 55%, ${accent}55)`, filter: `drop-shadow(0 0 ${isHostSeat ? 13 : 6}px ${accent}${isHostSeat ? "99" : "55"})` }}>
-                                              <div className="w-full h-full rounded-full bg-[#080914]/95 flex items-center justify-center relative overflow-hidden">
-                                                {isOccupied ? (
-                                                  <VipAnimatedFrame vipLevel={Number(seat.vipLevel || 0)} showLevelBadge={false} frameScale={isHostSeat ? 150 : 125} className="w-full h-full">
-                                                    {seat.avatar ? <img src={seat.avatar} className="w-full h-full object-cover" alt={seat.name} onClick={(e) => { e.stopPropagation(); handleOpenPartyUserProfile(seat.name, seat.avatar, seat.id, undefined, Number(seat.vipLevel || 0)); }} /> : <div className="w-full h-full flex items-center justify-center font-black text-white uppercase" style={{ fontSize: isHostSeat ? 26 : 17, background: `radial-gradient(circle at 35% 30%, ${accent}aa, #080914 70%)` }}>{initial}</div>}
-                                                  </VipAnimatedFrame>
-                                                ) : <div className="flex flex-col items-center justify-center text-white/80"><span className={isHostSeat ? "text-[18px]" : "text-[13px]"}>🎙️</span><span className="text-[7px] font-mono font-black" style={{ color: accent }}>#{seat.id}</span></div>}
+                                    <div key={seat.id} className={`flex flex-col items-center relative bg-transparent ${customView && isHostSeat ? "min-w-[105px]" : "min-w-0"}`}>
+                                      {customView && isHostSeat && (
+                                        <span className="absolute -top-4 left-1/2 -translate-x-1/2 text-[15px] drop-shadow-[0_0_9px_rgba(245,158,11,1)] z-30 animate-bounce pointer-events-none">👑</span>
+                                      )}
+
+                                      <div
+                                        onClick={() => handleSeatClick(seat.id, seat.name)}
+                                        className={`relative cursor-pointer transition-all duration-300 hover:scale-105 active:scale-95 flex items-center justify-center ${sizeClass}`}
+                                      >
+                                        <div
+                                          className={`absolute inset-0 transition-all ${customView ? "rounded-full" : ""} ${isHostSeat ? "opacity-90 blur-md animate-pulse" : isOccupied && !seatIsMuted ? "opacity-80 blur-md animate-pulse" : "opacity-25 blur-sm"}`}
+                                          style={{ background: customView ? `radial-gradient(circle, ${accent}, ${accent}55 55%, transparent 78%)` : `linear-gradient(135deg, ${accent}, ${accent}55, ${accent})`, clipPath: customView ? "circle(50%)" : clip }}
+                                        />
+
+                                        <div
+                                          className={`w-full h-full p-[2.5px] ${customView ? "rounded-full" : ""}`}
+                                          style={{
+                                            clipPath: customView ? "circle(50%)" : clip,
+                                            background: `linear-gradient(180deg, ${accent}, ${accent}99 55%, ${accent}55)`,
+                                            filter: `drop-shadow(0 0 ${customView ? (isHostSeat ? 13 : 6) : (isHostSeat ? 12 : 5)}px ${accent}${customView ? (isHostSeat ? "99" : "55") : (isHostSeat ? "88" : "55")})`
+                                          }}
+                                        >
+                                          <div className={`w-full h-full bg-[#080914]/95 flex items-center justify-center relative overflow-hidden ${customView ? "rounded-full" : ""}`} style={{ clipPath: customView ? "circle(50%)" : clip }}>
+                                            <div className="absolute inset-0 pointer-events-none" style={{ background: `linear-gradient(135deg, ${accent}22, transparent 48%, #00000066)` }} />
+
+                                            {isOccupied ? (
+                                              <VipAnimatedFrame vipLevel={Number(seat.vipLevel || 0)} showLevelBadge={false} frameScale={isHostSeat ? 150 : 125} className="w-full h-full">
+                                                {seat.avatar ? (
+                                                  <img
+                                                    src={seat.avatar}
+                                                    className="w-full h-full object-cover cursor-pointer hover:scale-110 transition-transform"
+                                                    alt={seat.name}
+                                                    onClick={(e) => {
+                                                      e.stopPropagation();
+                                                      handleOpenPartyUserProfile(seat.name, seat.avatar, seat.id, undefined, Number(seat.vipLevel || 0));
+                                                    }}
+                                                    title={`Click to view @${seat.name}'s Profile`}
+                                                  />
+                                                ) : (
+                                                  <div
+                                                    className="w-full h-full flex items-center justify-center font-black text-white uppercase"
+                                                    style={{ fontSize: isHostSeat ? 25 : 17, background: `radial-gradient(circle at 35% 30%, ${accent}aa, #080914 70%)` }}
+                                                    onClick={(e) => {
+                                                      e.stopPropagation();
+                                                      handleOpenPartyUserProfile(seat.name, "", seat.id, undefined, Number(seat.vipLevel || 0));
+                                                    }}
+                                                  >
+                                                    {initial}
+                                                  </div>
+                                                )}
+                                              </VipAnimatedFrame>
+                                            ) : (
+                                              <div className="flex flex-col items-center justify-center text-white/80">
+                                                <span className={isHostSeat ? "text-[18px]" : "text-[13px]"}>🎙️</span>
+                                                <span className="text-[7px] font-mono font-black" style={{ color: accent }}>#{seat.id}</span>
                                               </div>
-                                            </div>
-                                          </>
-                                        ) : (
-                                          /* DEFAULT LOUNGE: keep its original hexagonal 3x4 / 5x5 seat grid and positions. */
-                                          <>
-                                            <div className={`absolute inset-0 ${isOccupied && !seatIsMuted ? "opacity-75 blur-md animate-pulse" : "opacity-25 blur-sm"}`} style={{ background: `linear-gradient(135deg, ${accent}, ${accent}55, ${accent})`, clipPath: hexClip }} />
-                                            <div className="w-full h-full p-[2.5px]" style={{ clipPath: hexClip, background: `linear-gradient(180deg, ${accent}, ${accent}99 55%, ${accent}55)`, filter: `drop-shadow(0 0 5px ${accent}55)` }}>
-                                              <div className="w-full h-full bg-[#080914]/95 flex items-center justify-center relative overflow-hidden" style={{ clipPath: hexClip }}>
-                                                {isOccupied ? (
-                                                  <VipAnimatedFrame vipLevel={Number(seat.vipLevel || 0)} showLevelBadge={false} frameScale={125} className="w-full h-full">
-                                                    {seat.avatar ? <img src={seat.avatar} className="w-full h-full object-cover" alt={seat.name} onClick={(e) => { e.stopPropagation(); handleOpenPartyUserProfile(seat.name, seat.avatar, seat.id, undefined, Number(seat.vipLevel || 0)); }} /> : <div className="w-full h-full flex items-center justify-center font-black text-white uppercase" style={{ fontSize: 17, background: `radial-gradient(circle at 35% 30%, ${accent}aa, #080914 70%)` }}>{initial}</div>}
-                                                  </VipAnimatedFrame>
-                                                ) : <div className="flex flex-col items-center justify-center text-white/80"><span className="text-[13px]">🎙️</span><span className="text-[7px] font-mono font-black" style={{ color: accent }}>#{seat.id}</span></div>}
-                                              </div>
-                                            </div>
-                                          </>
+                                            )}
+                                          </div>
+                                        </div>
+
+                                        {isOccupied && Number(seat.vipLevel || 0) > 0 && (() => {
+                                          const vipFrame = VIP_FRAMES_LIST.find(f => f.vipLevel === Number(seat.vipLevel) && f.isActive);
+                                          if (!vipFrame || !vipFrame.asset) return null;
+                                          return <img src={vipFrame.asset} alt={`VIP ${seat.vipLevel} frame`} className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[145%] h-[145%] object-contain pointer-events-none z-25" draggable={false} />;
+                                        })()}
+
+                                        {isHostSeat && (
+                                          <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 text-black text-[6px] font-black px-2 py-0.5 rounded-full uppercase tracking-wider font-mono border border-black shadow-md z-30 pointer-events-none" style={{ background: accent }}>HOST</span>
                                         )}
-                                        {isHostSeat && <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 text-black text-[6px] font-black px-2 py-0.5 rounded-full uppercase tracking-wider font-mono border border-black shadow-md z-30 pointer-events-none" style={{ background: accent }}>HOST</span>}
-                                        {isOccupied && !seatIsMuted && <div className="absolute -bottom-1.5 left-1/2 -translate-x-1/2 text-black rounded-full px-1.5 py-0.5 flex items-center space-x-0.5 text-[5px] font-black border border-black animate-pulse shadow-lg z-30 pointer-events-none" style={{ background: accent }}><span className="w-0.5 h-1.5 bg-black rounded-full animate-bounce" /><span className="w-0.5 h-2.5 bg-black rounded-full animate-bounce" /><span className="w-0.5 h-1.5 bg-black rounded-full animate-bounce" /></div>}
-                                        {isOccupied && seatIsMuted && <div className="absolute -bottom-1.5 left-1/2 -translate-x-1/2 bg-red-950 border border-red-500/60 rounded-full w-4 h-4 flex items-center justify-center shadow-md z-30 pointer-events-none"><span className="text-[7px] text-red-400 leading-none">🎙️⃠</span></div>}
-                                        {seat.isLocked && <div className="absolute top-0.5 right-0.5 bg-black/85 border rounded-full w-4 h-4 flex items-center justify-center shadow-lg z-30 pointer-events-none" style={{ borderColor: `${accent}aa` }}><Lock className="w-2.5 h-2.5" style={{ color: accent }} /></div>}
+
+                                        {isOccupied && !seatIsMuted && (
+                                          <div className="absolute -bottom-1.5 left-1/2 -translate-x-1/2 text-black rounded-full px-1.5 py-0.5 flex items-center space-x-0.5 text-[5px] font-black border border-black animate-pulse shadow-lg z-30 pointer-events-none" style={{ background: accent }}>
+                                            <span className="w-0.5 h-1.5 bg-black rounded-full animate-bounce" />
+                                            <span className="w-0.5 h-2.5 bg-black rounded-full animate-bounce delay-75" />
+                                            <span className="w-0.5 h-1.5 bg-black rounded-full animate-bounce delay-150" />
+                                          </div>
+                                        )}
+                                        {isOccupied && seatIsMuted && (
+                                          <div className="absolute -bottom-1.5 left-1/2 -translate-x-1/2 bg-red-950 border border-red-500/60 rounded-full w-4 h-4 flex items-center justify-center shadow-md z-30 pointer-events-none"><span className="text-[7px] text-red-400 leading-none">🎙️⃠</span></div>
+                                        )}
+                                        {seat.isLocked && (
+                                          <div className="absolute top-0.5 right-0.5 bg-black/85 border rounded-full w-4 h-4 flex items-center justify-center shadow-lg z-30 pointer-events-none" style={{ borderColor: `${accent}aa` }}><Lock className="w-2.5 h-2.5" style={{ color: accent }} /></div>
+                                        )}
                                       </div>
-                                      <div className={`flex flex-col items-center leading-none mt-1 ${customView && isHostSeat ? "max-w-[110px]" : "max-w-[72px]"}`}>
+
+                                      <div className={`flex flex-col items-center leading-none mt-1 ${isHostSeat ? "max-w-[96px]" : "max-w-[72px]"}`}>
                                         <p className="text-[8.5px] font-extrabold text-white/95 truncate text-center font-sans tracking-tight">{isOccupied ? (isMe ? "You" : seat.name) : `Seat ${seat.id}`}</p>
                                         <span className="text-[6.5px] font-mono font-bold mt-0.5" style={{ color: accent }}>#{seat.id}</span>
-                                        <span className="inline-flex items-center gap-0.5 mt-0.5 px-1 py-0.5 rounded-full text-[6.5px] font-black font-mono whitespace-nowrap" style={{ background: `${accent}18`, border: `1px solid ${accent}44`, color: accent }}><span className="text-[8px] leading-none">🎁</span><span>{seat.giftDisplayCoins ?? formatPartySeatGiftDisplay(seat.giftCoins)}</span></span>
+                                        <span className="inline-flex items-center gap-0.5 mt-0.5 px-1 py-0.5 rounded-full text-[6.5px] font-black font-mono whitespace-nowrap" style={{ background: `${accent}18`, border: `1px solid ${accent}44`, color: accent }} title={`Party gift points for Seat ${seat.id} (2x room display)`}>
+                                          <span className="text-[8px] leading-none">🎁</span>
+                                          <span>{seat.giftDisplayCoins ?? formatPartySeatGiftDisplay(seat.giftCoins)}</span>
+                                        </span>
                                       </div>
                                     </div>
                                   );
                                 };
 
                                 return isDefaultView ? (
-                                  <div className="bg-black/35 backdrop-blur-md border rounded-2xl p-2.5 shadow-[0_0_30px_rgba(0,0,0,0.9)] relative overflow-hidden" style={{ borderColor: `${accent}55` }}>
-                                    <div className={seatCount === 25 ? "grid grid-cols-5 gap-x-1.5 gap-y-2.5" : "grid grid-cols-3 gap-x-2.5 gap-y-3"}>{fullSeats.map((seat) => renderSeat(seat, false))}</div>
+                                  <div className="bg-black/35 backdrop-blur-md border rounded-2xl p-2.5 shadow-[0_0_30px_rgba(0,0,0,0.9)] relative overflow-hidden" style={{ borderColor: `${partyTheme.accent}55` }}>
+                                    <div className="absolute inset-x-0 top-0 h-28 pointer-events-none" style={{ background: `radial-gradient(circle at 50% 0%, ${partyTheme.accent}22, transparent 70%)` }} />
+                                    <div className={seatCount === 25 ? "grid grid-cols-5 gap-x-1.5 gap-y-2.5" : "grid grid-cols-3 gap-x-2.5 gap-y-3"}>
+                                      {fullSeats.map((seat) => renderSeat(seat, false))}
+                                    </div>
                                   </div>
                                 ) : (
-                                  <div className="bg-black/30 backdrop-blur-md border rounded-3xl p-3 shadow-[0_0_35px_rgba(0,0,0,0.85)] relative overflow-hidden" style={{ borderColor: `${accent}70` }}>
-                                    <div className="relative z-10 flex justify-center pb-4">{renderSeat(hostSeat, true)}</div>
-                                    <div className={seatCount === 25 ? "grid grid-cols-5 gap-x-2.5 gap-y-4" : "grid grid-cols-3 gap-x-4 gap-y-4"}>{guestSeats.map((seat) => renderSeat(seat, true))}</div>
+                                  <div className="bg-black/30 backdrop-blur-md border rounded-3xl p-3 shadow-[0_0_35px_rgba(0,0,0,0.85)] relative overflow-hidden" style={{ borderColor: `${partyTheme.accent}70` }}>
+                                    <div className="relative z-10 flex justify-center pb-4">
+                                      {renderSeat(hostSeat, true)}
+                                    </div>
+                                    <div className={seatCount === 25 ? "grid grid-cols-5 gap-x-2.5 gap-y-4" : "grid grid-cols-3 gap-x-4 gap-y-4"}>
+                                      {guestSeats.map((seat) => renderSeat(seat, true))}
+                                    </div>
                                   </div>
                                 );
                               })()}
-                            </div>
 
                               {/* 🎙️ AGORA REAL-TIME VOICE PIPELINE CONTROLLER */}
                               <AgoraPartyAudio
