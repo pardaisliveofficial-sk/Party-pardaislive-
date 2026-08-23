@@ -57,7 +57,7 @@ import {
   loadCategoriesFromStorage, 
   saveCategoriesToStorage 
 } from "./components/GiftSystem";
-import { resolveApiUrl, getAuthToken, setAuthToken, removeAuthToken } from "./lib/apiClient";
+import { PRODUCTION_API_BASE, getAuthToken, setAuthToken, removeAuthToken } from "./lib/apiClient";
 
 export default function AdminApp() {
   // Authentication state
@@ -130,6 +130,7 @@ export default function AdminApp() {
   // Loaded database state from central APIs
   const [db, setDb] = useState<any>(() => normalizeDb(null));
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [dbLoadError, setDbLoadError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<string>("dashboard");
   const [successToast, setSuccessToast] = useState<string | null>(null);
 
@@ -630,7 +631,10 @@ export default function AdminApp() {
   });
 
   // Fetch Central Database
-  const API_BASE_URL = resolveApiUrl("");
+  // Admin must always talk to the Pardais Party production API.
+  // Using resolveApiUrl("") returns an empty string and can accidentally
+  // send /api requests to the Admin web host, leaving the splash screen stuck.
+  const API_BASE_URL = PRODUCTION_API_BASE;
   const adminHeaders = (): Record<string, string> => {
     const token = getAuthToken();
     return token ? { Authorization: `Bearer ${token}` } : {};
@@ -646,8 +650,11 @@ export default function AdminApp() {
   };
 
   const fetchDb = async () => {
+    setDbLoadError(null);
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 10000);
     try {
-      const res = await adminFetch(`${API_BASE_URL}/api/v1/db`);
+      const res = await adminFetch(`${API_BASE_URL}/api/v1/db`, { signal: controller.signal });
       if (res.status === 401) {
         removeAuthToken();
         localStorage.removeItem("pardais_admin_session");
@@ -655,13 +662,15 @@ export default function AdminApp() {
         setAuthError("Admin session expired. Please sign in again.");
         return;
       }
-      if (res.ok) {
-        const data = await res.json();
-        setDb(normalizeDb(data));
-        if (Array.isArray(data?.gifts) && data.gifts.length > 0) {
-          setAdminGiftsList(data.gifts);
-          saveGiftsToStorage(data.gifts);
-        }
+      if (!res.ok) {
+        throw new Error(`Database request failed with HTTP ${res.status}`);
+      }
+
+      const data = await res.json();
+      setDb(normalizeDb(data));
+      if (Array.isArray(data?.gifts) && data.gifts.length > 0) {
+        setAdminGiftsList(data.gifts);
+        saveGiftsToStorage(data.gifts);
       }
 
       // Fetch Admin Users list
@@ -681,9 +690,15 @@ export default function AdminApp() {
           setAuditLogsList(aData);
         }
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error("Error synchronizing admin DB:", e);
+      setDbLoadError(
+        e?.name === "AbortError"
+          ? "Database connection timed out. Please retry."
+          : "Unable to connect to the Pardais Party database. Please retry."
+      );
     } finally {
+      window.clearTimeout(timeout);
       setIsLoading(false);
     }
   };
@@ -1083,6 +1098,29 @@ export default function AdminApp() {
         <div className="text-center space-y-3">
           <Activity className="w-12 h-12 text-[#66fcf1] animate-spin mx-auto" />
           <p className="text-sm font-bold uppercase tracking-widest font-mono text-[#66fcf1]">Syncing Pardais Party Ecosystem Database...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (dbLoadError && isAuthenticated) {
+    return (
+      <div className="min-h-screen bg-[#09090d] flex items-center justify-center font-sans text-white p-6">
+        <div className="w-full max-w-md text-center space-y-5 rounded-3xl border border-red-500/20 bg-[#111119] p-8 shadow-2xl">
+          <div className="mx-auto w-14 h-14 rounded-full bg-red-500/10 border border-red-500/20 flex items-center justify-center">
+            <AlertTriangle className="w-7 h-7 text-red-400" />
+          </div>
+          <div>
+            <h2 className="text-lg font-black text-white">Database Connection Failed</h2>
+            <p className="text-xs text-gray-400 mt-2 leading-relaxed">{dbLoadError}</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => { setIsLoading(true); void fetchDb(); }}
+            className="w-full rounded-2xl bg-gradient-to-r from-[#ff007f] to-[#7b2cbf] px-5 py-3 text-xs font-black uppercase tracking-wider text-white shadow-lg active:scale-[0.98] transition-all"
+          >
+            Retry Database Connection
+          </button>
         </div>
       </div>
     );
