@@ -3053,10 +3053,6 @@ export default function App() {
   const [commentsDisabled, setCommentsDisabled] = useState<boolean>(false);
   const [userLiveCommentsDisabled, setUserLiveCommentsDisabled] = useState<boolean>(false);
 
-  // Gifts >= 10,000 coins use the global room-wide patti. Smaller gifts
-  // keep the compact sender -> recipient toast only.
-  const GLOBAL_GIFT_THRESHOLD = 10000;
-
   // Global premium big-gift broad banner patti state
   const [globalGiftBanner, setGlobalGiftBanner] = useState<{
     id: string;
@@ -3907,10 +3903,10 @@ export default function App() {
     const count = giftEvt.count || 1;
     const recipient = giftEvt.recipient || "Host";
 
-    // Premium gifts are global: host, sender, every guest and every viewer/listener
-    // that receives the same authoritative event gets the same patti.
+    // The admin controls whether this specific gift appears in the global patti.
+    // There is no longer a hard-coded coin-price threshold.
     const eventCost = Number(giftEvt.totalCost) || 0;
-    if (eventCost >= GLOBAL_GIFT_THRESHOLD) {
+    if (giftEvt.globalBannerEnabled === true) {
       triggerGlobalGiftBanner(sender, giftName, `${giftIcon} x${count}`, recipient, eventCost);
     }
 

@@ -17,7 +17,9 @@ export interface Gift {
   description?: string;
   category?: string; // Popular, New, Lucky, VIP, Festival, Premium, Luxury, Event, PK, Limited Edition
   animationFile?: string; // SVG path, SVGA url, or transparent WebM
-  animationFormat?: 'svg' | 'svga' | 'webm' | 'lottie' | 'mp4' | 'gif';
+  animationUrl?: string;
+  videoUrl?: string;
+  animationFormat?: 'svg' | 'svga' | 'webm' | 'lottie' | 'mp4' | 'gif' | 'jpeg' | 'jpg' | 'png';
   animationDuration?: number; // 5, 10, 15, 30, custom
   animationDisplayType?: 'small' | 'half' | 'full' | 'ultra' | 'pk' | 'event';
   comboSupported?: boolean;
@@ -31,6 +33,9 @@ export interface Gift {
   priority?: number;
   sortingOrder?: number;
   isFavorite?: boolean; // client-side state / toggle
+  minLevel?: number; // Minimum user level required to send/play this gift (1-100)
+  globalBannerEnabled?: boolean; // Show the gift in the global gift ticker
+  imageUrl?: string; // Gift thumbnail/image URL
 }
 
 export interface UserProfile {

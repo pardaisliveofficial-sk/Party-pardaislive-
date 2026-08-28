@@ -3103,24 +3103,11 @@ function getProgressionFromServerCoins(xp: number) {
 }
 
 app.get("/api/v1/gifts", (req, res) => {
-  if (!dbData.gifts || dbData.gifts.length === 0) {
-    dbData.gifts = [...DEFAULT_ADVANCED_GIFTS_SERVER];
-  } else {
-    const giftMap = new Map<string, any>();
-    DEFAULT_ADVANCED_GIFTS_SERVER.forEach((g: any) => giftMap.set(g.id, g));
-    dbData.gifts.forEach((g: any) => {
-      if (g && g.id) {
-        const defG = DEFAULT_ADVANCED_GIFTS_SERVER.find(d => d.id === g.id);
-        if (defG && (!g.animationFile || g.animationFile.length < 5 || (typeof g.animationFile === "string" && !g.animationFile.startsWith("http") && !g.animationFile.startsWith("data:") && !g.animationFile.startsWith("blob:")))) {
-          g.animationFile = defG.animationFile;
-          g.animationFormat = defG.animationFormat;
-        }
-        giftMap.set(g.id, g);
-      }
-    });
-    dbData.gifts = Array.from(giftMap.values());
-  }
-  res.json(dbData.gifts);
+  // The database is the single source of truth for the production gift catalog.
+  // Do not merge demo/default gifts into the catalog on every request.
+  if (!Array.isArray(dbData.gifts)) dbData.gifts = [];
+  res.setHeader("Cache-Control", "no-store");
+  res.json(dbData.gifts.filter((g: any) => g && g.id && g.status !== "deleted"));
 });
 
 app.post("/api/v1/gifts/send", authenticateUser, (req, res) => {
@@ -3133,20 +3120,21 @@ app.post("/api/v1/gifts/send", authenticateUser, (req, res) => {
     return res.json(dbData.processedGiftRequests[requestId]);
   }
 
-  if (!dbData.gifts || dbData.gifts.length === 0) {
-    dbData.gifts = DEFAULT_ADVANCED_GIFTS_SERVER;
-  }
-
-  let gift = dbData.gifts.find((g: any) => g.id === giftId);
-  if (!gift) {
-    gift = DEFAULT_ADVANCED_GIFTS_SERVER.find((g: any) => g.id === giftId);
-  }
+  if (!Array.isArray(dbData.gifts)) dbData.gifts = [];
+  const gift = dbData.gifts.find((g: any) => g.id === giftId);
   if (!gift) {
     return res.status(404).json({ error: "Gift not found" });
   }
 
   if (gift.status === "inactive") {
     return res.status(400).json({ error: "This gift is currently inactive." });
+  }
+
+  // Gift level gate: a gift configured for Level N is usable only by Level N-100 users.
+  const requiredGiftLevel = Math.min(100, Math.max(1, Number(gift.minLevel) || 1));
+  const senderLevel = Math.min(100, Math.max(1, Number((req as any).user?.userLevel ?? (req as any).user?.level ?? 1)));
+  if (senderLevel < requiredGiftLevel) {
+    return res.status(403).json({ error: `This gift unlocks at Level ${requiredGiftLevel}.`, requiredLevel: requiredGiftLevel, userLevel: senderLevel });
   }
 
   const giftCost = Number(gift.cost) || 0;
@@ -3317,6 +3305,8 @@ app.post("/api/v1/gifts/send", authenticateUser, (req, res) => {
     animationFormat: gift.animationFormat || "webm",
     animationDuration: gift.animationDuration || 8,
     animationDisplayType: gift.animationDisplayType || "full",
+    globalBannerEnabled: gift.globalBannerEnabled === true,
+    minLevel: requiredGiftLevel,
     type: gift.type || "3d",
     timestamp: Date.now()
   };
@@ -3564,7 +3554,16 @@ app.get("/api/v1/gifts/supporters", (req, res) => {
 
 app.post("/api/v1/gifts", (req, res) => {
   const giftId = req.body.id || `g-${Date.now()}`;
-  const newGift = { id: giftId, status: "active", ...req.body };
+  const newGift = {
+    id: giftId,
+    status: "active",
+    ...req.body,
+    cost: Math.max(1, Math.floor(Number(req.body.cost) || 1)),
+    minLevel: Math.min(100, Math.max(1, Math.floor(Number(req.body.minLevel) || 1))),
+    globalBannerEnabled: req.body.globalBannerEnabled === true,
+    imageUrl: req.body.imageUrl || req.body.icon || "",
+    animationFile: req.body.animationFile || req.body.animationUrl || req.body.videoUrl || ""
+  };
   if (!dbData.gifts) {
     dbData.gifts = [...DEFAULT_ADVANCED_GIFTS_SERVER];
   }
@@ -3589,12 +3588,29 @@ app.put("/api/v1/gifts/:id", (req, res) => {
   }
   const index = dbData.gifts.findIndex((g: any) => g.id === id);
   if (index !== -1) {
-    dbData.gifts[index] = { ...dbData.gifts[index], ...req.body };
+    dbData.gifts[index] = {
+      ...dbData.gifts[index],
+      ...req.body,
+      cost: Math.max(1, Math.floor(Number(req.body.cost ?? dbData.gifts[index].cost) || 1)),
+      minLevel: Math.min(100, Math.max(1, Math.floor(Number(req.body.minLevel ?? dbData.gifts[index].minLevel) || 1))),
+      globalBannerEnabled: req.body.globalBannerEnabled === true,
+      imageUrl: req.body.imageUrl || req.body.icon || dbData.gifts[index].imageUrl || dbData.gifts[index].icon || "",
+      animationFile: req.body.animationFile || req.body.animationUrl || req.body.videoUrl || dbData.gifts[index].animationFile || ""
+    };
     saveDatabase();
     syncDocument("gifts", id, dbData.gifts[index]);
     res.json(dbData.gifts[index]);
   } else {
-    const newGift = { id, status: "active", ...req.body };
+    const newGift = {
+      id,
+      status: "active",
+      ...req.body,
+      cost: Math.max(1, Math.floor(Number(req.body.cost) || 1)),
+      minLevel: Math.min(100, Math.max(1, Math.floor(Number(req.body.minLevel) || 1))),
+      globalBannerEnabled: req.body.globalBannerEnabled === true,
+      imageUrl: req.body.imageUrl || req.body.icon || "",
+      animationFile: req.body.animationFile || req.body.animationUrl || req.body.videoUrl || ""
+    };
     dbData.gifts.unshift(newGift);
     saveDatabase();
     syncDocument("gifts", id, newGift);
@@ -7587,14 +7603,16 @@ const giftAnimationUpload = multer({
     const mime = String(file.mimetype || '').toLowerCase();
     const name = String(file.originalname || '').toLowerCase();
     const allowed =
-      mime === 'video/webm' || mime === 'video/mp4' || mime === 'image/svg+xml' ||
+      mime === 'video/webm' || mime === 'video/mp4' ||
+      mime === 'image/svg+xml' || mime === 'image/png' || mime === 'image/jpeg' ||
       mime === 'image/gif' || name.endsWith('.webm') || name.endsWith('.mp4') ||
-      name.endsWith('.svg') || name.endsWith('.gif');
+      name.endsWith('.svga') || name.endsWith('.svg') || name.endsWith('.gif') ||
+      name.endsWith('.png') || name.endsWith('.jpg') || name.endsWith('.jpeg');
     cb(null, allowed);
   }
 });
 
-// Production gift-animation storage: upload the original WebM/MP4/SVG/GIF to Cloudflare R2
+// Production gift-media storage: upload original gift image/animation files to Cloudflare R2
 // and return a stable API playback URL. The live app never needs to embed giant base64 blobs
 // in the gift catalog, and the playback endpoint supports HTTP Range requests for mobile video.
 app.post('/api/v1/gifts/upload-animation', giftAnimationUpload.single('file'), async (req: any, res: any) => {
@@ -7608,7 +7626,8 @@ app.post('/api/v1/gifts/upload-animation', giftAnimationUpload.single('file'), a
     const mime = String(file.mimetype || 'application/octet-stream').toLowerCase();
     const original = String(file.originalname || 'gift-animation');
     const ext = original.includes('.') ? original.split('.').pop()!.toLowerCase() :
-      (mime === 'video/webm' ? 'webm' : mime === 'video/mp4' ? 'mp4' : mime === 'image/svg+xml' ? 'svg' : 'gif');
+      (mime === 'video/webm' ? 'webm' : mime === 'video/mp4' ? 'mp4' : mime === 'image/svg+xml' ? 'svg' :
+      mime === 'image/png' ? 'png' : mime === 'image/jpeg' ? 'jpg' : 'gif');
     const safeGiftId = String(req.body?.giftId || 'new').replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 80);
     const objectKey = `gifts/animations/${safeGiftId}/${Date.now()}-${crypto.randomBytes(6).toString('hex')}.${ext}`;
     const client = getS3Client();
@@ -7647,7 +7666,16 @@ app.get('/api/v1/gifts/animation', async (req: any, res: any) => {
       Bucket: bucketName, Key: key, ...(range ? { Range: range } : {})
     }));
 
-    const contentType = String(result.ContentType || 'application/octet-stream');
+    const ext = key.split(".").pop()?.toLowerCase() || "";
+    const fallbackContentType =
+      ext === "webm" ? "video/webm" :
+      ext === "mp4" ? "video/mp4" :
+      ext === "svg" ? "image/svg+xml" :
+      ext === "png" ? "image/png" :
+      (ext === "jpg" || ext === "jpeg") ? "image/jpeg" :
+      ext === "gif" ? "image/gif" :
+      "application/octet-stream";
+    const contentType = String(result.ContentType || fallbackContentType);
     res.setHeader('Content-Type', contentType);
     res.setHeader('Accept-Ranges', 'bytes');
     res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
