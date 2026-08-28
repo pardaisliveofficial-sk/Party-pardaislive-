@@ -89,8 +89,14 @@ async function loadDatabase() {
     if (fs.existsSync(DB_PATH)) {
       const raw = fs.readFileSync(DB_PATH, "utf-8");
       const local = JSON.parse(raw);
+      // Deployment/restart safety: never let an older empty local backup erase
+      // already-hydrated production gift data from the Firestore cache.
+      const cachedGifts = Array.isArray(dbDataCache.gifts) ? [...dbDataCache.gifts] : [];
       Object.assign(dbDataCache, local);
-      console.log("[PARDAIS-PARTY FIREBASE] Pre-populated in-memory cache with local database backup.");
+      if (cachedGifts.length > 0 && (!Array.isArray(local?.gifts) || local.gifts.length === 0)) {
+        dbDataCache.gifts = cachedGifts;
+      }
+      console.log("[PARDAIS-PARTY FIREBASE] Pre-populated in-memory cache with local database backup (production gifts preserved).");
     }
 
     // Collapse legacy duplicate user mirrors immediately. This keeps refresh/restart

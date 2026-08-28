@@ -5566,10 +5566,12 @@ export default function App() {
         .catch(() => {});
 
       // 3. Fetch gifts list
-      fetch("/api/v1/gifts")
+      fetch("/api/v1/gifts", { cache: "no-store" })
         .then(res => res.ok ? res.json() : null)
         .then(data => {
-          if (Array.isArray(data)) {
+          // Never wipe an already-loaded gift catalog because of an empty/stale
+          // API response during deployment, restart, or Firestore hydration.
+          if (Array.isArray(data) && data.length > 0) {
             setGiftsList(data);
             saveGiftsToStorage(data);
           }
@@ -5793,10 +5795,12 @@ export default function App() {
         })
         .catch(() => {});
 
-      fetch("/api/v1/gifts")
+      fetch("/api/v1/gifts", { cache: "no-store" })
         .then(res => res.ok ? res.json() : null)
         .then(data => {
-          if (Array.isArray(data)) {
+          // Never wipe an already-loaded gift catalog because of an empty/stale
+          // API response during deployment, restart, or Firestore hydration.
+          if (Array.isArray(data) && data.length > 0) {
             setGiftsList(data);
             saveGiftsToStorage(data);
           }
