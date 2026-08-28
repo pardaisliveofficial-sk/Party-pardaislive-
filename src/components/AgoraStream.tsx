@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import type { 
   IAgoraRTCClient, 
   IMicrophoneAudioTrack, 
+  ICameraVideoTrack,
   IAgoraRTCRemoteUser 
 } from "agora-rtc-sdk-ng";
 import { Mic, MicOff, Volume2, Radio, AlertCircle } from "lucide-react";
@@ -48,6 +49,9 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
   role,
   userId,
   muted = false,
+  videoMuted = false,
+  facingMode = "user",
+  publishCameraTrack = false,
   publishMicrophoneTrack = true,
   hostAvatar = "",
   hostName = "Streamer",
@@ -65,6 +69,9 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
   const [client, setClient] = useState<IAgoraRTCClient | null>(null);
   const clientRef = useRef<IAgoraRTCClient | null>(null);
   const [localAudioTrack, setLocalAudioTrack] = useState<IMicrophoneAudioTrack | null>(null);
+  const [localVideoTrack, setLocalVideoTrack] = useState<ICameraVideoTrack | null>(null);
+  const localVideoContainerRef = useRef<HTMLDivElement | null>(null);
+  const remoteVideoRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const [remoteUsersList, setRemoteUsersList] = useState<IAgoraRTCRemoteUser[]>([]);
   const [audioBlocked, setAudioBlocked] = useState<boolean>(false);
   
@@ -238,6 +245,84 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
     };
   }, [role, hostName, remoteUsersList.length]);
 
+  // Real camera/video publisher layer. This is intentionally separate from the
+  // audio engine so camera ON/OFF never tears down the live audio session.
+  useEffect(() => {
+    if (role !== "publisher" || !client || !publishCameraTrack) {
+      if (localVideoTrack && role === "publisher" && !publishCameraTrack) {
+        try { client?.unpublish(localVideoTrack).catch(() => {}); } catch (e) {}
+        try { localVideoTrack.stop(); localVideoTrack.close(); } catch (e) {}
+        setLocalVideoTrack(null);
+      }
+      return;
+    }
+
+    let cancelled = false;
+    let track: ICameraVideoTrack | null = null;
+
+    const startCamera = async () => {
+      try {
+        const agoraModule = await import("agora-rtc-sdk-ng");
+        const AgoraRTC = (agoraModule as any).default || agoraModule;
+        track = await AgoraRTC.createCameraVideoTrack({
+          encoderConfig: "720p_1",
+          cameraId: undefined
+        });
+        if (cancelled) {
+          track.stop(); track.close();
+          return;
+        }
+        setLocalVideoTrack(track);
+        await client.publish(track);
+        if (videoMuted || !publishCameraTrack) {
+          await track.setEnabled(false);
+        }
+        requestAnimationFrame(() => {
+          if (localVideoContainerRef.current && track) {
+            try { track.play(localVideoContainerRef.current, { fit: "cover", mirror: facingMode === "user" }); } catch (e) {}
+          }
+        });
+      } catch (err) {
+        console.error("[AGORA VIDEO] Camera creation/publish failed", err);
+        setStatusDetails("Camera unavailable; live audio remains active.");
+      }
+    };
+
+    startCamera();
+    return () => {
+      cancelled = true;
+      if (track) {
+        try { client.unpublish(track).catch(() => {}); } catch (e) {}
+        try { track.stop(); track.close(); } catch (e) {}
+      }
+      setLocalVideoTrack(null);
+    };
+  }, [client, role, publishCameraTrack, facingMode]);
+
+  // Enable/disable the already-published camera without rebuilding the Agora session.
+  useEffect(() => {
+    if (role !== "publisher" || !localVideoTrack) return;
+    localVideoTrack.setEnabled(Boolean(publishCameraTrack && !videoMuted)).catch((err) => {
+      console.error("[AGORA VIDEO] Camera toggle failed", err);
+    });
+    if (publishCameraTrack && localVideoContainerRef.current) {
+      try { localVideoTrack.play(localVideoContainerRef.current, { fit: "cover", mirror: facingMode === "user" }); } catch (e) {}
+    }
+  }, [publishCameraTrack, videoMuted, localVideoTrack, facingMode, role]);
+
+  // Render remote live video tracks for viewers.
+  useEffect(() => {
+    if (role !== "subscriber") return;
+    remoteUsersList.forEach((remote) => {
+      if (remote.videoTrack) {
+        const el = remoteVideoRefs.current[String(remote.uid)];
+        if (el) {
+          try { remote.videoTrack.play(el, { fit: "cover" }); } catch (e) {}
+        }
+      }
+    });
+  }, [remoteUsersList]);
+
   // Main Engine: Agora RTC Audio Stream for crystal-clear real-time voice broadcasting
   useEffect(() => {
     let activeClient: IAgoraRTCClient | null = null;
@@ -378,6 +463,16 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
               try {
                 await agoraClient.subscribe(user, "video");
                 console.log("[AGORA EVENT: SUBSCRIBE SUCCESS]", { remoteUid: user.uid, mediaType: "video" });
+                setRemoteUsersList(prev => {
+                  if (prev.some(u => u.uid === user.uid)) return prev;
+                  return [...prev, user];
+                });
+                requestAnimationFrame(() => {
+                  const el = remoteVideoRefs.current[String(user.uid)];
+                  if (el && user.videoTrack) {
+                    try { user.videoTrack.play(el, { fit: "cover" }); } catch (e) {}
+                  }
+                });
               } catch (subErr) {
                 console.error("[AGORA EVENT: SUBSCRIBE FAILURE]", { remoteUid: user.uid, mediaType: "video", error: subErr });
               }
@@ -586,6 +681,7 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
         }
       }
       setRemoteUsersList([]);
+      setLocalVideoTrack(null);
     };
   }, [channelName, role, isCoHostMode]);
 
@@ -734,33 +830,45 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
     );
   }
 
-  // SOLO AUDIO / COVER STREAM STAGE
+  // SOLO LIVE VIDEO / AUDIO STAGE
   return (
-    <div className="w-full h-full relative overflow-hidden bg-gradient-to-b from-[#1c0d38] via-[#120e2e] to-[#2b0c36] flex flex-col items-center justify-center select-none">
-      {/* 1. BACKGROUND COVER PHOTO OR BLURRED HOST PROFILE PICTURE ATMOSPHERE */}
-      {showCoverPhoto && coverPhoto && coverPhoto.trim().length > 0 ? (
-        <div className="absolute inset-0 z-0">
-          <img 
-            src={coverPhoto} 
-            alt="Stream Cover"
-            className="w-full h-full object-cover transition-all duration-500 animate-fade-in"
-          />
-          <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/30 to-black/60 pointer-events-none" />
-        </div>
+    <div className="w-full h-full relative overflow-hidden bg-black flex flex-col items-center justify-center select-none">
+      {role === "publisher" ? (
+        publishCameraTrack && !videoMuted ? (
+          <div ref={localVideoContainerRef} className="absolute inset-0 z-0 bg-black" />
+        ) : (
+          <div className="absolute inset-0 z-0 bg-gradient-to-b from-[#1c0d38] via-[#120e2e] to-[#2b0c36]">
+            {showCoverPhoto && coverPhoto ? (
+              <img src={coverPhoto} alt="Stream Cover" className="w-full h-full object-cover opacity-80" />
+            ) : (
+              <img src={avatarUrl} alt={hostName} className="w-full h-full object-cover blur-2xl opacity-35 scale-125" />
+            )}
+            <div className="absolute inset-0 bg-black/55" />
+          </div>
+        )
       ) : (
-        <>
-          <img 
-            src={avatarUrl} 
-            alt={hostName}
-            className="absolute inset-0 w-full h-full object-cover blur-2xl opacity-35 scale-125 animate-pulse pointer-events-none"
-          />
-          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm pointer-events-none" />
-        </>
+        <div className="absolute inset-0 z-0 bg-black">
+          {remoteUsersList.filter(u => u.videoTrack).length > 0 ? (
+            <div className="w-full h-full relative">
+              {remoteUsersList.filter(u => u.videoTrack).map((remote, index) => (
+                <div
+                  key={String(remote.uid)}
+                  ref={(el) => { remoteVideoRefs.current[String(remote.uid)] = el; }}
+                  className={`absolute inset-0 bg-black ${index === 0 ? "block" : "hidden"}`}
+                />
+              ))}
+            </div>
+          ) : (
+            <div className="w-full h-full relative bg-gradient-to-b from-[#1c0d38] via-[#120e2e] to-[#2b0c36]">
+              {showCoverPhoto && coverPhoto ? <img src={coverPhoto} alt="Stream Cover" className="w-full h-full object-cover opacity-75" /> : <img src={avatarUrl} alt={hostName} className="w-full h-full object-cover blur-2xl opacity-35 scale-125" />}
+              <div className="absolute inset-0 bg-black/50" />
+            </div>
+          )}
+        </div>
       )}
-
-      {/* 2. CENTRAL HOST AUDIO DISPLAY STAGE */}
-      <div className="relative z-10 flex flex-col items-center text-center space-y-4 max-w-xs mx-auto animate-scale-up">
-        {/* Pulsating Voice Halo + Host Avatar */}
+      {/* 2. CENTRAL HOST STATUS OVERLAY */}
+      <div className={`relative z-10 flex flex-col items-center text-center space-y-4 max-w-xs mx-auto animate-scale-up ${((role === "publisher" && publishCameraTrack && !videoMuted) || (role === "subscriber" && remoteUsersList.some(u => u.videoTrack))) ? "opacity-0 pointer-events-none" : ""}`}>
+        {/* Host status/avatar remains as a lightweight overlay when video is unavailable. */}
         <div className="relative group">
           <div className="absolute -inset-4 rounded-full bg-gradient-to-r from-pink-500 via-purple-500 to-cyan-400 opacity-60 blur-lg group-hover:opacity-100 transition duration-1000 animate-pulse" />
           <div className="absolute -inset-2 rounded-full bg-pink-500/20 animate-ping" />

@@ -84,6 +84,7 @@ import {
   Globe,
   Trophy,
   CameraOff,
+  RotateCw,
   MicOff,
   Pause,
   Disc,
@@ -20175,8 +20176,35 @@ export default function App() {
 
                             {/* SUB-HEADER RANKING & EXPLORE OVERLAYS */}
                             <div className="px-3 py-1 flex items-center justify-between z-10 bg-transparent text-[8.5px] font-black text-white relative select-none">
-                              {/* Left Spacer to balance row */}
-                              <div className="w-1" />
+                              {/* Host Camera Navigation Controls — additive; existing controls remain unchanged. */}
+                              <div className="flex items-center space-x-1.5">
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setUserLiveCam(prev => !prev);
+                                  }}
+                                  className={`w-8 h-8 rounded-full flex items-center justify-center border shadow-lg backdrop-blur-md active:scale-90 transition-all cursor-pointer ${
+                                    userLiveCam
+                                      ? "bg-emerald-600/85 border-emerald-300 text-white"
+                                      : "bg-red-600/85 border-red-300 text-white"
+                                  }`}
+                                  title={userLiveCam ? "Turn Camera Off" : "Turn Camera On"}
+                                >
+                                  {userLiveCam ? <Camera className="w-3.5 h-3.5" /> : <CameraOff className="w-3.5 h-3.5" />}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setCameraFacingMode(prev => prev === "user" ? "environment" : "user");
+                                  }}
+                                  className="w-8 h-8 rounded-full flex items-center justify-center bg-black/65 border border-cyan-400/50 text-cyan-300 shadow-lg backdrop-blur-md active:scale-90 transition-all cursor-pointer"
+                                  title="Switch Front / Back Camera"
+                                >
+                                  <RotateCw className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
 
                               {/* Right Stack: Explore & Stickers */}
                               <div className="absolute right-3 top-1.5 flex flex-col space-y-1.5 items-end">
