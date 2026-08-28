@@ -125,6 +125,7 @@ export const COLLECTIONS = [
   "adminUsersList",
   "reels",
   "stories",
+  "posts",
   "chats",
   "messages",
   "agencyRequests",
@@ -184,6 +185,7 @@ export const dbDataCache: any = {
   adminUsersList: [],
   reels: [],
   stories: [],
+  posts: [],
   chats: [],
   messages: [],
   sessions: {},
@@ -588,6 +590,14 @@ export function startFirestoreSynchronization() {
             if (g && g.id) giftMap.set(g.id, g);
           });
           dbDataCache.gifts = Array.from(giftMap.values());
+        }
+      } else if (colName === "posts") {
+        // Never wipe durable Moments posts on an empty/stale snapshot.
+        if (items.length > 0) {
+          const postMap = new Map<string, any>();
+          (dbDataCache.posts || []).forEach((p: any) => { if (p?.id) postMap.set(String(p.id), p); });
+          items.forEach((p: any) => { if (p?.id) postMap.set(String(p.id), { ...postMap.get(String(p.id)), ...p }); });
+          dbDataCache.posts = Array.from(postMap.values());
         }
       } else if (colName === "reels") {
         // Never wipe the production reel cache when Firestore temporarily returns

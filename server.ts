@@ -114,6 +114,9 @@ async function loadDatabase() {
     if (!Array.isArray(dbDataCache.reels)) {
       dbDataCache.reels = [];
     }
+    if (!Array.isArray(dbDataCache.posts)) {
+      dbDataCache.posts = [];
+    }
 
     // 4. Start real-time Firestore synchronization listeners.
     // Reels synchronization merges by ID and never clears the cache on
@@ -6976,6 +6979,158 @@ app.put("/api/v1/reels/:id", async (req, res) => {
   }
 });
 
+// ------------------------------------------------------------------
+// MOMENTS POSTS — durable text/photo posts
+// ------------------------------------------------------------------
+const momentsPostUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 15 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    const mime = String(file.mimetype || '').toLowerCase();
+    const name = String(file.originalname || '').toLowerCase();
+    cb(null, mime.startsWith('image/') || /\.(jpg|jpeg|png|webp|gif|avif|heic|heif)$/i.test(name));
+  }
+});
+
+async function storeMomentsPhoto(file: any, ownerId: string) {
+  const mime = String(file?.mimetype || 'image/jpeg').toLowerCase();
+  const ext = mime === 'image/png' ? 'png' : mime === 'image/webp' ? 'webp' : mime === 'image/gif' ? 'gif' : 'jpg';
+  const safeOwner = String(ownerId || 'user').replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 80);
+  const objectKey = `moments/posts/${safeOwner}/${Date.now()}-${crypto.randomBytes(6).toString('hex')}.${ext}`;
+
+  if (process.env.R2_ACCESS_KEY_ID && process.env.R2_SECRET_ACCESS_KEY && process.env.R2_ENDPOINT) {
+    try {
+      const client = getS3Client();
+      const bucketName = process.env.R2_BUCKET_NAME || 'pardaisparty-reels';
+      await client.send(new PutObjectCommand({
+        Bucket: bucketName,
+        Key: objectKey,
+        Body: file.buffer,
+        ContentType: mime,
+        CacheControl: 'public, max-age=31536000, immutable'
+      }));
+      return `${PUBLIC_API_BASE}/api/v1/moments/media/${encodeURIComponent(objectKey)}`;
+    } catch (err: any) {
+      console.warn('[PARDAIS MOMENTS] R2 photo upload failed; using local durable fallback:', err?.message || err);
+    }
+  }
+
+  const uploadsDir = path.join(process.cwd(), 'public', 'uploads', 'moments');
+  fs.mkdirSync(uploadsDir, { recursive: true });
+  const filename = `${Date.now()}-${crypto.randomBytes(6).toString('hex')}.${ext}`;
+  fs.writeFileSync(path.join(uploadsDir, filename), file.buffer);
+  return `${PUBLIC_API_BASE}/uploads/moments/${filename}`;
+}
+
+app.get('/api/v1/posts', (req, res) => {
+  const posts = Array.isArray(dbData.posts) ? [...dbData.posts] : [];
+  posts.sort((a: any, b: any) => (Date.parse(b?.createdAt || '') || 0) - (Date.parse(a?.createdAt || '') || 0));
+  res.json(posts);
+});
+
+app.post('/api/v1/posts', momentsPostUpload.single('media'), async (req: any, res: any) => {
+  try {
+    const caption = String(req.body?.caption || '').trim();
+    const username = String(req.body?.username || '').trim();
+    if (!caption && !req.file) return res.status(400).json({ error: 'A post needs text or a photo.' });
+    if (!username) return res.status(401).json({ error: 'Authenticated username is required.' });
+
+    const createdAt = new Date().toISOString();
+    const post: any = {
+      id: `post-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`,
+      username,
+      fullName: String(req.body?.fullName || username),
+      userId: String(req.body?.userId || ''),
+      avatar: String(req.body?.avatar || ''),
+      caption,
+      mediaUrl: req.file ? await storeMomentsPhoto(req.file, String(req.body?.userId || username)) : '',
+      mediaType: req.file ? 'image' : 'text',
+      createdAt,
+      likes: 0,
+      likedBy: [],
+      comments: [],
+      shares: 0,
+      status: 'published'
+    };
+
+    if (!Array.isArray(dbData.posts)) dbData.posts = [];
+    dbData.posts.unshift(post);
+    saveDatabase();
+    await syncDocument('posts', post.id, post);
+    return res.status(201).json({ success: true, post });
+  } catch (err: any) {
+    console.error('[PARDAIS MOMENTS] Post publish failed:', err?.message || err);
+    return res.status(500).json({ error: err?.message || 'Post publish failed.' });
+  }
+});
+
+app.post('/api/v1/posts/:id/like', async (req: any, res: any) => {
+  const id = String(req.params.id);
+  const username = String(req.body?.username || '').trim();
+  if (!username) return res.status(400).json({ error: 'Username is required.' });
+  const post = (dbData.posts || []).find((p: any) => String(p.id) === id);
+  if (!post) return res.status(404).json({ error: 'Post not found.' });
+  const likedBy = Array.isArray(post.likedBy) ? post.likedBy : [];
+  const idx = likedBy.indexOf(username);
+  if (idx >= 0) likedBy.splice(idx, 1); else likedBy.push(username);
+  post.likedBy = likedBy;
+  post.likes = likedBy.length;
+  saveDatabase();
+  await syncDocument('posts', id, post);
+  res.json({ success: true, post });
+});
+
+app.delete('/api/v1/posts/:id', async (req: any, res: any) => {
+  const id = String(req.params.id);
+  const index = (dbData.posts || []).findIndex((p: any) => String(p.id) === id);
+  if (index === -1) return res.status(404).json({ error: 'Post not found.' });
+  const [removed] = dbData.posts.splice(index, 1);
+  saveDatabase();
+  await deleteDocument('posts', id);
+  res.json({ success: true, post: removed });
+});
+
+app.post('/api/v1/posts/sync', async (req: any, res: any) => {
+  const incoming = Array.isArray(req.body) ? req.body : [];
+  if (!Array.isArray(dbData.posts)) dbData.posts = [];
+  const map = new Map<string, any>();
+  dbData.posts.forEach((p: any) => p?.id && map.set(String(p.id), p));
+  incoming.forEach((p: any) => p?.id && map.set(String(p.id), { ...map.get(String(p.id)), ...p }));
+  dbData.posts = Array.from(map.values());
+  saveDatabase();
+  await Promise.all(incoming.filter((p: any) => p?.id).map((p: any) => syncDocument('posts', String(p.id), map.get(String(p.id)))));
+  res.json({ success: true, merged: true, count: incoming.length });
+});
+
+// Read Moments media from R2 with a stable API URL.
+app.get('/api/v1/moments/media/:key(*)', async (req: any, res: any) => {
+  try {
+    const key = String(req.params.key || '').replace(/^\/+/, '');
+    if (!key.startsWith('moments/posts/')) return res.status(403).end();
+    const client = getS3Client();
+    const bucketName = process.env.R2_BUCKET_NAME || 'pardaisparty-reels';
+    const obj: any = await client.send(new GetObjectCommand({ Bucket: bucketName, Key: key }));
+    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    res.setHeader('Content-Type', String(obj.ContentType || 'image/jpeg'));
+    if (obj.ContentLength) res.setHeader('Content-Length', String(obj.ContentLength));
+    if (obj.Body && typeof obj.Body.pipe === 'function') obj.Body.pipe(res); else res.end(await obj.Body?.transformToByteArray?.());
+  } catch (err: any) {
+    res.status(404).json({ error: 'Moments media not found.' });
+  }
+});
+
+// Story photo upload: use the same durable R2/local media path as Moments posts.
+app.post('/api/v1/stories/media', momentsPostUpload.single('media'), async (req: any, res: any) => {
+  try {
+    if (!req.file?.buffer?.length) return res.status(400).json({ error: 'No story photo uploaded.' });
+    const username = String(req.body?.username || 'user');
+    const url = await storeMomentsPhoto(req.file, String(req.body?.userId || username));
+    return res.json({ success: true, url });
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message || 'Story photo upload failed.' });
+  }
+});
+
 // Stories endpoints
 app.get("/api/v1/stories", (req, res) => {
   res.json(dbData.stories || []);
@@ -7055,15 +7210,16 @@ app.post("/api/v1/reels/sync", async (req, res) => {
   }
 });
 
-app.post("/api/v1/stories/sync", (req, res) => {
-  dbData.stories = req.body;
+app.post("/api/v1/stories/sync", async (req, res) => {
+  const incoming = Array.isArray(req.body) ? req.body : [];
+  if (!Array.isArray(dbData.stories)) dbData.stories = [];
+  const storyMap = new Map<string, any>();
+  dbData.stories.forEach((s: any) => s?.id && storyMap.set(String(s.id), s));
+  incoming.forEach((s: any) => s?.id && storyMap.set(String(s.id), { ...storyMap.get(String(s.id)), ...s }));
+  dbData.stories = Array.from(storyMap.values());
   saveDatabase();
-  if (Array.isArray(req.body)) {
-    req.body.forEach((s: any) => {
-      if (s.id) syncDocument("stories", s.id, s);
-    });
-  }
-  res.json({ success: true });
+  await Promise.all(incoming.filter((s: any) => s?.id).map((s: any) => syncDocument("stories", String(s.id), storyMap.get(String(s.id)))));
+  res.json({ success: true, merged: true, count: incoming.length });
 });
 
 app.post("/api/v1/chats/sync", (req, res) => {

@@ -3,6 +3,7 @@ import { App as CapacitorApp } from "@capacitor/app";
 import { authenticatedFetch, resolveApiUrl, refreshSession, getAuthToken, isCapacitorOrAndroid, createAccount, verifyEmailOtp, sendEmailOtp, emailPasswordLogin, requestPasswordReset, resetEmailPassword } from "./lib/apiClient";
 import { COUNTRIES_CURRENCIES, CountryCurrency, getCoinsCostInCurrency } from "./currencyUtils";
 import { ReelsView } from "./components/ReelsView";
+import { MomentsView } from "./components/MomentsView";
 import { AgoraStream } from "./components/AgoraStream";
 import { AgoraPartyAudio } from "./components/AgoraPartyAudio";
 import { VipAnimatedFrame, VIP_FRAMES_LIST } from "./components/VipAnimatedFrame";
@@ -1012,6 +1013,7 @@ export default function App() {
 
   // Profile Feed Tab states
   const [profileFeedTab, setProfileFeedTab] = useState<"uploaded" | "liked" | "saved" | "private">("uploaded");
+  const [creatorHubMode, setCreatorHubMode] = useState<"reels" | "posts">("reels");
   const [selectedProfileReel, setSelectedProfileReel] = useState<any | null>(null);
 
   // Helper actions for TikTok style interaction panel
@@ -1214,6 +1216,8 @@ export default function App() {
     isFollowed: boolean;
   }>>({});
   const [stories, setStories] = useState<UserStory[]>([]);
+  const [posts, setPosts] = useState<any[]>([]);
+  const [momentsOpenComposerSignal, setMomentsOpenComposerSignal] = useState(0);
 
   const [showCreateStoryModal, setShowCreateStoryModal] = useState<boolean>(false);
   const [showStoryViewerModal, setShowStoryViewerModal] = useState<boolean>(false);
@@ -1224,6 +1228,7 @@ export default function App() {
   const [storyCreatorText, setStoryCreatorText] = useState<string>("");
   const [storyCreatorBg, setStoryCreatorBg] = useState<string>("from-pink-500 via-[#ff007f] to-purple-600");
   const [storyCreatorImage, setStoryCreatorImage] = useState<string>("https://images.unsplash.com/photo-1511512578047-dfb367046420?auto=format&fit=crop&w=600&q=80");
+  const [storyCreatorFile, setStoryCreatorFile] = useState<File | null>(null);
   const [storyCreatorVideo, setStoryCreatorVideo] = useState<string>("https://assets.mixkit.co/videos/preview/mixkit-holding-a-glowing-neon-heart-41484-large.mp4");
   const [storyCreatorCaption, setStoryCreatorCaption] = useState<string>("");
   const [storyReplyText, setStoryReplyText] = useState<string>("");
@@ -1238,6 +1243,29 @@ export default function App() {
       }).catch(err => console.error("Error syncing stories to backend:", err));
     }
   }, [stories]);
+
+  // Real-time durable Moments posts sync. Never replace existing local posts with an
+  // empty/stale snapshot; merge by stable post ID so refreshes cannot wipe content.
+  useEffect(() => {
+    let cancelled = false;
+    const mergePosts = (incoming: any[]) => {
+      if (cancelled || !Array.isArray(incoming)) return;
+      setPosts(prev => {
+        const map = new Map<string, any>();
+        (prev || []).forEach(p => p?.id && map.set(String(p.id), p));
+        incoming.forEach(p => p?.id && map.set(String(p.id), { ...map.get(String(p.id)), ...p }));
+        return Array.from(map.values()).sort((a, b) => (Date.parse(b?.createdAt || '') || 0) - (Date.parse(a?.createdAt || '') || 0));
+      });
+    };
+    fetch(resolveApiUrl('/api/v1/posts')).then(r => r.json()).then(data => mergePosts(Array.isArray(data) ? data : [])).catch(() => {});
+    if (db) {
+      try {
+        const unsubscribe = onSnapshot(collection(db, 'posts'), snapshot => mergePosts(snapshot.docs.map(d => ({ id: d.id, ...d.data() }))), () => {});
+        return () => { cancelled = true; unsubscribe(); };
+      } catch {}
+    }
+    return () => { cancelled = true; };
+  }, []);
 
   // Real-time Reels sync with Firestore database
   useEffect(() => {
@@ -1923,7 +1951,7 @@ export default function App() {
   }, [reels, stories, user.uniqueId, user.username, user.fullName]);
 
   // Client Navigation View (within mobile)
-  const [clientView, setClientView] = useState<"feed" | "live-room" | "profile" | "wallet" | "family-agency" | "chat" | "reels" | "user-live" | "camera-prep" | "party-room" | "notifications" | "stream" | "shop">("feed");
+  const [clientView, setClientView] = useState<"feed" | "live-room" | "profile" | "wallet" | "family-agency" | "chat" | "reels" | "user-live" | "camera-prep" | "party-room" | "notifications" | "stream" | "shop" | "moments">("feed");
   const [viewHistory, setViewHistory] = useState<string[]>(["feed"]);
 
   useEffect(() => {
@@ -6224,7 +6252,7 @@ export default function App() {
   // =====================================================================
   // 📖 24-HOUR INTERACTIVE STORIES HANDLERS
   // =====================================================================
-  const handleAddStory = () => {
+  const handleAddStory = async () => {
     let finalContent = "";
     if (storyCreatorTab === "text") {
       if (!storyCreatorText.trim()) {
@@ -6236,6 +6264,22 @@ export default function App() {
       finalContent = storyCreatorImage;
     } else if (storyCreatorTab === "video") {
       finalContent = storyCreatorVideo;
+    }
+
+    if (storyCreatorTab === "photo" && storyCreatorFile) {
+      try {
+        const form = new FormData();
+        form.append("media", storyCreatorFile);
+        form.append("username", user.username || "");
+        form.append("userId", user.uniqueId || user.uid || "");
+        const uploadResponse = await authenticatedFetch(resolveApiUrl("/api/v1/stories/media"), { method: "POST", body: form });
+        const uploadData = await uploadResponse.json().catch(() => ({}));
+        if (!uploadResponse.ok || !uploadData?.url) throw new Error(uploadData?.error || "Photo upload failed.");
+        finalContent = uploadData.url;
+      } catch (err: any) {
+        alert(err?.message || "Could not upload story photo.");
+        return;
+      }
     }
 
     const now = Date.now();
@@ -6262,6 +6306,7 @@ export default function App() {
     // Clear fields
     setStoryCreatorText("");
     setStoryCreatorCaption("");
+    setStoryCreatorFile(null);
     
     alert("Kamyabi se 24-hour story lag gayi hai! 🎉");
 
@@ -16452,16 +16497,21 @@ export default function App() {
                                 <p className="text-[8px] text-gray-400">Browse short videos, highlights & private ledgers</p>
                               </div>
                               <div className="flex items-center space-x-2">
+                                <div className="flex bg-[#12121a] border border-[#303040] rounded-lg p-0.5">
+                                  <button type="button" onClick={() => setCreatorHubMode("reels")} className={`px-2 py-1 rounded text-[8px] font-black ${creatorHubMode === "reels" ? "bg-[#ff007f] text-white" : "text-gray-500"}`}>Reels</button>
+                                  <button type="button" onClick={() => setCreatorHubMode("posts")} className={`px-2 py-1 rounded text-[8px] font-black ${creatorHubMode === "posts" ? "bg-[#00e5ff] text-black" : "text-gray-500"}`}>Posts</button>
+                                </div>
                                 <button
                                   type="button"
                                   onClick={() => {
+                                    if (creatorHubMode === "posts") { setShowCreateActionSheet(true); return; }
                                     setUploadReelStep("select");
                                     setShowUploadReelOverlay(true);
                                   }}
                                   className="px-2.5 py-1 bg-gradient-to-r from-[#ff007f] to-[#7b2cbf] hover:brightness-110 text-white rounded-lg text-[8.5px] font-black uppercase font-mono flex items-center space-x-1 shadow transition-all active:scale-95 cursor-pointer"
                                 >
                                   <Plus className="w-3 h-3" />
-                                  <span>Upload Reel</span>
+                                  <span>{creatorHubMode === "posts" ? "Create Post" : "Upload Reel"}</span>
                                 </button>
                                 <span className="text-[9px] text-[#66fcf1] font-mono font-bold bg-[#12121a] px-2 py-0.5 rounded border border-[#303040]">
                                   {Object.values(profileReels).flat().length} Clips
@@ -16469,6 +16519,28 @@ export default function App() {
                               </div>
                             </div>
 
+                            {creatorHubMode === "posts" ? (
+                              <div className="space-y-3">
+                                <div className="grid grid-cols-2 gap-2">
+                                  <button type="button" onClick={() => setShowCreateActionSheet(true)} className="p-3 rounded-xl bg-[#12121a] border border-cyan-500/20 text-left"><ImageIcon className="w-5 h-5 text-cyan-300 mb-1"/><span className="text-[9px] font-black text-white block">Photo / Post</span><span className="text-[7px] text-gray-500">Share to Moments</span></button>
+                                  <button type="button" onClick={() => setShowCreateStoryModal(true)} className="p-3 rounded-xl bg-[#12121a] border border-pink-500/20 text-left"><Camera className="w-5 h-5 text-pink-400 mb-1"/><span className="text-[9px] font-black text-white block">Story</span><span className="text-[7px] text-gray-500">24-hour story</span></button>
+                                </div>
+                                <div className="space-y-2">
+                                  {posts.filter((p: any) => String(p.userId || p.uploaderId || "") === String(user.uniqueId || user.uid || "") || String(p.username || "") === String(user.username || "")).map((p: any) => (
+                                    <div key={p.id} className="rounded-xl overflow-hidden bg-[#12121a] border border-[#303040]">
+                                      <div className="p-2 flex items-center gap-2"><img src={p.avatar || user.avatar} className="w-7 h-7 rounded-full object-cover"/><div><div className="text-[9px] font-black text-white">{p.fullName || p.username}</div><div className="text-[7px] text-gray-500">{p.createdAt ? new Date(p.createdAt).toLocaleString() : "Just now"}</div></div></div>
+                                      {p.caption && <p className="px-2 pb-2 text-[8px] text-gray-300 whitespace-pre-wrap">{p.caption}</p>}
+                                      {p.mediaUrl && <img src={p.mediaUrl} className="w-full max-h-64 object-cover" alt="Post"/>}
+                                    </div>
+                                  ))}
+                                  {stories.filter((st: any) => st.username === user.username || st.userId === user.uniqueId).map((st: any) => (
+                                    <div key={`story-${st.id}`} className="rounded-xl bg-gradient-to-r from-pink-500/10 to-purple-500/10 border border-pink-500/20 p-2 flex items-center gap-2"><Camera className="w-4 h-4 text-pink-400"/><div className="flex-1"><span className="text-[8px] font-black text-white block">{st.caption || st.content || "My Story"}</span><span className="text-[7px] text-gray-500">24-hour Story</span></div></div>
+                                  ))}
+                                  {posts.filter((p: any) => String(p.userId || p.uploaderId || "") === String(user.uniqueId || user.uid || "") || String(p.username || "") === String(user.username || "")).length === 0 && stories.filter((st: any) => st.username === user.username || st.userId === user.uniqueId).length === 0 && <div className="text-center py-6 text-gray-500 text-[9px]">Your posts and stories will appear here.</div>}
+                                </div>
+                              </div>
+                            ) : (
+                            <>
                             {/* Feed Tabs Bar */}
                             <div className="grid grid-cols-4 gap-1 bg-[#12121a] p-1 rounded-lg border border-[#303040]">
                               <button
@@ -16585,6 +16657,8 @@ export default function App() {
                                 ))
                               )}
                             </div>
+                            </>
+                            )}
                           </div>
 
                           {/* ===================================================================== */}
@@ -16752,6 +16826,25 @@ export default function App() {
 
                         </div>
                       </div>
+                    )}
+
+                    {/* ===================================================================== */}
+                    {/* VIEW: MOMENTS — POSTS, STORIES + EXISTING REELS */}
+                    {/* ===================================================================== */}
+                    {clientView === "moments" && (
+                      <MomentsView
+                        user={user}
+                        posts={posts}
+                        setPosts={setPosts}
+                        stories={stories}
+                        onOpenStoryCreator={() => requireAuth("create a story", () => setShowCreateStoryModal(true))}
+                        onOpenStoryViewer={(storyId) => { const idx = stories.findIndex((s: any) => String(s.id) === String(storyId)); if (idx >= 0) { setActiveStoryIndex(idx); setShowStoryViewerModal(true); } }}
+                        onOpenReels={() => setClientView("reels")}
+                        onOpenUploadReel={() => requireAuth("upload videos & reels", () => { setUploadReelStep("select"); setShowUploadReelOverlay(true); })}
+                        goBack={goBack}
+                        openComposerSignal={momentsOpenComposerSignal}
+                        onComposerSignalConsumed={() => setMomentsOpenComposerSignal(0)}
+                      />
                     )}
 
                     {/* ===================================================================== */}
@@ -25179,14 +25272,14 @@ export default function App() {
 
                         {/* Moments (formerly Reels) */}
                         <button
-                          onClick={() => setClientView("reels")}
+                          onClick={() => setClientView("moments")}
                           className={`flex flex-col items-center flex-1 py-1 transition-all relative group cursor-pointer ${
-                            clientView === "reels" ? "text-[#ffd54f] scale-110 font-black" : "text-gray-400 hover:text-amber-200"
+                            clientView === "moments" ? "text-[#ffd54f] scale-110 font-black" : "text-gray-400 hover:text-amber-200"
                           }`}
                         >
-                          <Film className={`w-4.5 h-4.5 mb-0.5 transition-transform ${clientView === "reels" ? "drop-shadow-[0_0_10px_rgba(255,213,79,0.8)]" : "group-hover:scale-110"}`} />
+                          <Film className={`w-4.5 h-4.5 mb-0.5 transition-transform ${clientView === "moments" ? "drop-shadow-[0_0_10px_rgba(255,213,79,0.8)]" : "group-hover:scale-110"}`} />
                           <span className="text-[8.5px] font-extrabold uppercase tracking-wider">Moments</span>
-                          {clientView === "reels" && (
+                          {clientView === "moments" && (
                             <span className="w-1.5 h-1.5 rounded-full bg-[#ffd54f] shadow-[0_0_8px_#ffd54f] mt-0.5 animate-pulse" />
                           )}
                         </button>
@@ -25409,7 +25502,26 @@ export default function App() {
                               </div>
                             </button>
 
-                            {/* Option 2: Start Live Stream */}
+                            {/* Option 2: Create Photo / Text Post */}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setShowCreateActionSheet(false);
+                                setClientView("moments");
+                                setMomentsOpenComposerSignal(Date.now());
+                              }}
+                              className="p-3.5 bg-gradient-to-br from-[#1e1e2f] to-[#161625] border border-cyan-500/40 hover:border-cyan-400 rounded-2xl flex flex-col items-start space-y-2 group transition-all active:scale-95 shadow-lg text-left cursor-pointer"
+                            >
+                              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-cyan-400 to-blue-600 flex items-center justify-center text-black shadow-md group-hover:scale-110 transition-transform">
+                                <ImageIcon className="w-5 h-5" />
+                              </div>
+                              <div>
+                                <span className="text-xs font-black text-white block uppercase tracking-wide">Create Post 📝</span>
+                                <span className="text-[8.5px] text-gray-400 leading-tight block mt-0.5">Write a post or share a photo</span>
+                              </div>
+                            </button>
+
+                            {/* Option 3: Start Live Stream */}
                             <button
                               type="button"
                               onClick={() => {
@@ -27643,7 +27755,13 @@ export default function App() {
 
                             {storyCreatorTab === "photo" && (
                               <div className="space-y-3 bg-transparent">
-                                <label className="text-[8px] uppercase tracking-wider text-gray-400 block font-bold">Select Photo Preset or Paste URL</label>
+                                <label className="text-[8px] uppercase tracking-wider text-gray-400 block font-bold">Upload your photo or choose a source</label>
+                                <label className="w-full flex items-center justify-center gap-2 rounded-xl border border-cyan-500/30 bg-cyan-500/5 px-3 py-3 text-[9px] font-black text-cyan-300 cursor-pointer hover:bg-cyan-500/10">
+                                  <UploadCloud className="w-4 h-4" />
+                                  <span>{storyCreatorFile ? storyCreatorFile.name : "Choose Photo from Device"}</span>
+                                  <input type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0] || null; if (f && f.size <= 15 * 1024 * 1024) { setStoryCreatorFile(f); setStoryCreatorImage(URL.createObjectURL(f)); } else if (f) alert("Photo must be 15 MB or smaller."); }} />
+                                </label>
+                                <label className="text-[8px] uppercase tracking-wider text-gray-400 block font-bold">Or choose a preset / URL</label>
                                 
                                 {/* Photo Presets Grid */}
                                 <div className="grid grid-cols-4 gap-2 bg-transparent">
