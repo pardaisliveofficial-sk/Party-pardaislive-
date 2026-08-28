@@ -8,6 +8,25 @@ import {
 import { Gift, GiftType, ChatMessage, Transaction, UserProfile } from "../types";
 import { resolveApiUrl } from "../lib/apiClient";
 
+// Unlock the WebView/browser media pipeline after the user has interacted with the app.
+// This keeps gift videos eligible to play with their original audio when the platform allows it.
+let giftAudioUnlocked = false;
+if (typeof window !== "undefined") {
+  const unlockGiftAudio = async () => {
+    try {
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      if (AudioCtx) {
+        const ctx = (window as any).__pardaisGiftAudioContext || new AudioCtx();
+        (window as any).__pardaisGiftAudioContext = ctx;
+        if (ctx.state === "suspended") await ctx.resume();
+      }
+      giftAudioUnlocked = true;
+    } catch (_) {}
+  };
+  window.addEventListener("pointerdown", unlockGiftAudio, { passive: true });
+  window.addEventListener("touchstart", unlockGiftAudio, { passive: true });
+}
+
 // Web Audio API Synthesizer for Gift Sound Effects
 export const playGiftAudioSynthesizer = (soundType: string = "ding") => {
   try {
@@ -874,42 +893,52 @@ export const GiftAnimationEngine: React.FC<GiftAnimationEngineProps> = ({
   const giftCost = gift?.cost || gift?.coins || 10;
   const giftIcon = gift?.icon || gift?.emoji || "🎁";
 
-  const videoSource = isValidUrlOrMedia(rawVideoUrl) ? rawVideoUrl : "";
+  const mediaPath = typeof rawVideoUrl === "string" ? rawVideoUrl.trim() : "";
+  const mediaPathLower = mediaPath.toLowerCase();
+  const extensionIsVideo = /\.(webm|mp4)(?:$|[?#])/i.test(mediaPathLower);
+  const extensionIsImage = /\.(png|jpe?g|gif|svg)(?:$|[?#])/i.test(mediaPathLower);
+  const videoSource = isValidUrlOrMedia(rawVideoUrl) && !extensionIsImage ? rawVideoUrl : "";
 
-  // Detect whether videoSource is a valid playable video URL / Data URI / Blob
+  // A media URL must agree with its declared format. This prevents a PNG gift-picture
+  // URL accidentally being mounted in <video>, which produces the frozen-frame symptom.
   const isVideoFormat = format === "mp4" || format === "webm";
   const isVideoUrl = isValidUrlOrMedia(videoSource);
-
-  const isPlayableVideoUrl = !videoError && Boolean(videoSource && (isVideoFormat || isVideoUrl));
+  const isPlayableVideoUrl = !videoError && Boolean(videoSource && (isVideoFormat || extensionIsVideo || String(videoSource).startsWith("data:video") || String(videoSource).startsWith("blob:")));
 
   // Detect whether source is an Animated GIF
-  const isGif = !isPlayableVideoUrl && Boolean(videoSource) && (
-    format === "gif" || 
-    (typeof rawVideoUrl === "string" && (rawVideoUrl.endsWith(".gif") || rawVideoUrl.startsWith("data:image/gif")))
+  const isGif = !isPlayableVideoUrl && Boolean(mediaPath) && (
+    format === "gif" ||
+    mediaPathLower.endsWith(".gif") ||
+    mediaPathLower.startsWith("data:image/gif")
   );
 
-  // Gift animations use the actual uploaded media audio. Try unmuted autoplay first.
-  // If the browser/WebView blocks autoplay with sound, keep the video playing and
-  // fall back to the existing synthesized gift sound so the gift still has audio.
+  const imageAnimationSource = (!isPlayableVideoUrl && extensionIsImage) ? mediaPath : "";
+
+  // Gift animations use the original media audio. Never force-mute the uploaded video.
+  // The Android Capacitor WebView is configured for mediaPlaybackRequiresUserGesture=false;
+  // this effect also retries immediately after the app's media/audio pipeline is unlocked.
   useEffect(() => {
     if (!isPlayableVideoUrl || !videoRef.current) return;
     const video = videoRef.current;
     video.currentTime = 0;
-    video.muted = false;
     video.defaultMuted = false;
+    video.muted = false;
     video.volume = 1;
-    video.play().catch(err => {
-      console.warn("[GiftSystem] Unmuted gift autoplay blocked; falling back to gift audio:", err);
-      const sound = currentGift?.gift?.soundEffect || (
-        currentGift?.gift?.name?.toLowerCase().includes("lion") ? "roar" :
-        currentGift?.gift?.name?.toLowerCase().includes("firework") ? "fireworks" :
-        currentGift?.gift?.name?.toLowerCase().includes("spice") ? "roar" :
-        "ding"
-      );
-      playGiftAudioSynthesizer(sound);
-      video.muted = true;
-      video.play().catch(() => {});
-    });
+
+    const playWithOriginalAudio = () => {
+      video.muted = false;
+      video.defaultMuted = false;
+      video.volume = 1;
+      video.play().catch(err => {
+        console.warn("[GiftSystem] Gift video audio autoplay was deferred by the platform:", err);
+        // Do not mute the real gift video. A later user interaction / WebView media unlock
+        // will retry playback, preserving the uploaded audio track.
+      });
+    };
+
+    playWithOriginalAudio();
+    const retry = window.setTimeout(playWithOriginalAudio, 180);
+    return () => window.clearTimeout(retry);
   }, [currentGift?.id, isPlayableVideoUrl, videoSource]);
 
   if (!currentGift) return null;
@@ -945,7 +974,7 @@ export const GiftAnimationEngine: React.FC<GiftAnimationEngineProps> = ({
 
   return (
     <AnimatePresence>
-      <div className="absolute inset-0 z-50 pointer-events-none flex flex-col justify-between items-center overflow-hidden bg-transparent select-none p-3">
+      <div className="absolute inset-0 z-0 pointer-events-none flex flex-col justify-between items-center overflow-hidden bg-transparent select-none p-3">
         
         {/* Professional Gift Information Banner */}
         <motion.div
@@ -953,7 +982,7 @@ export const GiftAnimationEngine: React.FC<GiftAnimationEngineProps> = ({
           animate={{ y: 0, opacity: 1, scale: 1 }}
           exit={{ y: -40, opacity: 0, scale: 0.85 }}
           transition={{ type: "spring", damping: 16 }}
-          className="z-50 bg-gradient-to-r from-purple-950/95 via-black/95 to-amber-950/95 border border-amber-400/60 rounded-full px-5 py-2.5 flex items-center space-x-3 text-white shadow-[0_0_35px_rgba(255,215,0,0.5)] backdrop-blur-md"
+          className="z-10 bg-gradient-to-r from-purple-950/95 via-black/95 to-amber-950/95 border border-amber-400/60 rounded-full px-5 py-2.5 flex items-center space-x-3 text-white shadow-[0_0_35px_rgba(255,215,0,0.5)] backdrop-blur-md"
         >
           <span className="text-xl animate-bounce">🎁</span>
           <div className="flex items-center space-x-2 text-xs font-mono">
@@ -988,7 +1017,7 @@ export const GiftAnimationEngine: React.FC<GiftAnimationEngineProps> = ({
           animate={{ scale: 1, opacity: 1 }}
           exit={{ scale: 0.8, opacity: 0 }}
           transition={{ type: "spring", damping: 15 }}
-          className="absolute inset-x-0 bottom-0 h-[60%] flex items-center justify-center bg-transparent pointer-events-none z-20"
+          className="absolute inset-x-0 bottom-0 h-[60%] flex items-center justify-center bg-transparent pointer-events-none z-0"
         >
           {/* Ambient particle blur effect */}
           <div className={`absolute w-80 h-80 rounded-full filter blur-3xl opacity-30 animate-pulse bg-gradient-to-tr ${gift?.color || "from-amber-500 via-pink-500 to-purple-600"}`} />
@@ -1023,7 +1052,7 @@ export const GiftAnimationEngine: React.FC<GiftAnimationEngineProps> = ({
                   finishCallbackRef.current();
                 }
               }}
-              className="w-full h-full max-h-full max-w-[100vw] object-contain pointer-events-none relative z-20 drop-shadow-[0_0_40px_rgba(255,215,0,0.8)]"
+              className="w-full h-full max-h-full max-w-[100vw] object-contain pointer-events-none relative z-0 drop-shadow-[0_0_40px_rgba(255,215,0,0.8)]"
               style={{
                 mixBlendMode: "screen", // Blends out dark backgrounds on video overlays seamlessly
                 transform: "translateZ(0)",
@@ -1035,7 +1064,7 @@ export const GiftAnimationEngine: React.FC<GiftAnimationEngineProps> = ({
           ) : isGif ? (
             /* RENDER ANIMATED GIF OVERLAY */
             <img
-              src={videoSource}
+              src={mediaPath}
               alt={gift?.name}
               className="w-full h-full max-h-full max-w-[100vw] object-contain pointer-events-none relative z-20 drop-shadow-[0_0_40px_rgba(255,215,0,0.8)]"
               style={{ mixBlendMode: "screen" }}
@@ -1088,13 +1117,13 @@ export const GiftAnimationEngine: React.FC<GiftAnimationEngineProps> = ({
             </div>
           ) : isSvga ? (
             /* RENDER SVGA VECTOR CANVAS PLAYER */
-            <SvgaCanvasPlayer file={videoSource} color={gift?.color} name={gift?.name} />
+            <SvgaCanvasPlayer file={animFile as any} color={gift?.color} name={gift?.name} />
           ) : (
             /* RENDER HIGH QUALITY DISPLAY FOR OTHER NON-VIDEO GIFTS */
             <div className="relative z-20 flex flex-col items-center justify-center bg-transparent pointer-events-none">
-              {typeof animFile === 'string' && (animFile.startsWith("http") || animFile.startsWith("data:image")) ? (
+              {typeof (imageAnimationSource || animFile) === 'string' && ((imageAnimationSource || animFile).startsWith("http") || (imageAnimationSource || animFile).startsWith("data:image")) ? (
                 <img
-                  src={animFile}
+                  src={(imageAnimationSource || animFile) as string}
                   alt={gift?.name}
                   className={`max-w-[340px] max-h-[340px] object-contain drop-shadow-[0_0_40px_rgba(255,0,127,0.7)] ${gift?.animationClass || "animate-bounce"}`}
                   style={{ backgroundColor: 'transparent' }}
@@ -1368,6 +1397,10 @@ export const AdminGiftTab: React.FC<AdminGiftTabProps> = ({
   const handleAnimation = async (file?: File) => {
     if (!file) return;
     const lower = file.name.toLowerCase();
+    if (!(lower.endsWith(".svga") || lower.endsWith(".webm") || lower.endsWith(".mp4") || lower.endsWith(".svg"))) {
+      alert("Gift animation must be WebM, MP4, SVGA or SVG. PNG/JPG are for the gift picture only.");
+      return;
+    }
     const format = lower.endsWith(".svga") ? "svga" :
       lower.endsWith(".webm") ? "webm" :
       lower.endsWith(".mp4") ? "mp4" : "svg";

@@ -7083,7 +7083,7 @@ export default function App() {
     const giftSysMsg: ChatMessage = {
       id: Date.now().toString(),
       username: "System",
-      message: `👑 ${user.username} sent [${gift.name} ${gift.icon} x${count}] to ${recipientName}!`,
+      message: `🎁 ${user.username} sent ${gift.name}${count > 1 ? ` x${count}` : ""} to ${recipientName}`,
       vipLevel: user.vipLevel,
       userLevel: user.userLevel,
       isSystem: true,
@@ -7108,6 +7108,7 @@ export default function App() {
       animationFormat: gift.animationFormat || "webm",
       animationDuration: gift.animationDuration || 8,
       animationDisplayType: gift.animationDisplayType || "full",
+      globalBannerEnabled: gift.globalBannerEnabled === true,
       type: gift.type || "3d"
     });
 
@@ -10481,6 +10482,7 @@ export default function App() {
                           animationFormat: gift.animationFormat || "webm",
                           animationDuration: gift.animationDuration || 8,
                           animationDisplayType: gift.animationDisplayType || "full",
+                          globalBannerEnabled: gift.globalBannerEnabled === true,
                           type: gift.type || "3d"
                         });
 
@@ -11000,7 +11002,7 @@ export default function App() {
 
                             {/* 💬 INTERACTIVE COMMENTS TIMELINE CHAT STREAM */}
                             <div className="flex-1 min-h-[120px] mx-3 my-1 bg-black/50 border border-amber-500/20 rounded-2xl flex flex-col justify-between overflow-hidden shadow-2xl backdrop-blur-md">
-                              <div className="flex-1 overflow-y-auto space-y-1.5 scrollbar-thin text-left p-2.5">
+                              <div className="relative z-20 flex-1 overflow-y-auto space-y-1.5 scrollbar-thin text-left p-2.5">
                                 {party.comments?.map((comment: any) => {
                                   if (comment.isSystem) {
                                     const meta = comment.giftMeta;
@@ -11010,6 +11012,9 @@ export default function App() {
                                     if (isGiftSystemMessage) {
                                       if (meta?.sender && meta?.giftName && meta?.recipient) {
                                         systemMessage = `🎁 ${meta.sender} sent ${meta.giftName}${Number(meta.count) > 1 ? ` x${meta.count}` : ""} to ${meta.recipient}`;
+                                      } else if (rawMessage.includes("/api/v1/gifts/animation") && party.lastGiftEvent) {
+                                        const lastGift = party.lastGiftEvent as any;
+                                        systemMessage = `🎁 ${lastGift.sender || comment.username || "User"} sent ${lastGift.giftName || "Gift"}${Number(lastGift.count) > 1 ? ` x${lastGift.count}` : ""} to ${lastGift.recipient || party.hostUsername || "Host"}`;
                                       } else {
                                         systemMessage = rawMessage
                                           .replace(/\s*\(?https?:\/\/[^\s)]+\)?/gi, "")
@@ -11541,7 +11546,7 @@ export default function App() {
                           )}
 
                           {/* ⌨️ INTERACTIVE BOTTOM CONTROL ACTIONS ROW */}
-                          <div className="w-full min-w-0 max-w-full px-3 pt-1 pb-[calc(0.25rem+env(safe-area-inset-bottom,0px))] flex items-center gap-1.5 sm:gap-2 shrink-0 bg-transparent overflow-hidden">
+                          <div className="relative z-20 w-full min-w-0 max-w-full px-3 pt-1 pb-[calc(0.25rem+env(safe-area-inset-bottom,0px))] flex items-center gap-1.5 sm:gap-2 shrink-0 bg-transparent overflow-hidden">
                             {/* Message Input Form */}
                             <form 
                               onSubmit={(e) => {

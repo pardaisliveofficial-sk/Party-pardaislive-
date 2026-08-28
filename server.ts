@@ -5185,10 +5185,27 @@ const prunePartyPresence = (party: any) => {
   return party;
 };
 
+const sanitizePartyGiftComment = (comment: any, party: any) => {
+  if (!comment) return comment;
+  const meta = comment.giftMeta;
+  const raw = String(comment.message || "");
+  const looksLikeGift = Boolean(meta) || /\/api\/v1\/gifts\/animation/i.test(raw) || /(?:🎁|gift).*sent/i.test(raw);
+  if (!looksLikeGift) return { ...comment };
+  if (meta?.sender && meta?.giftName && meta?.recipient) {
+    return { ...comment, message: `🎁 ${meta.sender} sent ${meta.giftName}${Number(meta.count) > 1 ? ` x${meta.count}` : ""} to ${meta.recipient}` };
+  }
+  const withoutUrl = raw.replace(/https?:\/\/[^\s)]+/gi, "").replace(/\s*\([^)]*(?:png|webm|mp4|svga|svg)[^)]*\)/gi, "").replace(/\s*•\s*[0-9,]+\s*coins?\.?/gi, "").replace(/\s{2,}/g, " ").trim();
+  const match = withoutUrl.match(/(?:🎁\s*)?(?:@?([^\s]+))?\s*sent\s+(.+?)\s+to\s+@?([^\s!]+)/i);
+  if (match) return { ...comment, message: `🎁 ${match[1] || comment.username || "User"} sent ${match[2].trim()} to ${match[3].trim()}` };
+  const last = party?.lastGiftEvent;
+  if (last?.giftName) return { ...comment, message: `🎁 ${last.sender || comment.username || "User"} sent ${last.giftName}${Number(last.count) > 1 ? ` x${last.count}` : ""} to ${last.recipient || party.hostUsername || "Host"}` };
+  return { ...comment, message: withoutUrl || `🎁 ${comment.username || "User"} sent a gift` };
+};
+
 const sanitizePartyForClient = (party: any) => {
   if (!party) return party;
   prunePartyPresence(party);
-  const safe = { ...party, connectedViewers: Array.isArray(party.connectedViewers) ? party.connectedViewers.map((v: any) => ({ ...v })) : [] };
+  const safe = { ...party, connectedViewers: Array.isArray(party.connectedViewers) ? party.connectedViewers.map((v: any) => ({ ...v })) : [], comments: Array.isArray(party.comments) ? party.comments.map((c: any) => sanitizePartyGiftComment(c, party)) : [] };
   delete safe.password;
   return safe;
 };
@@ -5532,25 +5549,27 @@ app.post("/api/v1/parties/:id/comments", (req, res) => {
   if (index !== -1 && index !== undefined) {
     const party = dbData.parties[index];
     if (!party.comments) party.comments = [];
+    const safeGiftMeta = giftMeta && typeof giftMeta === "object" ? {
+      sender: String(giftMeta.sender || username || "User"),
+      recipient: String(giftMeta.recipient || "Host"),
+      giftName: String(giftMeta.giftName || "Gift"),
+      count: Math.max(1, Number(giftMeta.count) || 1),
+      totalCost: Math.max(0, Number(giftMeta.totalCost) || 0)
+    } : null;
+    const safeCommentMessage = safeGiftMeta
+      ? `🎁 ${safeGiftMeta.sender} sent ${safeGiftMeta.giftName}${safeGiftMeta.count > 1 ? ` x${safeGiftMeta.count}` : ""} to ${safeGiftMeta.recipient}`
+      : String(message || "").replace(/https?:\/\/[^\s)]*\/api\/v1\/gifts\/animation[^\s)]*/gi, "").trim();
     const newComment = {
       id: `c-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
       username,
-      message,
+      message: safeCommentMessage,
       vipLevel: vipLevel || 0,
       userLevel: userLevel || 1,
       isSystem: !!isSystem,
       avatar: avatar || "",
       ...(reactionSound ? { reactionSound } : {}),
       ...(reactionEventId ? { reactionEventId } : {}),
-      ...(giftMeta && typeof giftMeta === "object" ? {
-        giftMeta: {
-          sender: String(giftMeta.sender || username || "User"),
-          recipient: String(giftMeta.recipient || "Host"),
-          giftName: String(giftMeta.giftName || "Gift"),
-          count: Math.max(1, Number(giftMeta.count) || 1),
-          totalCost: Math.max(0, Number(giftMeta.totalCost) || 0)
-        }
-      } : {}),
+      ...(safeGiftMeta ? { giftMeta: safeGiftMeta } : {}),
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     };
     party.comments.push(newComment);
@@ -7639,7 +7658,12 @@ app.post('/api/v1/gifts/upload-animation', giftAnimationUpload.single('file'), a
     }
 
     const mime = String(file.mimetype || 'application/octet-stream').toLowerCase();
+    const mediaType = String(req.body?.mediaType || 'animation').toLowerCase();
     const original = String(file.originalname || 'gift-animation');
+    const lowerOriginal = original.toLowerCase();
+    if (mediaType === 'animation' && !(mime === 'video/webm' || mime === 'video/mp4' || mime === 'image/svg+xml' || lowerOriginal.endsWith('.svga') || lowerOriginal.endsWith('.svg') || lowerOriginal.endsWith('.webm') || lowerOriginal.endsWith('.mp4'))) {
+      return res.status(400).json({ success: false, error: 'Animation must be WebM, MP4, SVGA or SVG. PNG/JPG are for gift pictures.' });
+    }
     const ext = original.includes('.') ? original.split('.').pop()!.toLowerCase() :
       (mime === 'video/webm' ? 'webm' : mime === 'video/mp4' ? 'mp4' : mime === 'image/svg+xml' ? 'svg' :
       mime === 'image/png' ? 'png' : mime === 'image/jpeg' ? 'jpg' : 'gif');
