@@ -133,7 +133,14 @@ export const COLLECTIONS = [
   "coinTransactions",
   "approvalStatus",
   "adminActions",
-  "coinSellers"
+  "coinSellers",
+  "investment_plans",
+  "investments",
+  "investment_transactions",
+  "investment_earnings",
+  "investment_withdrawals",
+  "revenue_pools",
+  "revenue_distributions"
 ];
 
 // Memory Cache synced with Firestore
@@ -598,6 +605,15 @@ export function startFirestoreSynchronization() {
           (dbDataCache.posts || []).forEach((p: any) => { if (p?.id) postMap.set(String(p.id), p); });
           items.forEach((p: any) => { if (p?.id) postMap.set(String(p.id), { ...postMap.get(String(p.id)), ...p }); });
           dbDataCache.posts = Array.from(postMap.values());
+        }
+      } else if (["investment_plans", "investments", "investment_transactions", "investment_earnings", "investment_withdrawals", "revenue_pools", "revenue_distributions"].includes(colName)) {
+        // Financial module snapshots are additive; never erase a locally persisted record
+        // because a transient/partial Firestore snapshot is empty.
+        if (items.length > 0) {
+          const map = new Map<string, any>();
+          (dbDataCache[colName] || []).forEach((x: any) => x?.id && map.set(String(x.id), x));
+          items.forEach((x: any) => x?.id && map.set(String(x.id), { ...map.get(String(x.id)), ...x }));
+          dbDataCache[colName] = Array.from(map.values());
         }
       } else if (colName === "reels") {
         // Never wipe the production reel cache when Firestore temporarily returns

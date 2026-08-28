@@ -4,6 +4,7 @@ import { authenticatedFetch, resolveApiUrl, refreshSession, getAuthToken, isCapa
 import { COUNTRIES_CURRENCIES, CountryCurrency, getCoinsCostInCurrency } from "./currencyUtils";
 import { ReelsView } from "./components/ReelsView";
 import { MomentsView } from "./components/MomentsView";
+import { RevenueShareModule } from "./components/RevenueShareModule";
 import { AgoraStream } from "./components/AgoraStream";
 import { AgoraPartyAudio } from "./components/AgoraPartyAudio";
 import { VipAnimatedFrame, VIP_FRAMES_LIST } from "./components/VipAnimatedFrame";
@@ -1218,6 +1219,16 @@ export default function App() {
   const [stories, setStories] = useState<UserStory[]>([]);
   const [posts, setPosts] = useState<any[]>([]);
   const [momentsOpenComposerSignal, setMomentsOpenComposerSignal] = useState(0);
+  const [revenueShareMinDeposit, setRevenueShareMinDeposit] = useState<number | null>(null);
+
+  useEffect(() => {
+    fetch(resolveApiUrl('/api/v1/revenue-share/plans'), { cache: 'no-store' })
+      .then(r => r.ok ? r.json() : [])
+      .then((plans: any[]) => {
+        const mins = (Array.isArray(plans) ? plans : []).map(p => Number(p?.minDeposit)).filter(Number.isFinite);
+        setRevenueShareMinDeposit(mins.length ? Math.min(...mins) : null);
+      }).catch(() => {});
+  }, []);
 
   const [showCreateStoryModal, setShowCreateStoryModal] = useState<boolean>(false);
   const [showStoryViewerModal, setShowStoryViewerModal] = useState<boolean>(false);
@@ -1951,7 +1962,7 @@ export default function App() {
   }, [reels, stories, user.uniqueId, user.username, user.fullName]);
 
   // Client Navigation View (within mobile)
-  const [clientView, setClientView] = useState<"feed" | "live-room" | "profile" | "wallet" | "family-agency" | "chat" | "reels" | "user-live" | "camera-prep" | "party-room" | "notifications" | "stream" | "shop" | "moments">("feed");
+  const [clientView, setClientView] = useState<"feed" | "live-room" | "profile" | "wallet" | "family-agency" | "chat" | "reels" | "user-live" | "camera-prep" | "party-room" | "notifications" | "stream" | "shop" | "moments" | "revenue-share">("feed");
   const [viewHistory, setViewHistory] = useState<string[]>(["feed"]);
 
   useEffect(() => {
@@ -14269,6 +14280,10 @@ export default function App() {
 
                     {/* ===================================================================== */}
                     {/* VIEW 2.5: SHOP — VIP FRAMES, CUSTOM GIFTS & EXCLUSIVE PRODUCTS */}
+                    {clientView === "revenue-share" && (
+                      <RevenueShareModule onBack={() => setClientView("shop")} />
+                    )}
+
                     {clientView === "shop" && (
                       <div className="flex-1 scroll-view-y p-3 pb-5 space-y-4">
                         <div className="rounded-2xl p-4 border border-yellow-400/30 bg-gradient-to-br from-[#241535] via-[#15162a] to-[#0d202b] shadow-[0_0_30px_rgba(255,0,127,0.12)]">
@@ -14284,6 +14299,16 @@ export default function App() {
                             <div className="px-2 py-1 rounded-full bg-yellow-400/10 border border-yellow-400/20 text-yellow-300 text-[8px] font-black uppercase">Coming Soon</div>
                           </div>
                         </div>
+
+                        <button type="button" onClick={() => setClientView("revenue-share")} className="w-full text-left rounded-2xl p-4 border border-emerald-400/25 bg-gradient-to-r from-[#14251f] via-[#17162a] to-[#25142c] shadow-[0_0_28px_rgba(16,185,129,0.10)] active:scale-[0.99] transition-all">
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="flex items-start gap-3">
+                              <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-emerald-400/20 to-yellow-400/20 border border-emerald-300/20 flex items-center justify-center text-2xl">💰</div>
+                              <div><div className="text-[8px] font-black uppercase tracking-[0.16em] text-emerald-300">Gifter Revenue Share</div><h3 className="text-sm font-black text-white mt-1">Grow with Pardais Party</h3><p className="text-[8px] text-gray-400 mt-1">Turn eligible deposits into tracked platform revenue participation.</p><p className="text-[8px] text-yellow-300 font-black mt-1">Minimum {revenueShareMinDeposit != null ? `$${revenueShareMinDeposit.toLocaleString()}` : "set by plan"}</p></div>
+                            </div>
+                            <span className="shrink-0 px-2.5 py-2 rounded-xl bg-emerald-400 text-black text-[8px] font-black uppercase">View Plans</span>
+                          </div>
+                        </button>
 
                         <div className="grid grid-cols-2 gap-3">
                           {[

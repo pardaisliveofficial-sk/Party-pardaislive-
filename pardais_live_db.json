@@ -114,5 +114,12 @@
   "coinTransactions": [],
   "approvalStatus": [],
   "adminActions": [],
-  "coinSellers": []
+  "coinSellers": [],
+  "investment_plans": [],
+  "investments": [],
+  "investment_transactions": [],
+  "investment_earnings": [],
+  "investment_withdrawals": [],
+  "revenue_pools": [],
+  "revenue_distributions": []
 }

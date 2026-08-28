@@ -61,6 +61,7 @@ import {
   saveCategoriesToStorage 
 } from "./components/GiftSystem";
 import { resolveApiUrl } from "./lib/apiClient";
+import { AdminRevenueShareTab } from "./components/AdminRevenueShareTab";
 
 export default function AdminApp() {
   // Authentication state
@@ -1233,6 +1234,7 @@ export default function AdminApp() {
               { id: "families", label: "Families & Guilds", icon: Award },
               { id: "gifts", label: "Gifts Catalog (CRUD)", icon: Gift },
               { id: "wallet", label: "Wallet & Cash Transactions", icon: Wallet },
+              { id: "revenue_share", label: "Revenue Share Management", icon: TrendingUp },
               { id: "vip", label: "VIP & Glowing Frames", icon: Crown },
               { id: "vip_rides", label: "VIP Rides & Entry Simulator 🏎️", icon: Crown },
               { id: "moderation", label: "Moderation & AI Safety", icon: AlertTriangle },
@@ -2586,6 +2588,16 @@ export default function AdminApp() {
               setGiftsList={setAdminGiftsList}
               categoriesList={adminCategoriesList}
               setCategoriesList={setAdminCategoriesList}
+            />
+          )}
+
+          {/* ========================================================================= */}
+          {/* TAB: REVENUE SHARE MANAGEMENT */}
+          {/* ========================================================================= */}
+          {activeTab === "revenue_share" && (
+            <AdminRevenueShareTab
+              adminEmail={String(currentAppUser?.email || "")}
+              onToast={triggerToast}
             />
           )}
 
