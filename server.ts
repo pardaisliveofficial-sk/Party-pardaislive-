@@ -5521,7 +5521,7 @@ app.post("/api/v1/parties/:id/close", (req, res) => {
 
 app.post("/api/v1/parties/:id/comments", (req, res) => {
   const { id } = req.params;
-  const { message, username, vipLevel, userLevel, isSystem, avatar, reactionSound, reactionEventId } = req.body;
+  const { message, username, vipLevel, userLevel, isSystem, avatar, reactionSound, reactionEventId, giftMeta } = req.body;
   const index = dbData.parties?.findIndex((p: any) => p.id === id);
   if (index !== -1 && index !== undefined) {
     const party = dbData.parties[index];
@@ -5536,6 +5536,15 @@ app.post("/api/v1/parties/:id/comments", (req, res) => {
       avatar: avatar || "",
       ...(reactionSound ? { reactionSound } : {}),
       ...(reactionEventId ? { reactionEventId } : {}),
+      ...(giftMeta && typeof giftMeta === "object" ? {
+        giftMeta: {
+          sender: String(giftMeta.sender || username || "User"),
+          recipient: String(giftMeta.recipient || "Host"),
+          giftName: String(giftMeta.giftName || "Gift"),
+          count: Math.max(1, Number(giftMeta.count) || 1),
+          totalCost: Math.max(0, Number(giftMeta.totalCost) || 0)
+        }
+      } : {}),
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     };
     party.comments.push(newComment);

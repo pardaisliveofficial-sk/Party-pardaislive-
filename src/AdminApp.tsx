@@ -36,10 +36,7 @@ import {
   ShieldCheck,
   UserPlus,
   Smartphone,
-  ShieldAlert,
-  Menu,
-  X,
-  ChevronRight
+  ShieldAlert
 } from "lucide-react";
 import { VIP_FRAMES_LIST } from "./components/VipAnimatedFrame";
 import {
@@ -145,7 +142,6 @@ export default function AdminApp() {
   const [db, setDb] = useState<any>(() => normalizeDb(null));
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [activeTab, setActiveTab] = useState<string>("dashboard");
-  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState<boolean>(false);
   const [successToast, setSuccessToast] = useState<string | null>(null);
 
   // Admin Access Nominations State
@@ -1182,30 +1178,11 @@ export default function AdminApp() {
         </div>
       )}
 
-      {/* 1. RESPONSIVE SIDEBAR / MOBILE DRAWER */}
-      {isMobileSidebarOpen && (
-        <button
-          aria-label="Close admin menu"
-          onClick={() => setIsMobileSidebarOpen(false)}
-          className="fixed inset-0 bg-black/70 backdrop-blur-[2px] z-[90] md:hidden cursor-default"
-        />
-      )}
-      <aside
-        className={`fixed md:static inset-y-0 left-0 z-[100] w-[min(86vw,320px)] md:w-64 bg-[#0d0d15] border-r border-white/10 flex flex-col justify-between select-none shrink-0 transform transition-transform duration-300 ease-out md:transform-none ${isMobileSidebarOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"}`}
-      >
+      {/* 1. SIDEBAR NAVIGATION PANEL */}
+      <aside className="w-64 bg-[#0d0d15] border-r border-white/10 flex flex-col justify-between select-none shrink-0">
         <div className="space-y-6 py-5">
           {/* Logo Brand */}
-          <div className="px-4 md:px-5 border-b border-white/5 pb-5 pt-1 md:pt-0">
-            <div className="flex items-center justify-between mb-3 md:hidden">
-              <span className="text-[10px] font-black uppercase tracking-[0.2em] text-cyan-400">Admin Menu</span>
-              <button
-                aria-label="Close admin menu"
-                onClick={() => setIsMobileSidebarOpen(false)}
-                className="w-9 h-9 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center text-gray-300 hover:text-white hover:bg-white/10"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
+          <div className="px-5 border-b border-white/5 pb-5">
             <div className="flex items-center space-x-2.5">
               <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-[#ff007f] via-[#7b2cbf] to-[#00f5ff] flex items-center justify-center shadow-md relative animate-pulse">
                 <Shield className="w-4 h-4 text-white" />
@@ -1246,10 +1223,7 @@ export default function AdminApp() {
               return (
                 <button
                   key={link.id}
-                  onClick={() => {
-                    setActiveTab(link.id);
-                    setIsMobileSidebarOpen(false);
-                  }}
+                  onClick={() => setActiveTab(link.id)}
                   className={`w-full flex items-center space-x-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all ${
                     activeTab === link.id
                       ? "bg-gradient-to-r from-[#ff007f] to-[#7b2cbf] text-white shadow-md shadow-[#ff007f]/5"
@@ -1299,22 +1273,13 @@ export default function AdminApp() {
       {/* 2. MAIN WORKING SCREEN */}
       <main className="flex-1 flex flex-col min-h-screen overflow-x-hidden">
         {/* Global Nav Bar Header */}
-        <header className="min-h-16 border-b border-white/10 bg-[#0d0d15] px-3 md:px-6 py-2 flex items-center justify-between gap-3">
-          <div className="flex items-center min-w-0 gap-2">
-            <button
-              aria-label="Open admin menu"
-              onClick={() => setIsMobileSidebarOpen(true)}
-              className="md:hidden w-10 h-10 shrink-0 rounded-xl bg-gradient-to-r from-[#ff007f] to-[#7b2cbf] text-white shadow-lg flex items-center justify-center active:scale-95"
-            >
-              <Menu className="w-5 h-5" />
-            </button>
-            <h2 className="text-sm font-black uppercase tracking-wider text-[#66fcf1] font-mono flex items-center space-x-2">
+        <header className="h-16 border-b border-white/10 bg-[#0d0d15] px-6 flex items-center justify-between">
+          <h2 className="text-sm font-black uppercase tracking-wider text-[#66fcf1] font-mono flex items-center space-x-2">
             <span className="w-1.5 h-1.5 bg-[#66fcf1] rounded-full animate-ping"></span>
-            <span className="truncate">Ecosystem Node Status: Operational</span>
-            </h2>
-          </div>
+            <span>Ecosystem Node Status: Operational</span>
+          </h2>
 
-          <div className="hidden sm:flex items-center space-x-4">
+          <div className="flex items-center space-x-4">
             <div className="flex items-center space-x-1 bg-black/40 border border-white/5 rounded-xl px-3 py-1 text-[10px] font-mono text-gray-400">
               <Database className="w-3.5 h-3.5 text-pink-500 mr-1" />
               <span>DB SYNC: 100% OK</span>
@@ -1328,7 +1293,7 @@ export default function AdminApp() {
         </header>
 
         {/* Dynamic Inner Tab Wrapper */}
-        <div className="p-3 md:p-6 flex-1 overflow-y-auto space-y-4 md:space-y-6 min-w-0">
+        <div className="p-6 flex-1 overflow-y-auto space-y-6">
           
           {/* ========================================================================= */}
           {/* TAB: DASHBOARD OVERVIEW */}

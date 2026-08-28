@@ -10438,7 +10438,14 @@ export default function App() {
                             method: "POST",
                             headers: { "Content-Type": "application/json" },
                             body: JSON.stringify({
-                              message: `🎁 sent ${count > 1 ? `${count}x ` : ""}${gift.name} (${giftIconChar}) to @${actualTargetName}! • ${totalCost.toLocaleString()} coins`,
+                              message: `🎁 ${user.username} sent ${gift.name}${count > 1 ? ` x${count}` : ""} to ${actualTargetName} • ${totalCost.toLocaleString()} coins`,
+                              giftMeta: {
+                                sender: user.username,
+                                recipient: actualTargetName,
+                                giftName: gift.name,
+                                count,
+                                totalCost
+                              },
                               username: user.username,
                               avatar: user.avatar,
                               vipLevel: user.vipLevel || 0,
@@ -10992,10 +10999,27 @@ export default function App() {
                               <div className="flex-1 overflow-y-auto space-y-1.5 scrollbar-thin text-left p-2.5">
                                 {party.comments?.map((comment: any) => {
                                   if (comment.isSystem) {
+                                    const meta = comment.giftMeta;
+                                    const rawMessage = String(comment.message || "");
+                                    const isGiftSystemMessage = Boolean(meta) || rawMessage.includes("/api/v1/gifts/animation") || /(?:🎁|gift).*sent/i.test(rawMessage);
+                                    let systemMessage = rawMessage;
+                                    if (isGiftSystemMessage) {
+                                      if (meta?.sender && meta?.giftName && meta?.recipient) {
+                                        systemMessage = `🎁 ${meta.sender} sent ${meta.giftName}${Number(meta.count) > 1 ? ` x${meta.count}` : ""} to ${meta.recipient}`;
+                                      } else {
+                                        systemMessage = rawMessage
+                                          .replace(/\s*\(?https?:\/\/[^\s)]+\)?/gi, "")
+                                          .replace(/\s*\([^)]*\b(?:png|webm|mp4|svga)\b[^)]*\)/gi, "")
+                                          .replace(/\s*•\s*[0-9,]+\s*coins\.?/gi, "")
+                                          .replace(/\s{2,}/g, " ")
+                                          .trim();
+                                        if (!systemMessage) systemMessage = `🎁 ${comment.username || "User"} sent a gift`;
+                                      }
+                                    }
                                     return (
                                       <div key={comment.id} className="text-[8px] font-black text-amber-300 font-mono italic leading-relaxed py-0.5 bg-transparent flex items-center space-x-1">
                                         <span>✨</span>
-                                        <span>{comment.message}</span>
+                                        <span>{systemMessage}</span>
                                       </div>
                                     );
                                   }

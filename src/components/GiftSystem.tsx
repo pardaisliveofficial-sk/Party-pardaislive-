@@ -798,15 +798,6 @@ export const GiftAnimationEngine: React.FC<GiftAnimationEngineProps> = ({
     setVideoError(false);
     setSecondsLeft(duration);
 
-    // Play synthesized sound effect matching gift type (Lion Roar, Fireworks, Engine Rev, Rocket, Chime, etc.)
-    const sound = currentGift?.gift?.soundEffect || (
-      currentGift?.gift?.name?.toLowerCase().includes("lion") ? "roar" :
-      currentGift?.gift?.name?.toLowerCase().includes("firework") ? "fireworks" :
-      currentGift?.gift?.name?.toLowerCase().includes("spice") ? "roar" :
-      "ding"
-    );
-    playGiftAudioSynthesizer(sound);
-
     // Countdown interval for timer display
     const countdown = setInterval(() => {
       setSecondsLeft(prev => {
@@ -818,18 +809,28 @@ export const GiftAnimationEngine: React.FC<GiftAnimationEngineProps> = ({
       });
     }, 1000);
 
-    // Hard auto-disappear timer after EXACTLY duration seconds (e.g. 8 seconds)
-    const hideTimer = setTimeout(() => {
-      clearInterval(countdown);
-      if (!finishCalledRef.current) {
-        finishCalledRef.current = true;
-        finishCallbackRef.current();
-      }
-    }, duration * 1000);
-
-    // Video preloading if video URL is provided
+    // For real video gifts, let the media's own `ended` event control completion so
+    // the uploaded animation is never cut short by an inaccurate admin duration.
+    // Non-video gifts still use the configured duration as a safety timer.
     const giftObj = currentGift.gift;
     const videoMediaUrl = giftObj?.videoUrl || giftObj?.animationUrl || giftObj?.animationFile;
+    const mediaString = typeof videoMediaUrl === "string" ? videoMediaUrl.toLowerCase() : "";
+    const isVideoMedia = mediaString.endsWith(".mp4") || mediaString.endsWith(".webm") ||
+      mediaString.includes(".mp4?") || mediaString.includes(".webm?") ||
+      mediaString.startsWith("data:video/") || mediaString.startsWith("blob:");
+
+    let hideTimer: ReturnType<typeof setTimeout> | undefined;
+    if (!isVideoMedia) {
+      hideTimer = setTimeout(() => {
+        clearInterval(countdown);
+        if (!finishCalledRef.current) {
+          finishCalledRef.current = true;
+          finishCallbackRef.current();
+        }
+      }, duration * 1000);
+    }
+
+    // Video preloading if video URL is provided
     if (typeof videoMediaUrl === 'string' && (videoMediaUrl.startsWith('http') || videoMediaUrl.startsWith('data:video') || videoMediaUrl.startsWith('blob:'))) {
       const link = document.createElement('link');
       link.rel = 'preload';
@@ -843,7 +844,7 @@ export const GiftAnimationEngine: React.FC<GiftAnimationEngineProps> = ({
 
     return () => {
       clearInterval(countdown);
-      clearTimeout(hideTimer);
+      if (hideTimer) clearTimeout(hideTimer);
     };
   }, [currentGift?.id || currentGift?.timestamp || (currentGift?.gift ? currentGift.gift.id : null), duration]);
 
@@ -887,17 +888,28 @@ export const GiftAnimationEngine: React.FC<GiftAnimationEngineProps> = ({
     (typeof rawVideoUrl === "string" && (rawVideoUrl.endsWith(".gif") || rawVideoUrl.startsWith("data:image/gif")))
   );
 
-  // Auto-trigger video playback with unmuted attempt on component mount
+  // Gift animations use the actual uploaded media audio. Try unmuted autoplay first.
+  // If the browser/WebView blocks autoplay with sound, keep the video playing and
+  // fall back to the existing synthesized gift sound so the gift still has audio.
   useEffect(() => {
-    if (isPlayableVideoUrl && videoRef.current) {
-      // Gift videos are visual overlays. Keep the media element muted so mobile/WebView autoplay
-      // is reliable; gift sound effects are handled separately by the gift audio engine.
-      videoRef.current.currentTime = 0;
-      videoRef.current.muted = true;
-      videoRef.current.play().catch(err => {
-        console.warn("[GiftSystem] Gift overlay autoplay deferred:", err);
-      });
-    }
+    if (!isPlayableVideoUrl || !videoRef.current) return;
+    const video = videoRef.current;
+    video.currentTime = 0;
+    video.muted = false;
+    video.defaultMuted = false;
+    video.volume = 1;
+    video.play().catch(err => {
+      console.warn("[GiftSystem] Unmuted gift autoplay blocked; falling back to gift audio:", err);
+      const sound = currentGift?.gift?.soundEffect || (
+        currentGift?.gift?.name?.toLowerCase().includes("lion") ? "roar" :
+        currentGift?.gift?.name?.toLowerCase().includes("firework") ? "fireworks" :
+        currentGift?.gift?.name?.toLowerCase().includes("spice") ? "roar" :
+        "ding"
+      );
+      playGiftAudioSynthesizer(sound);
+      video.muted = true;
+      video.play().catch(() => {});
+    });
   }, [currentGift?.id, isPlayableVideoUrl, videoSource]);
 
   if (!currentGift) return null;
@@ -976,7 +988,7 @@ export const GiftAnimationEngine: React.FC<GiftAnimationEngineProps> = ({
           animate={{ scale: 1, opacity: 1 }}
           exit={{ scale: 0.8, opacity: 0 }}
           transition={{ type: "spring", damping: 15 }}
-          className="relative w-full h-full flex items-center justify-center bg-transparent pointer-events-none"
+          className="absolute inset-x-0 bottom-0 h-[60%] flex items-center justify-center bg-transparent pointer-events-none z-20"
         >
           {/* Ambient particle blur effect */}
           <div className={`absolute w-80 h-80 rounded-full filter blur-3xl opacity-30 animate-pulse bg-gradient-to-tr ${gift?.color || "from-amber-500 via-pink-500 to-purple-600"}`} />
@@ -987,23 +999,31 @@ export const GiftAnimationEngine: React.FC<GiftAnimationEngineProps> = ({
               ref={videoRef}
               src={videoSource}
               autoPlay
-              muted
               playsInline
               preload="auto"
               crossOrigin="anonymous"
               onCanPlay={(e) => {
                 const el = e.currentTarget;
                 el.currentTime = 0;
-                el.muted = true;
-                el.play().catch(() => setVideoError(true));
+                el.muted = false;
+                el.defaultMuted = false;
+                el.volume = 1;
+                el.play().catch(() => {
+                  el.muted = true;
+                  el.play().catch(() => setVideoError(true));
+                });
               }}
               onEnded={handleFinish}
               onError={(e) => {
                 const src = (e.currentTarget as HTMLVideoElement)?.currentSrc || (e.currentTarget as HTMLVideoElement)?.src || "";
                 console.warn("[GiftSystem] Gift Video playback notice for source:", src || "invalid media source");
                 setVideoError(true);
+                if (!finishCalledRef.current) {
+                  finishCalledRef.current = true;
+                  finishCallbackRef.current();
+                }
               }}
-              className="w-full h-full max-h-[70vh] max-w-[95vw] object-contain pointer-events-none relative z-20 drop-shadow-[0_0_40px_rgba(255,215,0,0.8)]"
+              className="w-full h-full max-h-full max-w-[100vw] object-contain pointer-events-none relative z-20 drop-shadow-[0_0_40px_rgba(255,215,0,0.8)]"
               style={{
                 mixBlendMode: "screen", // Blends out dark backgrounds on video overlays seamlessly
                 transform: "translateZ(0)",
@@ -1017,7 +1037,7 @@ export const GiftAnimationEngine: React.FC<GiftAnimationEngineProps> = ({
             <img
               src={videoSource}
               alt={gift?.name}
-              className="w-full h-full max-h-[70vh] max-w-[95vw] object-contain pointer-events-none relative z-20 drop-shadow-[0_0_40px_rgba(255,215,0,0.8)]"
+              className="w-full h-full max-h-full max-w-[100vw] object-contain pointer-events-none relative z-20 drop-shadow-[0_0_40px_rgba(255,215,0,0.8)]"
               style={{ mixBlendMode: "screen" }}
             />
           ) : isLionGift ? (
