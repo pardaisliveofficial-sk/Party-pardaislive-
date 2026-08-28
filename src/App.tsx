@@ -28,6 +28,7 @@ import {
   Sparkles,
   TrendingUp,
   Gift as GiftIcon,
+  ShoppingBag,
   Wallet,
   Crown,
   ShieldAlert,
@@ -1922,7 +1923,7 @@ export default function App() {
   }, [reels, stories, user.uniqueId, user.username, user.fullName]);
 
   // Client Navigation View (within mobile)
-  const [clientView, setClientView] = useState<"feed" | "live-room" | "profile" | "wallet" | "family-agency" | "chat" | "reels" | "user-live" | "camera-prep" | "party-room" | "notifications" | "stream">("feed");
+  const [clientView, setClientView] = useState<"feed" | "live-room" | "profile" | "wallet" | "family-agency" | "chat" | "reels" | "user-live" | "camera-prep" | "party-room" | "notifications" | "stream" | "shop">("feed");
   const [viewHistory, setViewHistory] = useState<string[]>(["feed"]);
 
   useEffect(() => {
@@ -14222,6 +14223,56 @@ export default function App() {
                     )}
 
                     {/* ===================================================================== */}
+                    {/* VIEW 2.5: SHOP — VIP FRAMES, CUSTOM GIFTS & EXCLUSIVE PRODUCTS */}
+                    {clientView === "shop" && (
+                      <div className="flex-1 scroll-view-y p-3 pb-5 space-y-4">
+                        <div className="rounded-2xl p-4 border border-yellow-400/30 bg-gradient-to-br from-[#241535] via-[#15162a] to-[#0d202b] shadow-[0_0_30px_rgba(255,0,127,0.12)]">
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <ShoppingBag className="w-5 h-5 text-yellow-400" />
+                                <span className="text-[9px] font-black tracking-[0.18em] text-pink-400 uppercase">Pardais Shop</span>
+                              </div>
+                              <h2 className="text-xl font-black text-white mt-1">Exclusive Collection</h2>
+                              <p className="text-[9px] text-gray-400 mt-1 leading-relaxed">VIP frames, custom gifts and special Pardais products — all in one place.</p>
+                            </div>
+                            <div className="px-2 py-1 rounded-full bg-yellow-400/10 border border-yellow-400/20 text-yellow-300 text-[8px] font-black uppercase">Coming Soon</div>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-3">
+                          {[
+                            { icon: "👑", title: "VIP Frames", desc: "Premium animated profile frames", tag: "VIP" },
+                            { icon: "🎁", title: "Custom Gifts", desc: "Exclusive gifts for live & parties", tag: "GIFTS" },
+                            { icon: "✨", title: "Exclusive Items", desc: "Limited Pardais digital products", tag: "EXCLUSIVE" },
+                            { icon: "🏆", title: "Special Drops", desc: "Event-only collections & rewards", tag: "LIMITED" },
+                          ].map((item) => (
+                            <button
+                              key={item.title}
+                              type="button"
+                              onClick={() => setReportSuccessToast(`${item.title} collection is coming soon.`)}
+                              className="text-left rounded-2xl border border-white/10 bg-[#12121c]/90 p-3 hover:border-pink-500/50 active:scale-[0.98] transition-all shadow-lg"
+                            >
+                              <div className="h-24 rounded-xl bg-gradient-to-br from-purple-900/50 via-[#17172a] to-cyan-900/30 border border-white/5 flex items-center justify-center text-5xl">{item.icon}</div>
+                              <div className="mt-3 flex items-center justify-between gap-2">
+                                <h3 className="text-[11px] font-black text-white">{item.title}</h3>
+                                <span className="text-[7px] font-black text-pink-400 border border-pink-500/20 rounded-full px-1.5 py-0.5">{item.tag}</span>
+                              </div>
+                              <p className="text-[8px] text-gray-500 mt-1 leading-snug">{item.desc}</p>
+                            </button>
+                          ))}
+                        </div>
+
+                        <div className="rounded-2xl border border-cyan-500/20 bg-[#0d1720]/90 p-3 flex items-center gap-3">
+                          <div className="w-11 h-11 rounded-full bg-gradient-to-br from-pink-500/20 to-cyan-400/20 border border-cyan-400/20 flex items-center justify-center">🛍️</div>
+                          <div className="flex-1">
+                            <p className="text-[10px] font-black text-white">Pardais Shop is being prepared</p>
+                            <p className="text-[8px] text-gray-500 mt-0.5">Product details, pricing and checkout will be connected here later.</p>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
                     {/* VIEW 3: USER PROFILE & MISSION BADGES */}
                     {/* ===================================================================== */}
                     {clientView === "profile" && (
@@ -25112,7 +25163,21 @@ export default function App() {
                           )}
                         </button>
 
-                        {/* Reels */}
+                        {/* Shop */}
+                        <button
+                          onClick={() => setClientView("shop")}
+                          className={`flex flex-col items-center flex-1 py-1 transition-all relative group cursor-pointer ${
+                            clientView === "shop" ? "text-[#ffd54f] scale-110 font-black" : "text-gray-400 hover:text-amber-200"
+                          }`}
+                        >
+                          <ShoppingBag className={`w-4.5 h-4.5 mb-0.5 transition-transform ${clientView === "shop" ? "drop-shadow-[0_0_10px_rgba(255,213,79,0.8)]" : "group-hover:scale-110"}`} />
+                          <span className="text-[8.5px] font-extrabold uppercase tracking-wider">Shop</span>
+                          {clientView === "shop" && (
+                            <span className="w-1.5 h-1.5 rounded-full bg-[#ffd54f] shadow-[0_0_8px_#ffd54f] mt-0.5 animate-pulse" />
+                          )}
+                        </button>
+
+                        {/* Moments (formerly Reels) */}
                         <button
                           onClick={() => setClientView("reels")}
                           className={`flex flex-col items-center flex-1 py-1 transition-all relative group cursor-pointer ${
@@ -25120,7 +25185,7 @@ export default function App() {
                           }`}
                         >
                           <Film className={`w-4.5 h-4.5 mb-0.5 transition-transform ${clientView === "reels" ? "drop-shadow-[0_0_10px_rgba(255,213,79,0.8)]" : "group-hover:scale-110"}`} />
-                          <span className="text-[8.5px] font-extrabold uppercase tracking-wider">Reels</span>
+                          <span className="text-[8.5px] font-extrabold uppercase tracking-wider">Moments</span>
                           {clientView === "reels" && (
                             <span className="w-1.5 h-1.5 rounded-full bg-[#ffd54f] shadow-[0_0_8px_#ffd54f] mt-0.5 animate-pulse" />
                           )}
@@ -25139,7 +25204,7 @@ export default function App() {
                           </div>
                         </button>
 
-                        {/* Stream (Video Live, PK, Solo Live) */}
+                        {/* Live (Video Live, PK, Solo Live) */}
                         <button
                           onClick={() => setClientView("stream")}
                           className={`flex flex-col items-center flex-1 py-1 transition-all relative group cursor-pointer ${
@@ -25147,7 +25212,7 @@ export default function App() {
                           }`}
                         >
                           <Tv className={`w-4.5 h-4.5 mb-0.5 transition-transform ${clientView === "stream" ? "drop-shadow-[0_0_10px_rgba(0,229,255,0.8)]" : "group-hover:scale-110"}`} />
-                          <span className="text-[8.5px] font-extrabold uppercase tracking-wider">Stream</span>
+                          <span className="text-[8.5px] font-extrabold uppercase tracking-wider">Live</span>
                           {clientView === "stream" && (
                             <span className="w-1.5 h-1.5 rounded-full bg-[#00e5ff] shadow-[0_0_8px_#00e5ff] mt-0.5 animate-pulse" />
                           )}
