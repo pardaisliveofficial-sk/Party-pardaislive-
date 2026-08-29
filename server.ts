@@ -3138,6 +3138,28 @@ app.get("/api/v1/gifts", (req, res) => {
   res.json(dbData.gifts.filter((g: any) => g && g.id && g.status !== "deleted"));
 });
 
+const isGiftVideoMediaUrl = (value: any) => {
+  if (typeof value !== "string" || !value.trim()) return false;
+  const v = value.trim().toLowerCase();
+  return /\.(webm|mp4)(?:$|[?#])/.test(v) || v.startsWith("data:video/") || v.startsWith("blob:");
+};
+
+const resolveGiftVideoMedia = (gift: any) => {
+  const candidates = [gift?.videoUrl, gift?.animationUrl, gift?.animationFile];
+  return candidates.find(isGiftVideoMediaUrl) || "";
+};
+
+const isGiftAnimationMediaUrl = (value: any) => {
+  if (typeof value !== "string" || !value.trim()) return false;
+  const v = value.trim().toLowerCase();
+  return /\.(webm|mp4|svga|svg)(?:$|[?#])/.test(v) || v.startsWith("data:video/") || v.startsWith("data:image/svg+xml");
+};
+
+const resolveGiftAnimationMedia = (gift: any) => {
+  const candidates = [gift?.animationUrl, gift?.animationFile, gift?.videoUrl];
+  return candidates.find(isGiftAnimationMediaUrl) || "";
+};
+
 app.post("/api/v1/gifts/send", authenticateUser, (req, res) => {
   const { requestId, giftId, count = 1, recipient = "Host", targetHostSide } = req.body;
   if (!giftId) {
@@ -3327,10 +3349,13 @@ app.post("/api/v1/gifts/send", authenticateUser, (req, res) => {
     audienceRoomId: partyIdForBroadcast,
     audienceHostId: req.body.hostId || null,
     audienceMode: partyIdForBroadcast ? "party" : (targetHostSide ? "pk-or-live" : "live"),
-    animationFile: gift.animationFile || gift.videoUrl || gift.animationUrl || gift.icon || "",
-    videoUrl: gift.videoUrl || gift.animationUrl || gift.animationFile || "",
-    animationUrl: gift.animationUrl || gift.videoUrl || gift.animationFile || "",
-    animationFormat: gift.animationFormat || "webm",
+    imageUrl: gift.imageUrl || gift.icon || "",
+    // Only a real video media URL may enter the playback fields. A PNG/JPG gift
+    // picture is never allowed to become animationFile/videoUrl/animationUrl.
+    animationFile: resolveGiftAnimationMedia(gift),
+    videoUrl: isGiftVideoMediaUrl(gift.videoUrl) ? String(gift.videoUrl) : "",
+    animationUrl: resolveGiftAnimationMedia(gift),
+    animationFormat: resolveGiftAnimationMedia(gift) ? (gift.animationFormat || "webm") : "",
     animationDuration: gift.animationDuration || 8,
     animationDisplayType: gift.animationDisplayType || "full",
     globalBannerEnabled: gift.globalBannerEnabled === true,
@@ -3538,7 +3563,20 @@ app.get("/api/v1/gifts/events", (req, res) => {
     unique.set(String(evt.eventId), evt);
   });
 
-  const events = Array.from(unique.values()).sort((a: any, b: any) => Number(a.timestamp || 0) - Number(b.timestamp || 0));
+  const events = Array.from(unique.values())
+    .sort((a: any, b: any) => Number(a.timestamp || 0) - Number(b.timestamp || 0))
+    .map((evt: any) => {
+      return {
+        ...evt,
+        // Old queued events may contain a PNG in animationFile. Normalize them
+        // at the delivery boundary so clients can never mount the gift picture
+        // as a video.
+        imageUrl: evt?.imageUrl || evt?.giftIcon || "",
+        animationFile: resolveGiftAnimationMedia(evt),
+        videoUrl: isGiftVideoMediaUrl(evt?.videoUrl) ? String(evt.videoUrl) : "",
+        animationUrl: resolveGiftAnimationMedia(evt)
+      };
+    });
   res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
   res.json({ events });
 });
@@ -3590,7 +3628,9 @@ app.post("/api/v1/gifts", (req, res) => {
     minLevel: Math.min(100, Math.max(1, Math.floor(Number(req.body.minLevel) || 1))),
     globalBannerEnabled: req.body.globalBannerEnabled === true,
     imageUrl: req.body.imageUrl || req.body.icon || "",
-    animationFile: req.body.animationFile || req.body.animationUrl || req.body.videoUrl || ""
+    animationFile: resolveGiftAnimationMedia(req.body),
+    animationUrl: resolveGiftAnimationMedia(req.body),
+    videoUrl: isGiftVideoMediaUrl(req.body.videoUrl) ? String(req.body.videoUrl) : ""
   };
   if (!dbData.gifts) {
     dbData.gifts = [...DEFAULT_ADVANCED_GIFTS_SERVER];
@@ -3623,7 +3663,9 @@ app.put("/api/v1/gifts/:id", (req, res) => {
       minLevel: Math.min(100, Math.max(1, Math.floor(Number(req.body.minLevel ?? dbData.gifts[index].minLevel) || 1))),
       globalBannerEnabled: req.body.globalBannerEnabled === true,
       imageUrl: req.body.imageUrl || req.body.icon || dbData.gifts[index].imageUrl || dbData.gifts[index].icon || "",
-      animationFile: req.body.animationFile || req.body.animationUrl || req.body.videoUrl || dbData.gifts[index].animationFile || ""
+      animationFile: resolveGiftAnimationMedia(req.body) || resolveGiftAnimationMedia(dbData.gifts[index]),
+      animationUrl: resolveGiftAnimationMedia(req.body) || resolveGiftAnimationMedia(dbData.gifts[index]),
+      videoUrl: isGiftVideoMediaUrl(req.body.videoUrl) ? String(req.body.videoUrl) : (isGiftVideoMediaUrl(dbData.gifts[index].videoUrl) ? dbData.gifts[index].videoUrl : "")
     };
     saveDatabase();
     syncDocument("gifts", id, dbData.gifts[index]);
@@ -7056,7 +7098,7 @@ async function storeMomentsPhoto(file: any, ownerId: string) {
         ContentType: mime,
         CacheControl: 'public, max-age=31536000, immutable'
       }));
-      return `${PUBLIC_API_BASE}/api/v1/moments/media/${encodeURIComponent(objectKey)}`;
+      return `${PUBLIC_API_BASE}/api/v1/moments/media/${objectKey.split('/').map(encodeURIComponent).join('/')}`;
     } catch (err: any) {
       console.warn('[PARDAIS MOMENTS] R2 photo upload failed; using local durable fallback:', err?.message || err);
     }
@@ -7079,7 +7121,8 @@ app.post('/api/v1/posts', momentsPostUpload.single('media'), async (req: any, re
   try {
     const caption = String(req.body?.caption || '').trim();
     const username = String(req.body?.username || '').trim();
-    if (!caption && !req.file) return res.status(400).json({ error: 'A post needs text or a photo.' });
+    const suppliedMediaUrl = String(req.body?.mediaUrl || '').trim();
+    if (!caption && !req.file && !suppliedMediaUrl) return res.status(400).json({ error: 'A post needs text or a photo.' });
     if (!username) return res.status(401).json({ error: 'Authenticated username is required.' });
 
     const createdAt = new Date().toISOString();
@@ -7090,8 +7133,8 @@ app.post('/api/v1/posts', momentsPostUpload.single('media'), async (req: any, re
       userId: String(req.body?.userId || ''),
       avatar: String(req.body?.avatar || ''),
       caption,
-      mediaUrl: req.file ? await storeMomentsPhoto(req.file, String(req.body?.userId || username)) : '',
-      mediaType: req.file ? 'image' : 'text',
+      mediaUrl: req.file ? await storeMomentsPhoto(req.file, String(req.body?.userId || username)) : suppliedMediaUrl,
+      mediaType: req.file || suppliedMediaUrl ? 'image' : 'text',
       createdAt,
       likes: 0,
       likedBy: [],

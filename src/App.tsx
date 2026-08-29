@@ -1249,7 +1249,7 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem("pardais_stories_list", JSON.stringify(stories));
     if (stories.length > 0) {
-      fetch("/api/v1/stories/sync", {
+      fetch(resolveApiUrl("/api/v1/stories/sync"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(stories)
@@ -1270,7 +1270,7 @@ export default function App() {
         return Array.from(map.values()).sort((a, b) => (Date.parse(b?.createdAt || '') || 0) - (Date.parse(a?.createdAt || '') || 0));
       });
     };
-    fetch(resolveApiUrl('/api/v1/posts')).then(r => r.json()).then(data => mergePosts(Array.isArray(data) ? data : [])).catch(() => {});
+    authenticatedFetch(resolveApiUrl('/api/v1/posts')).then(r => r.ok ? r.json() : []).then(data => mergePosts(Array.isArray(data) ? data : [])).catch(() => {});
     if (db) {
       try {
         const unsubscribe = onSnapshot(collection(db, 'posts'), snapshot => mergePosts(snapshot.docs.map(d => ({ id: d.id, ...d.data() }))), () => {});
@@ -3113,7 +3113,10 @@ export default function App() {
 
   const triggerGlobalGiftBanner = useCallback((sender: string, giftName: string, giftIcon: string, recipient: string, totalCost: number = 0) => {
     const id = Date.now().toString() + "-" + Math.random().toString(36).substr(2, 4);
-    const safeGiftName = String(giftName || "Gift").replace(/https?:\/\/\S+/gi, "").replace(/\s{2,}/g, " ").trim() || "Gift";
+    const rawName = String(giftName || "Gift");
+    const safeGiftName = (/https?:\/\//i.test(rawName) || /\b(api\/v1|animation(?:url|file)?|videourl)\b/i.test(rawName))
+      ? "Gift"
+      : rawName.replace(/https?:\/\/\S+/gi, "").replace(/\s{2,}/g, " ").trim() || "Gift";
     setGlobalGiftBanner({ id, sender: String(sender || "User").replace(/^@+/, ""), giftName: safeGiftName, giftIcon: sanitizeGiftDisplayIcon(giftIcon), recipient: String(recipient || "Host").replace(/^@+/, ""), totalCost });
     window.setTimeout(() => {
       setGlobalGiftBanner(prev => prev?.id === id ? null : prev);
@@ -3944,6 +3947,15 @@ export default function App() {
     lastPartyGiftEventTimestamp.current = Date.now();
   }, [activeHost?.id, activePartyId, clientView]);
 
+  const resolveIncomingGiftAnimationVideo = useCallback((giftEvt: any): string => {
+    const candidates = [giftEvt?.videoUrl, giftEvt?.animationUrl, giftEvt?.animationFile];
+    for (const candidate of candidates) {
+      const value = String(candidate || "").trim();
+      if (/\.(webm|mp4)(?:$|[?#])/i.test(value) || value.startsWith("data:video/") || value.startsWith("blob:")) return value;
+    }
+    return "";
+  }, []);
+
   const processIncomingGiftEvent = useCallback((giftEvt: any) => {
     if (!giftEvt) return;
     const eventId = giftEvt.eventId || `ge-${giftEvt.timestamp}-${giftEvt.senderUsername}-${giftEvt.giftName}`;
@@ -3989,9 +4001,10 @@ export default function App() {
         name: giftName,
         cost: giftEvt.totalCost || 100,
         icon: giftIcon,
-        animationFile: giftEvt.animationFile || giftEvt.videoUrl || giftEvt.animationUrl || giftIcon,
-        videoUrl: giftEvt.videoUrl || giftEvt.animationUrl || giftEvt.animationFile || "",
-        animationUrl: giftEvt.animationUrl || giftEvt.videoUrl || giftEvt.animationFile || "",
+        imageUrl: giftEvt.imageUrl || giftIcon,
+        animationFile: resolveIncomingGiftAnimationVideo(giftEvt),
+        videoUrl: /\.(webm|mp4)(?:$|[?#])/i.test(String(giftEvt.videoUrl || "")) ? String(giftEvt.videoUrl) : "",
+        animationUrl: /\.(webm|mp4)(?:$|[?#])/i.test(String(giftEvt.animationUrl || "")) ? String(giftEvt.animationUrl) : "",
         animationFormat: giftEvt.animationFormat || "webm",
         animationDuration: giftEvt.animationDuration || 8,
         animationDisplayType: giftEvt.animationDisplayType || "full",
@@ -3999,7 +4012,7 @@ export default function App() {
       }
     };
     setGiftQueue(prev => [...prev, animItem]);
-  }, [triggerGlobalGiftBanner]);
+  }, [triggerGlobalGiftBanner, resolveIncomingGiftAnimationVideo]);
 
   // Authoritative low-latency gift delivery. This runs independently from the
   // normal room-data refresh so gift animation delivery is not delayed by a
@@ -16876,6 +16889,7 @@ export default function App() {
                       <MomentsView
                         user={user}
                         posts={posts}
+                        reels={reels}
                         setPosts={setPosts}
                         stories={stories}
                         onOpenStoryCreator={() => requireAuth("create a story", () => setShowCreateStoryModal(true))}

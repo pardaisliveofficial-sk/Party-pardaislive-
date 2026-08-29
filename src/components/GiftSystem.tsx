@@ -43,6 +43,17 @@ const isPlayableGiftVideoUrl = (url: any) => {
   return /\.(webm|mp4)(?:$|[?#])/.test(value) || value.startsWith("data:video/") || value.startsWith("blob:");
 };
 
+// Gift image and gift animation are intentionally separate media channels.
+// Never allow an image URL (PNG/JPG/JPEG/GIF) to become a video source, even if
+// an older/legacy record has copied the image into animationFile/videoUrl.
+const resolveGiftAnimationVideoUrl = (gift: any): string => {
+  const candidates = [gift?.videoUrl, gift?.animationUrl, gift?.animationFile];
+  for (const candidate of candidates) {
+    if (isPlayableGiftVideoUrl(candidate)) return String(candidate).trim();
+  }
+  return "";
+};
+
 export const getGiftPlaybackUrl = async (url: string): Promise<string> => {
   const source = String(url || "").trim();
   if (!isPlayableGiftVideoUrl(source) || source.startsWith("data:") || source.startsWith("blob:")) return source;
@@ -77,7 +88,7 @@ export const getGiftPlaybackUrl = async (url: string): Promise<string> => {
 
 export const preloadGiftAnimations = (gifts: any[] = []) => {
   const urls = gifts
-    .map((gift: any) => gift?.videoUrl || gift?.animationUrl || gift?.animationFile)
+    .map((gift: any) => resolveGiftAnimationVideoUrl(gift))
     .filter((url: any) => isPlayableGiftVideoUrl(url));
   urls.forEach((url: string) => { void getGiftPlaybackUrl(url); });
 };
@@ -886,7 +897,7 @@ export const GiftAnimationEngine: React.FC<GiftAnimationEngineProps> = ({
     // the uploaded animation is never cut short by an inaccurate admin duration.
     // Non-video gifts still use the configured duration as a safety timer.
     const giftObj = currentGift.gift;
-    const videoMediaUrl = giftObj?.videoUrl || giftObj?.animationUrl || giftObj?.animationFile;
+    const videoMediaUrl = resolveGiftAnimationVideoUrl(giftObj);
     const mediaString = typeof videoMediaUrl === "string" ? videoMediaUrl.toLowerCase() : "";
     const isVideoMedia = mediaString.endsWith(".mp4") || mediaString.endsWith(".webm") ||
       mediaString.includes(".mp4?") || mediaString.includes(".webm?") ||
@@ -931,7 +942,7 @@ export const GiftAnimationEngine: React.FC<GiftAnimationEngineProps> = ({
     );
   };
 
-  const rawVideoUrl = gift?.videoUrl || gift?.animationUrl || (typeof gift?.animationFile === 'string' && isValidUrlOrMedia(gift.animationFile) ? gift.animationFile : "");
+  const rawVideoUrl = resolveGiftAnimationVideoUrl(gift);
   const giftCost = gift?.cost || gift?.coins || 10;
   const giftIcon = gift?.icon || gift?.emoji || "🎁";
 
@@ -940,14 +951,15 @@ export const GiftAnimationEngine: React.FC<GiftAnimationEngineProps> = ({
   const extensionIsVideo = /\.(webm|mp4)(?:$|[?#])/i.test(mediaPathLower);
   const extensionIsImage = /\.(png|jpe?g|gif|svg)(?:$|[?#])/i.test(mediaPathLower);
   const [cachedVideoSource, setCachedVideoSource] = useState<string>("");
-  const videoSource = isValidUrlOrMedia(rawVideoUrl) && !extensionIsImage ? (cachedVideoSource || rawVideoUrl) : "";
+  // For remote videos, mount the player only after the cache/preload resolves.
+  // This prevents the <video> element from switching from network URL -> blob URL
+  // during playback, which was restarting/sticking the animation at frame 0.
+  const videoSource = rawVideoUrl && !extensionIsImage ? cachedVideoSource : "";
 
   useEffect(() => {
     let cancelled = false;
-    if (!isValidUrlOrMedia(rawVideoUrl) || extensionIsImage || !isPlayableGiftVideoUrl(rawVideoUrl)) {
-      setCachedVideoSource("");
-      return;
-    }
+    setCachedVideoSource("");
+    if (!rawVideoUrl || extensionIsImage || !isPlayableGiftVideoUrl(rawVideoUrl)) return;
     void getGiftPlaybackUrl(String(rawVideoUrl)).then((url) => {
       if (!cancelled) setCachedVideoSource(url);
     });
@@ -975,7 +987,6 @@ export const GiftAnimationEngine: React.FC<GiftAnimationEngineProps> = ({
   useEffect(() => {
     if (!isPlayableVideoUrl || !videoRef.current) return;
     const video = videoRef.current;
-    video.currentTime = 0;
     video.defaultMuted = false;
     video.muted = false;
     video.volume = 1;
@@ -1093,7 +1104,6 @@ export const GiftAnimationEngine: React.FC<GiftAnimationEngineProps> = ({
               }}
               onCanPlay={(e) => {
                 const el = e.currentTarget;
-                el.currentTime = 0;
                 el.muted = false;
                 el.defaultMuted = false;
                 el.volume = 1;
