@@ -3092,6 +3092,17 @@ app.get("/api/v1/payments/ledger", (req, res) => {
     ledger: dbData.onlineRechargeLedger
   });
 });
+const sanitizeGiftEventIcon = (value: any, fallback = "🎁") => {
+  const text = String(value || "").trim();
+  if (!text || /^https?:\/\//i.test(text) || /^data:/i.test(text) || /\b(api|animation|videourl|animationurl|animationfile)\b/i.test(text)) return fallback;
+  return text.length <= 8 ? text : fallback;
+};
+
+const sanitizeGiftEventName = (value: any) => {
+  const text = String(value || "Gift").replace(/https?:\/\/\S+/gi, "").replace(/\s{2,}/g, " ").trim();
+  return text || "Gift";
+};
+
 const DEFAULT_ADVANCED_GIFTS_SERVER = [
   { id: "g-lion", name: "Golden Lion 🦁", cost: 10000, type: "3d", icon: "🦁", color: "from-amber-500 via-yellow-500 to-amber-700", animationClass: "animate-bounce", category: "Popular", description: "Roaring Golden Lion of supreme royalty & majesty!", animationFile: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4", animationFormat: "mp4", animationDuration: 10, animationDisplayType: "full", comboSupported: true, status: "active", featured: true, priority: 100 },
   { id: "g-spice", name: "Indian Spice 🌶️", cost: 3000, type: "3d", icon: "🌶️", color: "from-red-600 via-amber-500 to-yellow-500", animationClass: "animate-bounce", category: "Popular", description: "Sizzling Indian Spice explosion video overlay!", animationFile: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4", animationFormat: "mp4", animationDuration: 10, animationDisplayType: "full", comboSupported: true, status: "active", featured: true, priority: 95 },
@@ -3214,8 +3225,8 @@ app.post("/api/v1/gifts/send", authenticateUser, (req, res) => {
     sender: user.username,
     senderAvatar: user.avatar || "",
     recipient,
-    giftName: gift.name,
-    giftIcon: gift.icon,
+    giftName: sanitizeGiftEventName(gift.name),
+    giftIcon: sanitizeGiftEventIcon(gift.icon),
     count: giftCount,
     targetHostSide: targetHostSide || "hostA",
     partyId: req.body.partyId || req.body.roomId || null,
@@ -3302,8 +3313,8 @@ app.post("/api/v1/gifts/send", authenticateUser, (req, res) => {
   const giftEvent = {
     eventId,
     giftId: gift.id,
-    giftName: gift.name,
-    giftIcon: gift.icon,
+    giftName: sanitizeGiftEventName(gift.name),
+    giftIcon: sanitizeGiftEventIcon(gift.icon),
     count: giftCount,
     senderUsername: user.username,
     senderAvatar: user.avatar || "",

@@ -208,7 +208,8 @@ import {
   loadGiftsFromStorage, 
   loadCategoriesFromStorage, 
   saveGiftsToStorage, 
-  saveCategoriesToStorage 
+  saveCategoriesToStorage,
+  preloadGiftAnimations 
 } from "./components/GiftSystem";
 import { MOCK_TRACKS, MusicTrack } from "./musicData";
 import { LevelBadgeSvg, getLevelTier, LEVEL_TIERS, getProgressionFromCoins, getCoinsForLevel, getHostLevelFromName, getVipLevelFromUserLevel, formatCoinShort } from "./levelUtils";
@@ -3104,13 +3105,20 @@ export default function App() {
     totalCost: number;
   } | null>(null);
 
+  const sanitizeGiftDisplayIcon = useCallback((value: any, fallback = "🎁") => {
+    const text = String(value || "").trim();
+    if (!text || /^https?:\/\//i.test(text) || /^data:/i.test(text) || /\b(api|animation|videoUrl|video)\b/i.test(text)) return fallback;
+    return text.length <= 8 ? text : fallback;
+  }, []);
+
   const triggerGlobalGiftBanner = useCallback((sender: string, giftName: string, giftIcon: string, recipient: string, totalCost: number = 0) => {
     const id = Date.now().toString() + "-" + Math.random().toString(36).substr(2, 4);
-    setGlobalGiftBanner({ id, sender, giftName, giftIcon, recipient, totalCost });
+    const safeGiftName = String(giftName || "Gift").replace(/https?:\/\/\S+/gi, "").replace(/\s{2,}/g, " ").trim() || "Gift";
+    setGlobalGiftBanner({ id, sender: String(sender || "User").replace(/^@+/, ""), giftName: safeGiftName, giftIcon: sanitizeGiftDisplayIcon(giftIcon), recipient: String(recipient || "Host").replace(/^@+/, ""), totalCost });
     window.setTimeout(() => {
       setGlobalGiftBanner(prev => prev?.id === id ? null : prev);
     }, 5500);
-  }, []);
+  }, [sanitizeGiftDisplayIcon]);
 
   // AI & Translation Toggles
   const [isAiMode, setIsAiMode] = useState<boolean>(true); // AI assistant responder toggle
@@ -3449,6 +3457,11 @@ export default function App() {
 
   // Advanced Gifting State Variables
   const [giftsList, setGiftsList] = useState<Gift[]>(() => loadGiftsFromStorage());
+  useEffect(() => {
+    // Warm all known gift videos immediately after catalog hydration so a gift
+    // event can start from local Cache Storage without waiting for the API/R2.
+    preloadGiftAnimations(giftsList);
+  }, [giftsList]);
   const [categoriesList, setCategoriesList] = useState<string[]>(() => loadCategoriesFromStorage());
 
   useEffect(() => {
@@ -3940,7 +3953,7 @@ export default function App() {
 
     const sender = giftEvt.senderUsername || giftEvt.sender || "User";
     const giftName = giftEvt.giftName || "Gift";
-    const giftIcon = giftEvt.giftIcon || "🎁";
+    const giftIcon = sanitizeGiftDisplayIcon(giftEvt.giftIcon, "🎁");
     const count = giftEvt.count || 1;
     const recipient = giftEvt.recipient || "Host";
 
@@ -4028,7 +4041,7 @@ export default function App() {
     };
 
     poll();
-    const timer = window.setInterval(poll, 800);
+    const timer = window.setInterval(poll, 250);
     return () => {
       cancelled = true;
       window.clearInterval(timer);
@@ -5615,6 +5628,7 @@ export default function App() {
           if (Array.isArray(data) && data.length > 0) {
             setGiftsList(data);
             saveGiftsToStorage(data);
+            preloadGiftAnimations(data);
           }
         })
         .catch(() => {});
@@ -5844,6 +5858,7 @@ export default function App() {
           if (Array.isArray(data) && data.length > 0) {
             setGiftsList(data);
             saveGiftsToStorage(data);
+            preloadGiftAnimations(data);
           }
         })
         .catch(() => {});

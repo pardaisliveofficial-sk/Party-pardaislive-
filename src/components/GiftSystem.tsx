@@ -28,6 +28,60 @@ if (typeof window !== "undefined") {
 }
 
 // Web Audio API Synthesizer for Gift Sound Effects
+
+// Persistent playback cache for gift animations. The first fetch is stored in
+// Cache Storage so subsequent plays use a local Blob URL instead of waiting on
+// the R2/API network path. Concurrent requests for the same animation share
+// one promise, preventing duplicate downloads when many gifts arrive together.
+const GIFT_MEDIA_CACHE_NAME = "pardais-gift-media-v1";
+const giftMediaObjectUrls = new Map<string, string>();
+const giftMediaPromises = new Map<string, Promise<string>>();
+
+const isPlayableGiftVideoUrl = (url: any) => {
+  if (typeof url !== "string" || !url.trim()) return false;
+  const value = url.trim().toLowerCase();
+  return /\.(webm|mp4)(?:$|[?#])/.test(value) || value.startsWith("data:video/") || value.startsWith("blob:");
+};
+
+export const getGiftPlaybackUrl = async (url: string): Promise<string> => {
+  const source = String(url || "").trim();
+  if (!isPlayableGiftVideoUrl(source) || source.startsWith("data:") || source.startsWith("blob:")) return source;
+  if (giftMediaObjectUrls.has(source)) return giftMediaObjectUrls.get(source)!;
+  const existing = giftMediaPromises.get(source);
+  if (existing) return existing;
+
+  const promise = (async () => {
+    try {
+      if (typeof caches !== "undefined") {
+        const cache = await caches.open(GIFT_MEDIA_CACHE_NAME);
+        let response = await cache.match(source);
+        if (!response) {
+          response = await fetch(source, { cache: "force-cache", credentials: "same-origin" });
+          if (!response.ok) throw new Error(`Gift media HTTP ${response.status}`);
+          await cache.put(source, response.clone());
+        }
+        const blob = await response.blob();
+        const objectUrl = URL.createObjectURL(blob);
+        giftMediaObjectUrls.set(source, objectUrl);
+        return objectUrl;
+      }
+    } catch (error) {
+      console.warn("[GiftSystem] Playback cache fallback:", error);
+    }
+    return source;
+  })().finally(() => giftMediaPromises.delete(source));
+
+  giftMediaPromises.set(source, promise);
+  return promise;
+};
+
+export const preloadGiftAnimations = (gifts: any[] = []) => {
+  const urls = gifts
+    .map((gift: any) => gift?.videoUrl || gift?.animationUrl || gift?.animationFile)
+    .filter((url: any) => isPlayableGiftVideoUrl(url));
+  urls.forEach((url: string) => { void getGiftPlaybackUrl(url); });
+};
+
 export const playGiftAudioSynthesizer = (soundType: string = "ding") => {
   try {
     const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
@@ -849,18 +903,6 @@ export const GiftAnimationEngine: React.FC<GiftAnimationEngineProps> = ({
       }, duration * 1000);
     }
 
-    // Video preloading if video URL is provided
-    if (typeof videoMediaUrl === 'string' && (videoMediaUrl.startsWith('http') || videoMediaUrl.startsWith('data:video') || videoMediaUrl.startsWith('blob:'))) {
-      const link = document.createElement('link');
-      link.rel = 'preload';
-      link.as = 'video';
-      link.href = videoMediaUrl;
-      document.head.appendChild(link);
-      setTimeout(() => {
-        try { document.head.removeChild(link); } catch (e) {}
-      }, 3000);
-    }
-
     return () => {
       clearInterval(countdown);
       if (hideTimer) clearTimeout(hideTimer);
@@ -897,7 +939,20 @@ export const GiftAnimationEngine: React.FC<GiftAnimationEngineProps> = ({
   const mediaPathLower = mediaPath.toLowerCase();
   const extensionIsVideo = /\.(webm|mp4)(?:$|[?#])/i.test(mediaPathLower);
   const extensionIsImage = /\.(png|jpe?g|gif|svg)(?:$|[?#])/i.test(mediaPathLower);
-  const videoSource = isValidUrlOrMedia(rawVideoUrl) && !extensionIsImage ? rawVideoUrl : "";
+  const [cachedVideoSource, setCachedVideoSource] = useState<string>("");
+  const videoSource = isValidUrlOrMedia(rawVideoUrl) && !extensionIsImage ? (cachedVideoSource || rawVideoUrl) : "";
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!isValidUrlOrMedia(rawVideoUrl) || extensionIsImage || !isPlayableGiftVideoUrl(rawVideoUrl)) {
+      setCachedVideoSource("");
+      return;
+    }
+    void getGiftPlaybackUrl(String(rawVideoUrl)).then((url) => {
+      if (!cancelled) setCachedVideoSource(url);
+    });
+    return () => { cancelled = true; };
+  }, [rawVideoUrl, extensionIsImage]);
 
   // A media URL must agree with its declared format. This prevents a PNG gift-picture
   // URL accidentally being mounted in <video>, which produces the frozen-frame symptom.
@@ -1030,7 +1085,12 @@ export const GiftAnimationEngine: React.FC<GiftAnimationEngineProps> = ({
               autoPlay
               playsInline
               preload="auto"
-              crossOrigin="anonymous"
+              onLoadedMetadata={(e) => {
+                const durationSeconds = Number(e.currentTarget.duration);
+                if (Number.isFinite(durationSeconds) && durationSeconds > 0) {
+                  setSecondsLeft(Math.ceil(durationSeconds));
+                }
+              }}
               onCanPlay={(e) => {
                 const el = e.currentTarget;
                 el.currentTime = 0;
@@ -1038,8 +1098,9 @@ export const GiftAnimationEngine: React.FC<GiftAnimationEngineProps> = ({
                 el.defaultMuted = false;
                 el.volume = 1;
                 el.play().catch(() => {
-                  el.muted = true;
-                  el.play().catch(() => setVideoError(true));
+                  // Never mute the uploaded gift animation. If the platform
+                  // blocks audible autoplay, the media-unlock listener retries.
+                  console.warn("[GiftSystem] Audible gift autoplay deferred by platform");
                 });
               }}
               onEnded={handleFinish}
