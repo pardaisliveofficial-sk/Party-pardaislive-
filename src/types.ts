@@ -62,6 +62,12 @@ export interface UserProfile {
   hostLevel: number;
   wealthLevel: number;
   xp: number;
+  /** Lifetime coins actually spent; authoritative server progression source. */
+  coinSpendTotal?: number;
+  coinSpendHistory?: any[];
+  /** Durable Creator Center earning ledger. */
+  creatorEarningHistory?: any[];
+  progressUpdatedAt?: string;
   familyId: string | null;
   agencyId: string | null;
   isVerified: boolean;
@@ -80,6 +86,8 @@ export interface UserProfile {
   phoneNumber?: string;
   followersCount?: number;
   followingCount?: number;
+  /** Stable server-persisted list of followed usernames. */
+  followingUsernames?: string[];
   totalLikesCount?: number;
   kycStatus?: 'none' | 'pending' | 'approved' | 'rejected';
   kycDocumentType?: 'id_card' | 'passport';

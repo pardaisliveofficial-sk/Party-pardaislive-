@@ -334,6 +334,8 @@ async function authenticateUser(req: any, res: any, next: any) {
   }
 
   if (user) {
+    // Every authenticated request receives the same canonical, durable progression fields.
+    canonicalizeProgressFields(user);
     req.user = user;
     req.token = token;
     return next();
@@ -2706,6 +2708,76 @@ app.post("/api/v1/user", authenticateUser, async (req: any, res: any) => {
 });
 
 // ------------------------------------------------------------------
+// PERMANENT USER FOLLOWING / ENGAGEMENT STATE
+// ------------------------------------------------------------------
+app.get("/api/v1/user/following", authenticateUser, (req: any, res: any) => {
+  const list = Array.isArray(req.user?.followingUsernames) ? req.user.followingUsernames : [];
+  res.json({ success: true, followingUsernames: list, followingCount: list.length });
+});
+
+app.post("/api/v1/user/following", authenticateUser, async (req: any, res: any) => {
+  const requested = Array.isArray(req.body?.followingUsernames) ? req.body.followingUsernames : [];
+  const normalized: string[] = Array.from(new Set<string>(requested
+    .map((v: any) => String(v || "").trim().replace(/^@/, ""))
+    .filter((v: string) => v.length >= 1)
+  ));
+  const previous = Array.isArray(req.user.followingUsernames) ? req.user.followingUsernames.map((v: any) => String(v)) : [];
+  const prevSet = new Set(previous.map(v => v.toLowerCase()));
+  const nextSet = new Set(normalized.map(v => v.toLowerCase()));
+  const added = normalized.filter(v => !prevSet.has(v.toLowerCase()));
+  const removed = previous.filter(v => !nextSet.has(v.toLowerCase()));
+
+  req.user.followingUsernames = normalized;
+  req.user.followingCount = normalized.length;
+  req.user.profileUpdatedAt = new Date().toISOString();
+
+  for (const username of added) {
+    const target = (dbData.users || []).find((u: any) => String(u?.username || "").toLowerCase() === username.toLowerCase());
+    if (target) {
+      target.followersCount = Number(target.followersCount || 0) + 1;
+      target.profileUpdatedAt = new Date().toISOString();
+      await persistUserDurably(target);
+    }
+  }
+  for (const username of removed) {
+    const target = (dbData.users || []).find((u: any) => String(u?.username || "").toLowerCase() === username.toLowerCase());
+    if (target) {
+      target.followersCount = Math.max(0, Number(target.followersCount || 0) - 1);
+      target.profileUpdatedAt = new Date().toISOString();
+      await persistUserDurably(target);
+    }
+  }
+
+  const idx = (dbData.users || []).findIndex((u: any) => u?.uid === req.user.uid || (u?.email && String(u.email).toLowerCase() === String(req.user.email || "").toLowerCase()));
+  if (idx >= 0) dbData.users[idx] = { ...dbData.users[idx], followingUsernames: normalized, followingCount: normalized.length, profileUpdatedAt: req.user.profileUpdatedAt };
+  else dbData.users.push(req.user);
+  saveDatabase();
+  const persisted = await persistUserDurably(req.user);
+  if (!persisted) return res.status(503).json({ success: false, error: "Following list could not be permanently saved. Please retry." });
+  res.json({ success: true, followingUsernames: normalized, followingCount: normalized.length });
+});
+
+app.post("/api/v1/user/engagement", authenticateUser, async (req: any, res: any) => {
+  const followersDelta = Math.max(0, Math.floor(Number(req.body?.followersDelta || 0)));
+  const likesDelta = Math.max(0, Math.floor(Number(req.body?.likesDelta || 0)));
+  const diamondsDelta = Math.max(0, Math.floor(Number(req.body?.diamondsDelta || 0)));
+  if (followersDelta > 100000 || likesDelta > 1000000 || diamondsDelta > 100000000) {
+    return res.status(400).json({ success: false, error: "Engagement delta is too large." });
+  }
+  req.user.followersCount = Number(req.user.followersCount || 0) + followersDelta;
+  req.user.totalLikesCount = Number(req.user.totalLikesCount || 0) + likesDelta;
+  req.user.diamonds = Number(req.user.diamonds || 0) + diamondsDelta;
+  req.user.profileUpdatedAt = new Date().toISOString();
+  const idx = (dbData.users || []).findIndex((u: any) => u?.uid === req.user.uid || (u?.email && String(u.email).toLowerCase() === String(req.user.email || "").toLowerCase()));
+  if (idx >= 0) dbData.users[idx] = { ...dbData.users[idx], ...req.user };
+  else dbData.users.push(req.user);
+  saveDatabase();
+  const persisted = await persistUserDurably(req.user);
+  if (!persisted) return res.status(503).json({ success: false, error: "User engagement could not be permanently saved. Please retry." });
+  res.json({ success: true, user: req.user });
+});
+
+// ------------------------------------------------------------------
 // SPECIAL ACCESS / MODERATION ACTIONS ENDPOINTS
 // ------------------------------------------------------------------
 
@@ -3130,6 +3202,77 @@ function getProgressionFromServerCoins(xp: number) {
   return { level, vipLevel };
 }
 
+function canonicalizeProgressFields(user: any) {
+  if (!user) return user;
+  const lifetimeSpent = Math.max(0, Number(user.coinSpendTotal ?? user.giftSpentCoins ?? user.xp ?? 0) || 0);
+  user.coinSpendTotal = lifetimeSpent;
+  // xp is retained as the compatibility field, but it now means lifetime coins actually spent.
+  user.xp = lifetimeSpent;
+  const progression = getProgressionFromServerCoins(lifetimeSpent);
+  user.userLevel = progression.level;
+  user.level = progression.level;
+  user.vipLevel = progression.vipLevel;
+  user.progressUpdatedAt = user.progressUpdatedAt || new Date().toISOString();
+  if (!Array.isArray(user.coinSpendHistory)) user.coinSpendHistory = [];
+  return user;
+}
+
+async function recordCoinSpendServer(user: any, amount: number, source: string, metadata: Record<string, any> = {}) {
+  const spend = Math.floor(Number(amount) || 0);
+  if (!user || spend <= 0) return null;
+  canonicalizeProgressFields(user);
+  const now = new Date().toISOString();
+  user.coinSpendTotal = (Number(user.coinSpendTotal) || 0) + spend;
+  user.xp = user.coinSpendTotal;
+  const progression = getProgressionFromServerCoins(user.coinSpendTotal);
+  user.userLevel = progression.level;
+  user.level = progression.level;
+  user.vipLevel = progression.vipLevel;
+  user.progressUpdatedAt = now;
+  const entry = {
+    id: metadata.transactionId || `SPEND-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    userId: user.uid || user.uniqueId || user.username,
+    username: user.username || "",
+    amount: spend,
+    source: String(source || "other"),
+    timestamp: now,
+    ...metadata
+  };
+  if (!Array.isArray(user.coinSpendHistory)) user.coinSpendHistory = [];
+  user.coinSpendHistory.unshift(entry);
+  // Keep a durable, bounded per-user history; the aggregate total is never truncated.
+  if (user.coinSpendHistory.length > 5000) user.coinSpendHistory = user.coinSpendHistory.slice(0, 5000);
+  if (!Array.isArray(dbData.coinSpendLedger)) dbData.coinSpendLedger = [];
+  dbData.coinSpendLedger.unshift(entry);
+  if (dbData.coinSpendLedger.length > 50000) dbData.coinSpendLedger = dbData.coinSpendLedger.slice(0, 50000);
+  return { entry, progression };
+}
+
+async function creditCreatorEarningServer(user: any, amount: number, source: string, metadata: Record<string, any> = {}) {
+  const earning = Math.floor(Number(amount) || 0);
+  if (!user || earning <= 0) return null;
+  const now = new Date().toISOString();
+  user.diamonds = (Number(user.diamonds) || 0) + earning;
+  const entry = {
+    id: metadata.transactionId || `EARN-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    userId: user.uid || user.uniqueId || user.username,
+    username: user.username || "",
+    amount: earning,
+    currency: "diamonds",
+    source: String(source || "other"),
+    timestamp: now,
+    ...metadata
+  };
+  if (!Array.isArray(user.creatorEarningHistory)) user.creatorEarningHistory = [];
+  user.creatorEarningHistory.unshift(entry);
+  if (user.creatorEarningHistory.length > 5000) user.creatorEarningHistory = user.creatorEarningHistory.slice(0, 5000);
+  if (!Array.isArray(dbData.creatorEarningLedger)) dbData.creatorEarningLedger = [];
+  dbData.creatorEarningLedger.unshift(entry);
+  if (dbData.creatorEarningLedger.length > 50000) dbData.creatorEarningLedger = dbData.creatorEarningLedger.slice(0, 50000);
+  return entry;
+}
+
+
 app.get("/api/v1/gifts", (req, res) => {
   // The database is the single source of truth for the production gift catalog.
   // Do not merge demo/default gifts into the catalog on every request.
@@ -3160,7 +3303,7 @@ const resolveGiftAnimationMedia = (gift: any) => {
   return candidates.find(isGiftAnimationMediaUrl) || "";
 };
 
-app.post("/api/v1/gifts/send", authenticateUser, (req, res) => {
+app.post("/api/v1/gifts/send", authenticateUser, async (req, res) => {
   const { requestId, giftId, count = 1, recipient = "Host", targetHostSide } = req.body;
   if (!giftId) {
     return res.status(400).json({ error: "giftId is required" });
@@ -3199,10 +3342,16 @@ app.post("/api/v1/gifts/send", authenticateUser, (req, res) => {
   }
 
   user.coins = userCoins - totalCost;
-  user.xp = (user.xp || 0) + Math.floor(totalCost * 0.2);
-  const giftProgress = getProgressionFromServerCoins(user.xp);
-  user.userLevel = giftProgress.level;
-  user.vipLevel = giftProgress.vipLevel;
+  const spendRecord = await recordCoinSpendServer(user, totalCost, req.body.source || (req.body.reelId ? "reels_gift" : "gift"), {
+    transactionId: requestId || undefined,
+    giftId,
+    giftName: gift.name,
+    recipient,
+    partyId: req.body.partyId || req.body.roomId || null,
+    hostId: req.body.hostId || null,
+    targetHostSide: targetHostSide || "hostA"
+  });
+  const giftProgress = spendRecord?.progression || getProgressionFromServerCoins(user.coinSpendTotal || user.xp);
   user.wealthLevel = Math.max(Number(user.wealthLevel) || 1, (Number(user.wealthLevel) || 1) + 1);
 
   // Gift display value is always the full amount, while the recipient
@@ -3214,6 +3363,7 @@ app.post("/api/v1/gifts/send", authenticateUser, (req, res) => {
   // Credit the actual recipient's earning wallet when the recipient can be
   // resolved from the authenticated user database. This is separate from
   // the 100% gift value shown on the seat/room UI.
+  const txId = requestId || `TX-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
   const normalizedRecipient = String(recipient || '').trim().toLowerCase();
   const recipientUser = (dbData.users || []).find((u: any) => {
     const username = String(u?.username || '').trim().toLowerCase();
@@ -3221,7 +3371,14 @@ app.post("/api/v1/gifts/send", authenticateUser, (req, res) => {
     return normalizedRecipient && (username === normalizedRecipient || fullName === normalizedRecipient);
   });
   if (recipientUser) {
-    recipientUser.diamonds = (Number(recipientUser.diamonds) || 0) + recipientEarnings;
+    await creditCreatorEarningServer(recipientUser, recipientEarnings, req.body.source || (req.body.reelId ? "reels_gift" : "gift_received"), {
+      transactionId: txId,
+      giftId,
+      giftName: gift.name,
+      sender: user.username,
+      giftCoins: totalCost,
+      companyShare
+    });
     recipientUser.updatedAt = new Date().toISOString();
     const recipientIndex = dbData.users.findIndex((u: any) => u?.uid === recipientUser.uid || u?.username === recipientUser.username);
     if (recipientIndex >= 0) dbData.users[recipientIndex] = { ...recipientUser };
@@ -3235,7 +3392,6 @@ app.post("/api/v1/gifts/send", authenticateUser, (req, res) => {
   dbData.platformMetrics.companyRevenue = (dbData.platformMetrics.companyRevenue || 0) + companyShare;
   dbData.platformMetrics.hostDiamondsDistributed = (dbData.platformMetrics.hostDiamondsDistributed || 0) + hostEarnings;
 
-  const txId = requestId || `TX-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
   const txLog = {
     id: txId,
     type: "gift_sent",
@@ -3306,13 +3462,18 @@ app.post("/api/v1/gifts/send", authenticateUser, (req, res) => {
 
   saveDatabase();
 
-  const responseData = {
+  const responseData: any = {
     success: true,
     transactionId: txId,
     gift,
     count: giftCount,
     totalCoinsSpent: totalCost,
     remainingCoins: user.coins,
+    userLevel: user.userLevel,
+    level: user.level || user.userLevel,
+    vipLevel: user.vipLevel,
+    xp: user.xp,
+    coinSpendTotal: user.coinSpendTotal,
     hostEarnings,
     recipientEarnings,
     companyShare,
@@ -3917,7 +4078,19 @@ const getActiveLiveSessions = () => {
   });
 
   dbData.hosts = Array.from(uniqueMap.values());
-  dbData.hosts.forEach(h => syncHostPkScores(h));
+  dbData.hosts.forEach(h => {
+    const account = (dbData.users || []).find((u: any) => String(u?.username || "").trim().toLowerCase() === String(h.hostUsername || h.name || "").trim().toLowerCase());
+    if (account) {
+      canonicalizeProgressFields(account);
+      h.level = account.userLevel;
+      h.userLevel = account.userLevel;
+      h.hostLevel = account.userLevel;
+      h.vipLevel = account.vipLevel;
+      h.avatar = account.avatar || h.avatar || "";
+      h.hostAvatar = account.avatar || h.hostAvatar || "";
+    }
+    syncHostPkScores(h);
+  });
   saveDatabase();
 
   return dbData.hosts;
@@ -3934,7 +4107,9 @@ app.get("/api/v1/live/active", (req, res) => {
 app.post("/api/v1/live/session", (req, res) => {
   const sessionData = req.body || {};
   const hostUsername = sessionData.hostUsername || sessionData.hostName || sessionData.name || "live_host";
-  const hostUserId = sessionData.hostUserId || sessionData.hostUid || sessionData.uniqueId || hostUsername;
+  const canonicalHostUser = (dbData.users || []).find((u: any) => String(u?.username || "").trim().toLowerCase() === String(hostUsername).trim().toLowerCase());
+  if (canonicalHostUser) canonicalizeProgressFields(canonicalHostUser);
+  const hostUserId = sessionData.hostUserId || sessionData.hostUid || canonicalHostUser?.uniqueId || canonicalHostUser?.uid || sessionData.uniqueId || hostUsername;
   const hostId = sessionData.id || `h-${hostUserId}`;
 
   terminateHostLiveSession(hostUserId);
@@ -3946,11 +4121,15 @@ app.post("/api/v1/live/session", (req, res) => {
     id: hostId,
     hostUserId,
     hostName: sessionData.hostName || sessionData.name || hostUsername,
-    hostAvatar: sessionData.hostAvatar || sessionData.avatar || "",
+    hostAvatar: canonicalHostUser?.avatar || sessionData.hostAvatar || sessionData.avatar || "",
     hostUsername,
     hostUid: hostUserId,
-    name: sessionData.hostName || sessionData.name || hostUsername,
-    avatar: sessionData.hostAvatar || sessionData.avatar || "",
+    name: sessionData.hostName || sessionData.name || canonicalHostUser?.fullName || hostUsername,
+    avatar: canonicalHostUser?.avatar || sessionData.hostAvatar || sessionData.avatar || "",
+    level: canonicalHostUser?.userLevel || sessionData.level || 1,
+    userLevel: canonicalHostUser?.userLevel || sessionData.userLevel || sessionData.level || 1,
+    hostLevel: canonicalHostUser?.userLevel || sessionData.hostLevel || sessionData.level || 1,
+    vipLevel: canonicalHostUser?.vipLevel ?? Number(sessionData.vipLevel || 0),
     sessionId: newSessionId,
     liveSessionId: newSessionId,
     channelName: sessionData.channelName || `room_${hostUserId}`,
@@ -5269,7 +5448,37 @@ const sanitizePartyGiftComment = (comment: any, party: any) => {
 const sanitizePartyForClient = (party: any) => {
   if (!party) return party;
   prunePartyPresence(party);
-  const safe = { ...party, connectedViewers: Array.isArray(party.connectedViewers) ? party.connectedViewers.map((v: any) => ({ ...v })) : [], comments: Array.isArray(party.comments) ? party.comments.map((c: any) => sanitizePartyGiftComment(c, party)) : [] };
+  const safe: any = { ...party, connectedViewers: Array.isArray(party.connectedViewers) ? party.connectedViewers.map((v: any) => ({ ...v })) : [], comments: Array.isArray(party.comments) ? party.comments.map((c: any) => sanitizePartyGiftComment(c, party)) : [] };
+  const resolveCanonicalPartyUser = (username: any) => {
+    const name = String(username || "").trim().toLowerCase();
+    if (!name) return null;
+    return (dbData.users || []).find((u: any) => String(u?.username || "").trim().toLowerCase() === name) || null;
+  };
+  const hostUser = resolveCanonicalPartyUser(safe.hostUsername);
+  if (hostUser) {
+    canonicalizeProgressFields(hostUser);
+    safe.hostLevel = hostUser.userLevel;
+    safe.level = hostUser.userLevel;
+    safe.vipLevel = hostUser.vipLevel;
+    safe.hostAvatar = hostUser.avatar || safe.hostAvatar || "";
+  }
+  if (Array.isArray(safe.seats)) {
+    safe.seats = safe.seats.map((seat: any) => {
+      if (!seat?.name) return seat;
+      const account = resolveCanonicalPartyUser(seat.name);
+      if (!account) return seat;
+      canonicalizeProgressFields(account);
+      return { ...seat, userLevel: account.userLevel, level: account.userLevel, vipLevel: account.vipLevel, avatar: account.avatar || seat.avatar || "" };
+    });
+  }
+  if (Array.isArray(safe.connectedViewers)) {
+    safe.connectedViewers = safe.connectedViewers.map((viewer: any) => {
+      const account = resolveCanonicalPartyUser(viewer.username);
+      if (!account) return viewer;
+      canonicalizeProgressFields(account);
+      return { ...viewer, userLevel: account.userLevel, level: account.userLevel, vipLevel: account.vipLevel, avatar: account.avatar || viewer.avatar || "" };
+    });
+  }
   delete safe.password;
   return safe;
 };
@@ -5398,16 +5607,19 @@ app.post("/api/v1/parties/:id/join", (req, res) => {
       party.connectedViewers = [];
     }
     prunePartyPresence(party);
+    const canonicalViewerUser = (dbData.users || []).find((u: any) => String(u?.username || "").trim().toLowerCase() === String(username || "").trim().toLowerCase());
+    if (canonicalViewerUser) canonicalizeProgressFields(canonicalViewerUser);
     if (!party.lastSeen) party.lastSeen = {};
     party.lastSeen[username] = Date.now();
     if (!party.connectedViewers.some((v: any) => v.username === username)) {
-      party.connectedViewers.push({ userId: username, username, avatar: avatar || "", level: userLevel || 1, vipLevel: vipLevel || 0, joinedAt: Date.now() });
+      party.connectedViewers.push({ userId: username, username, avatar: canonicalViewerUser?.avatar || avatar || "", level: canonicalViewerUser?.userLevel || userLevel || 1, userLevel: canonicalViewerUser?.userLevel || userLevel || 1, vipLevel: canonicalViewerUser?.vipLevel ?? Number(vipLevel || 0), joinedAt: Date.now() });
     }
     party.participantCount = party.connectedViewers.length;
     party.lastJoinEvent = {
       username,
-      userLevel: userLevel || 1,
-      vipLevel: vipLevel || 0,
+      userLevel: canonicalViewerUser?.userLevel || userLevel || 1,
+      level: canonicalViewerUser?.userLevel || userLevel || 1,
+      vipLevel: canonicalViewerUser?.vipLevel ?? Number(vipLevel || 0),
       timestamp: Date.now()
     };
     saveDatabase();
@@ -5420,28 +5632,37 @@ app.post("/api/v1/parties/:id/join", (req, res) => {
 
 app.post("/api/v1/parties/:id/leave", (req, res) => {
   const { id } = req.params;
-  const { username } = req.body;
+  const { username } = req.body || {};
   const index = dbData.parties?.findIndex((p: any) => p.id === id);
   if (index !== -1 && index !== undefined) {
     const party = dbData.parties[index];
+
+    // Host leaving is the party "off" action: end the room for all users.
+    const isHost = Boolean(username && party.hostUsername &&
+      String(party.hostUsername).toLowerCase() === String(username).toLowerCase());
+    if (isHost) {
+      party.status = "ended";
+      dbData.parties = dbData.parties.filter((p: any) => p.id !== id);
+      saveDatabase();
+      deleteDocument("parties", id);
+      console.log(`[PARDAIS-PARTY PARTY] Host ${username} ended party ${id}. Room removed.`);
+      return res.json({ message: "Party closed successfully", status: "ended", id });
+    }
+
     if (party.connectedViewers) {
       party.connectedViewers = party.connectedViewers.filter((v: any) => v.username !== username);
     }
     party.participantCount = party.connectedViewers ? party.connectedViewers.length : 0;
-    
-    // Clean up from seats immediately
-    party.seats = party.seats.map((seat: any) => {
+
+    party.seats = (party.seats || []).map((seat: any) => {
       if (seat.name === username || (seat.name && seat.name.startsWith(username))) {
         return { ...seat, name: null, avatar: null, vipLevel: 0, isMuted: false };
       }
       return seat;
     });
 
-    if (party.lastSeen && username) {
-      delete party.lastSeen[username];
-    }
+    if (party.lastSeen && username) delete party.lastSeen[username];
 
-    // Leaving a room never ends it. Only the explicit /close endpoint ends the party.
     console.log(`[PARDAIS-PARTY PARTY] User ${username} left party ${id}. Seats cleared immediately.`);
     saveDatabase();
     syncDocument("parties", id, party);
@@ -5479,20 +5700,23 @@ app.post("/api/v1/parties/:id/seats/join", (req, res) => {
   const index = dbData.parties?.findIndex((p: any) => p.id === id);
   if (index !== -1 && index !== undefined) {
     const party = dbData.parties[index];
+    const canonicalSeatUser = (dbData.users || []).find((u: any) => String(u?.username || "").trim().toLowerCase() === String(username || "").trim().toLowerCase());
+    if (canonicalSeatUser) canonicalizeProgressFields(canonicalSeatUser);
     const targetSeat = party.seats?.find((seat: any) => seat.id === Number(seatId));
     if (!targetSeat) return res.status(404).json({ error: "Seat not found" });
     if (targetSeat.name && targetSeat.name !== username) return res.status(409).json({ error: "Seat is already occupied" });
     if (targetSeat.isLocked && party.hostUsername !== username) return res.status(403).json({ error: "This seat is locked by the host" });
     party.seats = party.seats.map((seat: any) => {
       if (seat.id === Number(seatId)) {
-        return { ...seat, name: username, avatar: avatar || "", vipLevel: Number(vipLevel || 0), isMuted: party.allGuestsMuted ? true : Boolean(seat.isMuted) };
+        return { ...seat, name: username, avatar: canonicalSeatUser?.avatar || avatar || "", userLevel: canonicalSeatUser?.userLevel || 1, level: canonicalSeatUser?.userLevel || 1, vipLevel: canonicalSeatUser?.vipLevel ?? Number(vipLevel || 0), isMuted: party.allGuestsMuted ? true : Boolean(seat.isMuted) };
       }
       return seat;
     });
     party.lastJoinEvent = {
       username,
-      userLevel: userLevel || 1,
-      vipLevel: vipLevel || 0,
+      userLevel: canonicalSeatUser?.userLevel || 1,
+      level: canonicalSeatUser?.userLevel || 1,
+      vipLevel: canonicalSeatUser?.vipLevel ?? Number(vipLevel || 0),
       timestamp: Date.now()
     };
     saveDatabase();
@@ -5593,14 +5817,19 @@ app.post("/api/v1/parties/:id/seats/toggle-lock-all", (req, res) => {
 
 app.post("/api/v1/parties/:id/close", (req, res) => {
   const { id } = req.params;
+  const { username } = req.body || {};
   const index = dbData.parties?.findIndex((p: any) => p.id === id);
   if (index !== -1 && index !== undefined) {
     const party = dbData.parties[index];
+    if (!username || !party.hostUsername ||
+        String(party.hostUsername).toLowerCase() !== String(username).toLowerCase()) {
+      return res.status(403).json({ error: "Only the party host can close this room." });
+    }
     party.status = "ended";
     dbData.parties = dbData.parties.filter((p: any) => p.id !== id);
     saveDatabase();
     deleteDocument("parties", id);
-    res.json({ message: "Party closed successfully" });
+    res.json({ message: "Party closed successfully", status: "ended", id });
   } else {
     res.status(404).json({ error: "Party Room not found" });
   }
@@ -6247,7 +6476,10 @@ app.get("/api/v1/agency-coin-transactions", (req, res) => {
   res.json(dbData.agencyCoinTransactions);
 });
 
-app.post("/api/v1/agency-coin-transactions", (req, res) => {
+app.post("/api/v1/agency-coin-transactions", authenticateUser, (req: any, res: any) => {
+  if (!isAdminAccount(req.user)) {
+    return res.status(403).json({ error: "Authorized admin account is required." });
+  }
   const { agencyId, agencyType, type, amount, reason, adminUsername } = req.body;
   
   if (!agencyId || !amount || amount <= 0) {
@@ -6327,6 +6559,78 @@ app.post("/api/v1/agency-coin-transactions", (req, res) => {
     transaction,
     updatedAgency: targetAgency
   });
+});
+
+// ------------------------------------------------------------------
+// COIN SELLER WALLET — wholesale inventory -> user Gifting Wallet
+// ------------------------------------------------------------------
+app.get("/api/v1/coin-seller/me", authenticateUser, (req: any, res: any) => {
+  const username = String(req.user?.username || "").trim().toLowerCase();
+  const seller = (dbData.coinSellers || []).find((s: any) =>
+    String(s?.ownerUsername || s?.username || "").trim().toLowerCase() === username
+  );
+  if (!seller || req.user?.isCoinSeller !== true) return res.status(403).json({ error: "Coin Seller Agency is not active for this account." });
+  const history = (dbData.coinSellerTransactions || []).filter((t: any) => t.sellerId === seller.id);
+  res.json({ success: true, seller, history });
+});
+
+app.get("/api/v1/coin-seller/transactions", authenticateUser, (req: any, res: any) => {
+  const username = String(req.user?.username || "").trim().toLowerCase();
+  const seller = (dbData.coinSellers || []).find((s: any) => String(s?.ownerUsername || s?.username || "").trim().toLowerCase() === username);
+  if (!seller || req.user?.isCoinSeller !== true) return res.status(403).json({ error: "Coin Seller Agency is not active for this account." });
+  res.json((dbData.coinSellerTransactions || []).filter((t: any) => t.sellerId === seller.id));
+});
+
+app.post("/api/v1/coin-seller/transfer", authenticateUser, async (req: any, res: any) => {
+  const sellerUsername = String(req.user?.username || "").trim().toLowerCase();
+  const sellerIndex = (dbData.coinSellers || []).findIndex((s: any) => String(s?.ownerUsername || s?.username || "").trim().toLowerCase() === sellerUsername);
+  if (sellerIndex < 0 || req.user?.isCoinSeller !== true) return res.status(403).json({ error: "Coin Seller Agency is not active for this account." });
+  const seller = dbData.coinSellers[sellerIndex];
+  if (["Suspended", "Frozen", "Inactive"].includes(String(seller.status || ""))) return res.status(403).json({ error: `Agency is ${seller.status}. Coin transfer is disabled.` });
+  const amount = Math.floor(Number(req.body?.amount) || 0);
+  const requestId = String(req.body?.requestId || `SELL-${Date.now()}-${crypto.randomBytes(3).toString("hex")}`);
+  if (amount <= 0) return res.status(400).json({ error: "Enter a valid coin amount." });
+  if (!dbData.processedCoinSellerTransfers) dbData.processedCoinSellerTransfers = {};
+  if (dbData.processedCoinSellerTransfers[requestId]) return res.json(dbData.processedCoinSellerTransfers[requestId]);
+  const beforeSeller = Number(seller.coinBalance) || 0;
+  if (beforeSeller < amount) return res.status(400).json({ error: `Insufficient seller inventory. Available: ${beforeSeller.toLocaleString()} coins.` });
+  const identifier = String(req.body?.recipient || req.body?.username || req.body?.userId || "").trim().replace(/^@/, "").toLowerCase();
+  if (!identifier) return res.status(400).json({ error: "Recipient Pardais ID / username is required." });
+  const buyerIndex = (dbData.users || []).findIndex((u: any) => [u?.username, u?.uniqueId, u?.uid, u?.email].some((v: any) => String(v || "").trim().toLowerCase() === identifier));
+  if (buyerIndex < 0) return res.status(404).json({ error: "User account not found." });
+  const buyer = dbData.users[buyerIndex];
+  const beforeBuyer = Number(buyer.coins) || 0;
+  seller.coinBalance = beforeSeller - amount;
+  seller.coinsAvailable = `${seller.coinBalance.toLocaleString()} Coins`;
+  seller.totalCoinsIssued = (Number(seller.totalCoinsIssued) || 0) + amount;
+  buyer.coins = beforeBuyer + amount;
+  buyer.updatedAt = new Date().toISOString();
+  const now = new Date().toISOString();
+  const tx = {
+    id: requestId, sellerId: seller.id, sellerName: seller.name, sellerUsername: seller.ownerUsername || seller.username,
+    type: "SELLER_TO_USER", amount, recipientUsername: buyer.username, recipientUserId: buyer.uniqueId || buyer.uid || "",
+    wallet: "gifting_wallet", sellerBalanceBefore: beforeSeller, sellerBalanceAfter: seller.coinBalance,
+    recipientBalanceBefore: beforeBuyer, recipientBalanceAfter: buyer.coins, status: "Completed", timestamp: now,
+    note: String(req.body?.note || "Coin Seller transfer")
+  };
+  if (!Array.isArray(dbData.coinSellerTransactions)) dbData.coinSellerTransactions = [];
+  dbData.coinSellerTransactions.unshift(tx);
+  if (!Array.isArray(dbData.coinTransactions)) dbData.coinTransactions = [];
+  dbData.coinTransactions.unshift({ ...tx, type: "coin_seller_sale", currency: "coins" });
+  if (!Array.isArray(dbData.transactions)) dbData.transactions = [];
+  dbData.transactions.unshift({ ...tx, type: "coin_seller_sale", currency: "coins" });
+  dbData.coinSellers[sellerIndex] = seller;
+  const canonicalIndex = dbData.users.findIndex((u: any) => u?.uid === buyer?.uid || (u?.email && buyer?.email && String(u.email).toLowerCase() === String(buyer.email).toLowerCase()));
+  if (canonicalIndex >= 0) dbData.users[canonicalIndex] = { ...dbData.users[canonicalIndex], ...buyer };
+  saveDatabase();
+  const persisted = await persistUserDurably(buyer);
+  if (!persisted) return res.status(503).json({ error: "Buyer wallet could not be permanently saved." });
+  void syncDocument("coinSellers", seller.id, seller).catch(() => undefined);
+  void syncDocument("coinSellerTransactions", tx.id, tx).catch(() => undefined);
+  void syncDocument("coinTransactions", tx.id, { ...tx, type: "coin_seller_sale", currency: "coins" }).catch(() => undefined);
+  const response = { success: true, transaction: tx, seller: { id: seller.id, name: seller.name, coinBalance: seller.coinBalance }, buyer: { username: buyer.username, uniqueId: buyer.uniqueId, coins: buyer.coins } };
+  dbData.processedCoinSellerTransfers[requestId] = response;
+  res.status(201).json(response);
 });
 
 // Agency Requests Endpoints
@@ -6416,10 +6720,14 @@ app.put("/api/v1/agency-requests/:id", (req, res) => {
           name: r.agencyName || r.applicantName,
           applicantName: r.applicantName,
           username: r.applicantUsername,
+          ownerUsername: r.applicantUsername,
           whatsapp: r.contact,
           city: r.country || r.city || "Pakistan",
           rate: r.rate || "1000 Coins = $1.50 USD",
-          status: "Verified Seller",
+          status: "Active",
+          coinBalance: 0,
+          coinsAvailable: "0 Coins",
+          totalCoinsIssued: 0,
           description: r.description || "Official Coin Reseller licensed by Pardais Admin."
         };
         if (!dbData.coinSellers) dbData.coinSellers = [];
@@ -6901,6 +7209,68 @@ app.post("/api/v1/daily-tasks/claim", authenticateUser, async (req: any, res) =>
 // ------------------------------------------------------------------
 // CREATOR CENTER WALLET — 50% gift earnings / exchange / withdrawal
 // ------------------------------------------------------------------
+app.post("/api/v1/wallet/coin-spend", authenticateUser, async (req: any, res: any) => {
+  const amount = Math.floor(Number(req.body?.amount) || 0);
+  if (amount <= 0) return res.status(400).json({ error: "Enter a valid coin spend amount." });
+  const user = req.user;
+  const balance = Number(user.coins) || 0;
+  if (balance < amount) return res.status(400).json({ error: `Insufficient Gifting Coins. Available: ${balance}.` });
+  const requestId = String(req.body?.requestId || `SPEND-${Date.now()}-${Math.random().toString(36).slice(2,8)}`);
+  if (!dbData.processedCoinSpendRequests) dbData.processedCoinSpendRequests = {};
+  if (dbData.processedCoinSpendRequests[requestId]) return res.json(dbData.processedCoinSpendRequests[requestId]);
+  user.coins = balance - amount;
+  const record = await recordCoinSpendServer(user, amount, String(req.body?.source || "other"), {
+    transactionId: requestId,
+    gameName: req.body?.gameName,
+    partyId: req.body?.partyId,
+    reelId: req.body?.reelId,
+    matchId: req.body?.matchId,
+    recipient: req.body?.recipient
+  });
+  const tx = { id: requestId, type: "coin_spend", amount, currency: "coins", source: req.body?.source || "other", username: user.username, timestamp: new Date().toISOString(), status: "Completed", details: req.body?.details || `Spent ${amount.toLocaleString()} Coins` };
+  if (!Array.isArray(dbData.transactions)) dbData.transactions = [];
+  dbData.transactions.unshift(tx);
+  const idx = dbData.users.findIndex((u: any) => u?.uid === user.uid || (u?.email && user.email && String(u.email).toLowerCase() === String(user.email).toLowerCase()));
+  if (idx >= 0) dbData.users[idx] = { ...dbData.users[idx], ...user };
+  saveDatabase();
+  const persisted = await persistUserDurably(user);
+  if (!persisted) return res.status(503).json({ error: "Coin spend could not be permanently saved. Please try again." });
+  void syncDocument("transactions", tx.id, tx).catch(() => undefined);
+  const response = { success: true, remainingCoins: user.coins, userLevel: user.userLevel, level: user.level, vipLevel: user.vipLevel, xp: user.xp, coinSpendTotal: user.coinSpendTotal, spend: record?.entry || null };
+  dbData.processedCoinSpendRequests[requestId] = response;
+  res.json(response);
+});
+
+app.get("/api/v1/wallet/coin-history", authenticateUser, (req: any, res: any) => {
+  const user = req.user;
+  res.json({
+    success: true,
+    coinSpendTotal: Number(user.coinSpendTotal) || 0,
+    level: user.userLevel || user.level || 1,
+    vipLevel: user.vipLevel || 0,
+    spends: Array.isArray(user.coinSpendHistory) ? user.coinSpendHistory : [],
+    earnings: Array.isArray(user.creatorEarningHistory) ? user.creatorEarningHistory : []
+  });
+});
+
+app.post("/api/v1/wallet/creator-earning", authenticateUser, async (req: any, res: any) => {
+  const amount = Math.floor(Number(req.body?.amount) || 0);
+  if (amount <= 0) return res.status(400).json({ error: "Enter a valid earning amount." });
+  const user = req.user;
+  const requestId = String(req.body?.requestId || `EARN-${Date.now()}-${Math.random().toString(36).slice(2,8)}`);
+  if (!dbData.processedCreatorEarningRequests) dbData.processedCreatorEarningRequests = {};
+  if (dbData.processedCreatorEarningRequests[requestId]) return res.json(dbData.processedCreatorEarningRequests[requestId]);
+  const entry = await creditCreatorEarningServer(user, amount, String(req.body?.source || "game"), { transactionId: requestId, gameName: req.body?.gameName, partyId: req.body?.partyId });
+  const idx = dbData.users.findIndex((u: any) => u?.uid === user.uid || (u?.email && user.email && String(u.email).toLowerCase() === String(user.email).toLowerCase()));
+  if (idx >= 0) dbData.users[idx] = { ...dbData.users[idx], ...user };
+  saveDatabase();
+  const persisted = await persistUserDurably(user);
+  if (!persisted) return res.status(503).json({ error: "Creator earning could not be permanently saved. Please try again." });
+  const response = { success: true, creatorBalance: user.diamonds, userLevel: user.userLevel, level: user.level, vipLevel: user.vipLevel, earning: entry };
+  dbData.processedCreatorEarningRequests[requestId] = response;
+  res.json(response);
+});
+
 app.post("/api/v1/wallet/exchange", authenticateUser, async (req: any, res) => {
   const amount = Math.floor(Number(req.body?.amount) || 0);
   if (amount <= 0) return res.status(400).json({ error: "Enter a valid Creator Center coin amount." });
@@ -8081,7 +8451,7 @@ app.post("/api/v1/user/avatar", authenticateUser, (req: any, res: any, next: any
     }
 
     const safeUserId = String(req.user.uid || req.user.username || "user").replace(/[^a-zA-Z0-9_-]/g, "_");
-    const objectKey = `avatars/${safeUserId}/${Date.now()}-${crypto.randomBytes(5).toString("hex")}.${uploadExtension}`;
+    const objectKey = `avatars/${safeUserId}/profile.${uploadExtension}`;
 
     let avatarUrl = "";
 
@@ -8094,46 +8464,45 @@ app.post("/api/v1/user/avatar", authenticateUser, (req: any, res: any, next: any
       const client = getS3Client();
       const bucketName = process.env.R2_BUCKET_NAME || "pardaisparty-reels";
 
-      await Promise.race([
-        client.send(new PutObjectCommand({
-          Bucket: bucketName,
-          Key: objectKey,
-          Body: uploadBuffer,
-          ContentType: uploadContentType,
-          ContentLength: uploadBuffer.length,
-          CacheControl: "public, max-age=31536000, immutable",
-        })),
-        new Promise((_, reject) =>
-          setTimeout(() => reject(new Error("R2 profile photo upload timeout after 10s; using fast fallback")), 10000)
-        )
-      ]);
+      let uploaded = false;
+      let lastUploadError: any = null;
+      for (let attempt = 1; attempt <= 3 && !uploaded; attempt++) {
+        try {
+          await Promise.race([
+            client.send(new PutObjectCommand({
+              Bucket: bucketName,
+              Key: objectKey,
+              Body: uploadBuffer,
+              ContentType: uploadContentType,
+              ContentLength: uploadBuffer.length,
+              CacheControl: "public, max-age=31536000, immutable",
+            })),
+            new Promise((_, reject) =>
+              setTimeout(() => reject(new Error(`R2 profile photo upload timeout on attempt ${attempt}`)), 15000)
+            )
+          ]);
+          uploaded = true;
+        } catch (err) {
+          lastUploadError = err;
+          if (attempt < 3) await new Promise(resolve => setTimeout(resolve, 500 * attempt));
+        }
+      }
+      if (!uploaded) throw lastUploadError || new Error("R2 profile photo upload failed");
 
-      avatarUrl = `${PUBLIC_API_BASE}/api/v1/user/avatar-media?key=${encodeURIComponent(objectKey)}`;
+      // Stable object key prevents old avatar files from accumulating. The
+      // version query busts client/WebView caches after an overwrite.
+      avatarUrl = `${PUBLIC_API_BASE}/api/v1/user/avatar-media?key=${encodeURIComponent(objectKey)}&v=${Date.now()}`;
       console.log(`[PARDAIS-PARTY AVATAR] R2 upload completed: ${objectKey}`);
     } catch (r2Err: any) {
-      // Fallback: save the already-optimized image to the API's persistent public
-      // uploads directory. This guarantees profile editing still completes even
-      // when R2 is temporarily unavailable.
-      console.warn("[PARDAIS-PARTY AVATAR] R2 upload unavailable; using API storage fallback:", r2Err?.message || r2Err);
-
-      const uploadsDir = path.join(process.cwd(), "public", "uploads");
-      if (!fs.existsSync(uploadsDir)) {
-        fs.mkdirSync(uploadsDir, { recursive: true });
-      }
-
-      try {
-        const fallbackName = `avatar_${safeUserId}_${Date.now()}_${crypto.randomBytes(4).toString("hex")}.webp`;
-        const fallbackPath = path.join(uploadsDir, fallbackName);
-        fs.writeFileSync(fallbackPath, uploadBuffer);
-
-        avatarUrl = `${PUBLIC_API_BASE}/uploads/${fallbackName}`;
-      } catch (localErr: any) {
-        // Final fallback: persist the optimized image itself as a data URL.
-        // This keeps the profile update successful even when both R2 and the
-        // platform filesystem are temporarily unavailable.
-        console.warn("[PARDAIS-PARTY AVATAR] API filesystem fallback unavailable:", localErr?.message || localErr);
-        avatarUrl = `data:${uploadContentType};base64,${uploadBuffer.toString("base64")}`;
-      }
+      // Do not store an ephemeral Railway/container path as a "permanent" DP.
+      // A failed R2 write must fail the avatar transaction instead of returning
+      // a URL that disappears after the next deployment/restart.
+      console.error("[PARDAIS-PARTY AVATAR] Durable R2 upload failed after retries:", r2Err?.message || r2Err);
+      return res.status(503).json({
+        success: false,
+        code: "AVATAR_STORAGE_UNAVAILABLE",
+        error: "Profile photo could not be permanently stored. Please try again in a moment."
+      });
     }
 
     // Persist the URL against the authenticated account immediately.

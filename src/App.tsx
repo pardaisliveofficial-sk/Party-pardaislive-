@@ -2501,6 +2501,8 @@ export default function App() {
   const [showPartyExitConfirm, setShowPartyExitConfirm] = useState<boolean>(false);
   const [showCreateActionSheet, setShowCreateActionSheet] = useState<boolean>(false);
   const [partyCategory, setPartyCategory] = useState<string>("all");
+  // Main home discovery switch between Party rooms and Live streams.
+  const [homeRoomTab, setHomeRoomTab] = useState<"party" | "live">("party");
   
   // Seating and Controls states
   const [activeSeatMenu, setActiveSeatMenu] = useState<{ seatId: number; occupantName: string | null } | null>(null);
@@ -2700,13 +2702,34 @@ export default function App() {
   const [showGuestSeatActionModal, setShowGuestSeatActionModal] = useState<{ seatId: number; isUserLive: boolean } | null>(null);
   const [modalPrivateMessage, setModalPrivateMessage] = useState<string>("");
   const [modalActiveTab, setModalActiveTab] = useState<"profile" | "actions" | "message" | "gift">("profile");
-  const [followedUsers, setFollowedUsers] = useState<string[]>(["Sahar Live 🎵"]);
+  const followingHydratedRef = useRef(false);
+  const followingSyncTimerRef = useRef<number | null>(null);
+  const [followedUsers, setFollowedUsers] = useState<string[]>([]);
   const [blockedUsers, setBlockedUsers] = useState<string[]>([]);
   const [reportedUsers, setReportedUsers] = useState<Array<{ name: string; reason: string; timestamp: string }>>([]);
   const [contextActionsUser, setContextActionsUser] = useState<string | null>(null);
   const [reportReasonInput, setReportReasonInput] = useState<string>("");
   const [reportSuccessToast, setReportSuccessToast] = useState<string | null>(null);
   const [blockSearchQuery, setBlockSearchQuery] = useState<string>("");
+
+  // Follow state is account-scoped and permanently stored on the server.
+  // Hydrate it once after auth/me, then debounce writes so existing follow UI
+  // can keep using its current local state without changing behavior.
+  useEffect(() => {
+    if (!isLoggedIn || !user?.uid) return;
+    if (!followingHydratedRef.current) return;
+    if (followingSyncTimerRef.current) window.clearTimeout(followingSyncTimerRef.current);
+    followingSyncTimerRef.current = window.setTimeout(() => {
+      authenticatedFetch("/api/v1/user/following", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ followingUsernames: followedUsers })
+      }).catch(() => {});
+    }, 350);
+    return () => {
+      if (followingSyncTimerRef.current) window.clearTimeout(followingSyncTimerRef.current);
+    };
+  }, [followedUsers, isLoggedIn, user?.uid]);
 
   // Viewer join notifications and action menu states
   interface JoinNotif {
@@ -2953,6 +2976,24 @@ export default function App() {
   const [adminAgencyCoinReason, setAdminAgencyCoinReason] = useState<string>("");
   const [adminAgencyCoinType, setAdminAgencyCoinType] = useState<"ADD" | "DEDUCT">("ADD");
   const [adminAgencyCoinSubmitting, setAdminAgencyCoinSubmitting] = useState<boolean>(false);
+
+  // Coin Seller live wallet / user sale states
+  const [coinSellerWallet, setCoinSellerWallet] = useState<any>(null);
+  const [coinSellerRecipient, setCoinSellerRecipient] = useState("");
+  const [coinSellerTransferAmount, setCoinSellerTransferAmount] = useState("");
+  const [coinSellerTransferNote, setCoinSellerTransferNote] = useState("");
+  const [coinSellerTransferSubmitting, setCoinSellerTransferSubmitting] = useState(false);
+  const [coinSellerTransferHistory, setCoinSellerTransferHistory] = useState<any[]>([]);
+
+  useEffect(() => {
+    if (!user?.username || !user?.isCoinSeller) return;
+    const token = localStorage.getItem("pardais_auth_token");
+    fetch("/api/v1/coin-seller/me", { headers: token ? { Authorization: `Bearer ${token}` } : {} })
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (data?.success) { setCoinSellerWallet(data); setCoinSellerTransferHistory(data.history || []); }
+      }).catch(() => {});
+  }, [user?.username, user?.isCoinSeller]);
 
   // Super Admin Agency Edit Modal States (Ta'adulat)
   const [selectedAgencyForEdit, setSelectedAgencyForEdit] = useState<any>(null);
@@ -5703,6 +5744,10 @@ export default function App() {
           .then(userData => {
             if (userData && userData.username) {
               setUser(prev => ({ ...prev, ...userData }));
+              if (Array.isArray(userData.followingUsernames)) {
+                setFollowedUsers(userData.followingUsernames.map((v: any) => String(v)));
+              }
+              followingHydratedRef.current = true;
             }
           })
           .catch(() => {});
@@ -6565,8 +6610,7 @@ export default function App() {
         if (uploadRes && uploadRes.ok && uploadData?.url) {
           persistentAvatar = uploadData.url;
         } else {
-          console.warn("[PARDAIS PROFILE] Server upload notice, keeping local preview avatar:", uploadData?.error || "Offline/Network notice");
-          persistentAvatar = selectedAvatar || user.avatar || "";
+          throw new Error(uploadData?.error || "Profile photo could not be permanently saved. Please try again.");
         }
       }
 
@@ -7050,6 +7094,11 @@ export default function App() {
           setUser(prev => ({
             ...prev,
             coins: data.remainingCoins !== undefined ? data.remainingCoins : prev.coins,
+            xp: data.xp !== undefined ? data.xp : prev.xp,
+            coinSpendTotal: data.coinSpendTotal !== undefined ? data.coinSpendTotal : prev.coinSpendTotal,
+            userLevel: data.userLevel !== undefined ? data.userLevel : prev.userLevel,
+            level: data.level !== undefined ? data.level : (data.userLevel !== undefined ? data.userLevel : prev.level),
+            vipLevel: data.vipLevel !== undefined ? data.vipLevel : prev.vipLevel,
             ...(data.recipientCreatorBalance !== undefined && data.recipientRecipientUsername && data.recipientRecipientUsername === prev.username ? { diamonds: data.recipientCreatorBalance } : {})
           }));
           if (data.recipientCreatorBalance !== undefined && String(data.recipient || "").toLowerCase() === String(user.username || "").toLowerCase()) {
@@ -7737,12 +7786,23 @@ export default function App() {
     const permanentDiamondsEarned = Math.floor(userLiveCoinsEarned * 0.1);
     const permanentFollowersGained = Math.floor(userLiveCoinsEarned * 0.05) + Math.floor(Math.random() * 8) + 3;
 
+    const permanentLikesGained = Math.floor(userLiveLikes * 0.5);
     setUser(prev => ({
       ...prev,
       diamonds: prev.diamonds + permanentDiamondsEarned,
       followersCount: (prev.followersCount ?? 0) + permanentFollowersGained,
-      totalLikesCount: (prev.totalLikesCount ?? 0) + Math.floor(userLiveLikes * 0.5)
+      totalLikesCount: (prev.totalLikesCount ?? 0) + permanentLikesGained
     }));
+    // Persist the stream-earned profile metrics on the authenticated account.
+    authenticatedFetch("/api/v1/user/engagement", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        followersDelta: permanentFollowersGained,
+        likesDelta: permanentLikesGained,
+        diamondsDelta: permanentDiamondsEarned
+      })
+    }).catch(err => console.warn("[PARDAIS PROFILE] Engagement persistence notice:", err));
 
     // Save transaction ledger entry
     if (userLiveCoinsEarned > 0) {
@@ -8714,7 +8774,34 @@ export default function App() {
   };
 
   const handleLeaveParty = async (partyId: string) => {
-    // Optimistic local state update
+    const party = partiesList.find((p: any) => p.id === partyId);
+    const isHost = Boolean(party?.hostUsername && user?.username &&
+      String(party.hostUsername).toLowerCase() === String(user.username).toLowerCase());
+
+    // Turning off a party as its host must close the room for everyone.
+    if (isHost) {
+      setPartiesList(prev => prev.filter(p => p.id !== partyId));
+      try {
+        const response = await authenticatedFetch(`/api/v1/parties/${partyId}/close`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ username: user.username })
+        });
+        if (!response.ok) {
+          console.error("Error closing host party:", await response.text().catch(() => ""));
+        }
+      } catch (e) {
+        console.error("Error closing host party:", e);
+      } finally {
+        if (activePartyId === partyId) {
+          setActivePartyId(null);
+          if (clientView === "party-room") setClientView("feed");
+        }
+      }
+      return;
+    }
+
+    // Regular viewer leave: only remove this user's presence and seat.
     setPartiesList(prev => prev.map(p => {
       if (p.id === partyId) {
         return {
@@ -8732,7 +8819,7 @@ export default function App() {
     }));
 
     try {
-      await fetch(`/api/v1/parties/${partyId}/leave`, {
+      await authenticatedFetch(`/api/v1/parties/${partyId}/leave`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username: user.username })
@@ -8742,9 +8829,7 @@ export default function App() {
     } finally {
       if (activePartyId === partyId) {
         setActivePartyId(null);
-        if (clientView === "party-room") {
-          setClientView("feed");
-        }
+        if (clientView === "party-room") setClientView("feed");
       }
     }
   };
@@ -8918,7 +9003,12 @@ export default function App() {
   const handlePartyCloseRoom = async (partyId: string) => {
     if (!window.confirm("Are you sure you want to end this audio party room?")) return;
     try {
-      await fetch(`/api/v1/parties/${partyId}/close`, { method: "POST" });
+      const response = await authenticatedFetch(`/api/v1/parties/${partyId}/close`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: user.username })
+      });
+      if (!response.ok) throw new Error("Unable to close party room.");
       setPartiesList(prev => prev.filter(p => p.id !== partyId));
       setActivePartyId(null);
       setClientView("feed");
@@ -9479,7 +9569,38 @@ export default function App() {
                           </button>
                         </div>
 
-                        {/* Party Rooms Header & Refresh button */}
+                        {/* 🎙️ LIVE / PARTY HOME DISCOVERY SWITCH */}
+                        <div className="bg-[#12121a]/95 border border-[#303040]/60 rounded-2xl p-1.5 flex items-center gap-1 shadow-lg">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setHomeRoomTab("party");
+                              setPartyCategory("all");
+                            }}
+                            className={`flex-1 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all ${
+                              homeRoomTab === "party"
+                                ? "bg-gradient-to-r from-pink-500 to-purple-600 text-white shadow-md"
+                                : "text-gray-400 hover:text-white hover:bg-white/5"
+                            }`}
+                          >
+                            🎙️ Party
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setHomeRoomTab("live")}
+                            className={`flex-1 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all ${
+                              homeRoomTab === "live"
+                                ? "bg-gradient-to-r from-red-500 to-pink-600 text-white shadow-md"
+                                : "text-gray-400 hover:text-white hover:bg-white/5"
+                            }`}
+                          >
+                            🔴 Live
+                          </button>
+                        </div>
+
+                        {homeRoomTab === "party" ? (
+                          <div className="space-y-3">
+                            {/* Party Rooms Header & Refresh button */}
                         <div className="flex items-center justify-between pt-1 bg-transparent">
                           <div className="flex items-center space-x-1.5 bg-transparent">
                             <span className="w-2 h-2 rounded-full bg-[#ff007f] animate-ping"></span>
@@ -9622,6 +9743,106 @@ export default function App() {
                             </div>
                           );
                         })()}
+                          </div>
+                        ) : (
+                          <div className="space-y-2">
+                            <div className="flex items-center justify-between pt-1 bg-transparent">
+                              <div className="flex items-center space-x-1.5 bg-transparent">
+                                <span className="w-2 h-2 rounded-full bg-red-500 animate-ping"></span>
+                                <h3 className="text-[11px] font-black uppercase text-white tracking-wider bg-transparent">
+                                  Live Now ({(liveStreamsList || []).filter((h: any) => h && h.isLive !== false && !["ended","offline","ENDED"].includes(h.status)).length})
+                                </h3>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  fetch("/api/v1/hosts")
+                                    .then(r => r.json())
+                                    .then(data => { if (Array.isArray(data)) setLiveStreamsList(data); })
+                                    .catch(() => {});
+                                }}
+                                className="flex items-center space-x-1 bg-[#1c1c27] hover:bg-red-500/20 text-red-400 border border-red-500/30 px-2 py-1 rounded-lg text-[9px] font-bold transition-all active:scale-95 cursor-pointer"
+                              >
+                                <RefreshCw className="w-3 h-3" />
+                                <span>Refresh</span>
+                              </button>
+                            </div>
+
+                            {(() => {
+                              const homeLiveHosts = (liveStreamsList || []).filter((host: any) => {
+                                if (!host || host.isLive === false || ["ended","offline","ENDED"].includes(host.status)) return false;
+                                const lastActive = typeof host.lastSeen === "number"
+                                  ? host.lastSeen
+                                  : (host.updatedAt ? new Date(host.updatedAt).getTime() : 0);
+                                if (!host.isDemoHost && lastActive > 0 && Date.now() - lastActive > 45000) return false;
+                                const myUsername = (user.username || "").toLowerCase();
+                                const myUniqueId = String(user.uniqueId || "").toLowerCase();
+                                const hostUser = String(host.hostUsername || host.username || "").toLowerCase();
+                                const hostName = String(host.name || "").toLowerCase();
+                                const hostUid = String(host.hostUid || "").toLowerCase();
+                                const hostId = String(host.id || "").toLowerCase().replace(/^h-/, "");
+                                const isMyCard =
+                                  (myUsername && (hostUser === myUsername || hostName === myUsername || hostId === myUsername)) ||
+                                  (myUniqueId && (hostUid === myUniqueId || hostId === myUniqueId || hostUser === myUniqueId));
+                                if (isMyCard && clientView !== "user-live") return false;
+                                if (host.category === "audio") return false;
+                                if (blockedUsers.includes(host.name) || (host.hostUsername && blockedUsers.includes(host.hostUsername))) return false;
+                                return true;
+                              });
+
+                              if (homeLiveHosts.length === 0) {
+                                return (
+                                  <div className="bg-[#12121a]/60 border border-[#303040]/50 rounded-2xl p-8 text-center space-y-2 shadow-md">
+                                    <div className="text-4xl">🔴</div>
+                                    <p className="text-xs font-black text-white uppercase tracking-wider">No One Is Live Right Now</p>
+                                    <p className="text-[9px] text-gray-400">Live hosts will appear here automatically when they start broadcasting.</p>
+                                  </div>
+                                );
+                              }
+
+                              return (
+                                <div className="grid grid-cols-2 gap-2 text-left bg-transparent">
+                                  {homeLiveHosts.map((host: any) => {
+                                    const isPk = host.category === "pk" || String(host.subCategory || "").toLowerCase() === "pk" || host.pkActive === true;
+                                    const avatar = host.hostAvatar || host.avatar || DEFAULT_USER.avatar;
+                                    const name = host.hostUsername ? `@${host.hostUsername}` : (host.name || "Live Host");
+                                    const viewers = host.realViewerCount !== undefined ? host.realViewerCount : (host.viewers || 0);
+                                    return (
+                                      <button
+                                        type="button"
+                                        key={host.id}
+                                        onClick={() => {
+                                          setActiveHost(host);
+                                          setViewersCount(Number(viewers) || 0);
+                                          setLikesCount(host.likes || 0);
+                                          setClientView("live-room");
+                                        }}
+                                        className="text-left bg-gradient-to-b from-[#26121a] to-[#120a10] rounded-2xl overflow-hidden border border-red-500/40 hover:border-red-400 hover:shadow-[0_0_18px_rgba(239,68,68,0.25)] transition-all cursor-pointer relative"
+                                      >
+                                        <div className="h-[118px] flex items-center justify-center relative bg-gradient-to-tr from-[#17090d] via-[#241018] to-[#32101a]">
+                                          <div className="absolute top-1.5 left-1.5 bg-red-600 text-white text-[7px] font-black px-1.5 py-0.5 rounded-md animate-pulse">
+                                            {isPk ? "🥊 PK BATTLE" : "🔴 LIVE"}
+                                          </div>
+                                          <div className="absolute top-1.5 right-1.5 bg-black/75 text-white text-[7px] font-black px-1.5 py-0.5 rounded-full flex items-center gap-1">
+                                            <Users className="w-2.5 h-2.5" /> {viewers}
+                                          </div>
+                                          <div className="w-16 h-16 rounded-full p-[2px] bg-gradient-to-tr from-red-500 via-pink-500 to-amber-400 shadow-xl">
+                                            <img src={avatar} className="w-full h-full rounded-full object-cover" alt="live host" />
+                                          </div>
+                                        </div>
+                                        <div className="p-2 bg-black/20">
+                                          <p className="text-[10px] font-black text-white truncate uppercase">{name}</p>
+                                          <p className="text-[7.5px] text-gray-400 truncate mt-0.5">{host.statusText || host.subCategory || "Live now — tap to join"}</p>
+                                        </div>
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              );
+                            })()}
+                          </div>
+                        )}
+
                       </div>
                     )}
 
@@ -10452,7 +10673,15 @@ export default function App() {
                           if (resp.ok) {
                             const data = await resp.json();
                             if (data.remainingCoins !== undefined) {
-                              setUser(prev => ({ ...prev, coins: data.remainingCoins }));
+                              setUser(prev => ({
+                                ...prev,
+                                coins: data.remainingCoins,
+                                xp: data.xp !== undefined ? data.xp : prev.xp,
+                                coinSpendTotal: data.coinSpendTotal !== undefined ? data.coinSpendTotal : prev.coinSpendTotal,
+                                userLevel: data.userLevel !== undefined ? data.userLevel : prev.userLevel,
+                                level: data.level !== undefined ? data.level : (data.userLevel !== undefined ? data.userLevel : prev.level),
+                                vipLevel: data.vipLevel !== undefined ? data.vipLevel : prev.vipLevel
+                              }));
                             }
                             if (data.giftEvent) {
                               processIncomingGiftEvent(data.giftEvent);
@@ -11904,7 +12133,13 @@ export default function App() {
                                       onClick={async () => {
                                         setShowPartyExitConfirm(false);
                                         try {
-                                          await fetch(`/api/v1/parties/${party.id}/close`, { method: "POST" });
+                                          const closeResponse = await authenticatedFetch(`/api/v1/parties/${party.id}/close`, {
+                                            method: "POST",
+                                            headers: { "Content-Type": "application/json" },
+                                            body: JSON.stringify({ username: user.username })
+                                          });
+                                          if (!closeResponse.ok) throw new Error("Unable to close party room.");
+                                          setPartiesList(prev => prev.filter(p => p.id !== party.id));
                                           setActivePartyId(null);
                                           setClientView("feed");
                                         } catch (err) {
@@ -15430,6 +15665,67 @@ export default function App() {
                                               <p>🆔 User ID: <span className="text-amber-300 font-bold">@{user.username}</span></p>
                                               <p>🏷️ Status: <span className="text-emerald-400 font-bold">Approved Official Agency</span></p>
                                             </div>
+
+                                            {/* LIVE COIN SELLER WALLET */}
+                                            {(() => {
+                                              const seller = (coinSellers || []).find((s: any) =>
+                                                String(s.ownerUsername || s.username || "").toLowerCase() === String(user?.username || "").toLowerCase()
+                                              );
+                                              const balance = Number(coinSellerWallet?.seller?.coinBalance ?? seller?.coinBalance ?? 0);
+                                              return (
+                                                <div className="mt-2 bg-[#0c1620] border border-cyan-500/30 rounded-xl p-2.5 space-y-2">
+                                                  <div className="flex justify-between items-center">
+                                                    <span className="text-[9px] font-black text-cyan-300 uppercase">🪙 Seller Coin Wallet</span>
+                                                    <span className="text-[10px] font-black text-yellow-300">{balance.toLocaleString()} Coins</span>
+                                                  </div>
+                                                  <div className="grid grid-cols-1 gap-1.5">
+                                                    <input value={coinSellerRecipient} onChange={e => setCoinSellerRecipient(e.target.value)} placeholder="Buyer Pardais ID / Username" className="w-full bg-[#12121a] border border-white/10 rounded-lg px-2.5 py-2 text-[9px] text-white outline-none focus:border-cyan-400" />
+                                                    <input type="number" min="1" value={coinSellerTransferAmount} onChange={e => setCoinSellerTransferAmount(e.target.value)} placeholder="Coins to send" className="w-full bg-[#12121a] border border-white/10 rounded-lg px-2.5 py-2 text-[9px] text-yellow-300 outline-none focus:border-yellow-400" />
+                                                    <input value={coinSellerTransferNote} onChange={e => setCoinSellerTransferNote(e.target.value)} placeholder="Sale note (optional)" className="w-full bg-[#12121a] border border-white/10 rounded-lg px-2.5 py-2 text-[9px] text-white outline-none focus:border-cyan-400" />
+                                                  </div>
+                                                  <button
+                                                    type="button"
+                                                    disabled={coinSellerTransferSubmitting || !coinSellerRecipient.trim() || Number(coinSellerTransferAmount) <= 0}
+                                                    onClick={async () => {
+                                                      const amount = Math.floor(Number(coinSellerTransferAmount));
+                                                      if (!amount || !coinSellerRecipient.trim()) return;
+                                                      setCoinSellerTransferSubmitting(true);
+                                                      try {
+                                                        const token = localStorage.getItem("pardais_auth_token");
+                                                        const response = await fetch("/api/v1/coin-seller/transfer", {
+                                                          method: "POST",
+                                                          headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+                                                          body: JSON.stringify({ recipient: coinSellerRecipient.trim(), amount, note: coinSellerTransferNote.trim() })
+                                                        });
+                                                        const data = await response.json().catch(() => ({}));
+                                                        if (!response.ok || !data.success) throw new Error(data.error || "Coin transfer failed.");
+                                                        setCoinSellerWallet((prev: any) => ({ ...(prev || {}), seller: data.seller }));
+                                                        setCoinSellers(prev => prev.map((x: any) => x.id === data.seller.id ? { ...x, coinBalance: data.seller.coinBalance, coinsAvailable: `${data.seller.coinBalance.toLocaleString()} Coins` } : x));
+                                                        setCoinSellerTransferHistory(prev => [data.transaction, ...prev]);
+                                                        setCoinSellerRecipient(""); setCoinSellerTransferAmount(""); setCoinSellerTransferNote("");
+                                                        alert(`🟢 ${amount.toLocaleString()} coins sent to @${data.buyer.username}. Coins were added to the buyer's Gifting Wallet.`);
+                                                      } catch (err: any) { alert(err?.message || "Coin transfer failed."); }
+                                                      finally { setCoinSellerTransferSubmitting(false); }
+                                                    }}
+                                                    className="w-full py-2 bg-gradient-to-r from-cyan-600 to-blue-600 disabled:opacity-40 rounded-lg text-white text-[8px] font-black uppercase cursor-pointer"
+                                                  >
+                                                    {coinSellerTransferSubmitting ? "Processing..." : "Send Coins to User"}
+                                                  </button>
+                                                  <div className="border-t border-white/5 pt-2">
+                                                    <div className="flex justify-between items-center mb-1"><span className="text-[7px] text-gray-400 uppercase">Sales History</span><span className="text-[7px] text-gray-500">Permanent</span></div>
+                                                    <div className="max-h-28 overflow-y-auto space-y-1">
+                                                      {(coinSellerTransferHistory.length ? coinSellerTransferHistory : (coinSellerWallet?.history || [])).slice(0, 10).map((tx: any) => (
+                                                        <div key={tx.id} className="flex justify-between bg-black/20 rounded px-2 py-1 text-[7px]">
+                                                          <span className="text-gray-300">→ @{tx.recipientUsername || "user"}</span>
+                                                          <span className="text-yellow-300 font-bold">-{Number(tx.amount || 0).toLocaleString()}</span>
+                                                        </div>
+                                                      ))}
+                                                      {!coinSellerTransferHistory.length && !coinSellerWallet?.history?.length && <span className="text-[7px] text-gray-500">No sales yet.</span>}
+                                                    </div>
+                                                  </div>
+                                                </div>
+                                              );
+                                            })()}
                                           </div>
                                         ) : (
                                           <>
@@ -29315,9 +29611,13 @@ export default function App() {
                               if (!amt || amt <= 0) return;
                               setAdminAgencyCoinSubmitting(true);
 
+                              const adminToken = localStorage.getItem("pardais_auth_token");
                               fetch("/api/v1/agency-coin-transactions", {
                                 method: "POST",
-                                headers: { "Content-Type": "application/json" },
+                                headers: {
+                                  "Content-Type": "application/json",
+                                  ...(adminToken ? { Authorization: `Bearer ${adminToken}` } : {})
+                                },
                                 body: JSON.stringify({
                                   agencyId: selectedAgencyForCoins.id,
                                   agencyType: selectedAgencyForCoins.agencyType || "coin_seller",

@@ -565,26 +565,47 @@ export function startFirestoreSynchronization() {
         // uid_*, and email_* mirrors). Collapse them into one deterministic
         // in-memory user per stable email/UID so refresh order can never switch
         // the active account between two IDs.
-        const byIdentity = new Map<string, any>();
-        const score = (u: any) =>
-          Number(Boolean(u?.passwordHash)) * 100 +
-          Number(Boolean(u?.avatar)) * 10 +
-          Number(Boolean(u?.fullName)) * 5 +
-          Number(Boolean(u?.phoneNumber)) * 2 +
-          Number(Boolean(u?.uniqueId));
-
+        const byIdentity = new Map<string, any[]>();
         for (const item of items) {
           if (!item) continue;
           const email = typeof item.email === "string" ? item.email.toLowerCase().trim() : "";
           const uid = String(item.uid || "");
           const identity = email ? `email:${email}` : (uid ? `uid:${uid}` : `username:${String(item.username || "")}`);
-          const current = byIdentity.get(identity);
-          if (!current || score(item) > score(current)) {
-            byIdentity.set(identity, item);
-          }
+          const group = byIdentity.get(identity) || [];
+          group.push(item);
+          byIdentity.set(identity, group);
         }
 
-        dbDataCache.users = Array.from(byIdentity.values());
+        // Each account is mirrored under username, uid_*, id_* and email_* docs.
+        // Firestore snapshot order is not deterministic, so never let an older
+        // mirror replace a newer avatar/profile/metrics record. Merge mirrors and
+        // use the newest account/profile timestamp as the authoritative record.
+        const parseTime = (v: any) => {
+          const t = Date.parse(String(v || ""));
+          return Number.isFinite(t) ? t : 0;
+        };
+        const freshness = (u: any) => Math.max(
+          parseTime(u?.profileUpdatedAt),
+          parseTime(u?.avatarUpdatedAt),
+          parseTime(u?.registrationCompletedAt),
+          parseTime(u?.usernameLockedAt),
+          parseTime(u?.registeredAt)
+        );
+        const mergedUsers: any[] = [];
+        for (const group of byIdentity.values()) {
+          group.sort((a, b) => freshness(b) - freshness(a));
+          const primary = { ...(group[0] || {}) };
+          for (let i = 1; i < group.length; i++) {
+            const older = group[i] || {};
+            for (const [key, value] of Object.entries(older)) {
+              if ((primary[key] === undefined || primary[key] === null || primary[key] === "") && value !== undefined && value !== null && value !== "") {
+                primary[key] = value;
+              }
+            }
+          }
+          mergedUsers.push(primary);
+        }
+        dbDataCache.users = mergedUsers;
       } else if (colName === "hosts") {
         dbDataCache.hosts = items.filter((h: any) => h && (h.isLive === true || h.status === "live") && h.status !== "ended" && h.status !== "offline");
       } else if (colName === "gifts") {
