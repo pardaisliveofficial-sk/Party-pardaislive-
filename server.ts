@@ -118,6 +118,9 @@ async function loadDatabase() {
       dbDataCache.posts = [];
     }
 
+    // Gift catalog is additive and durable. Missing built-ins are restored without touching admin/custom gifts.
+    await ensurePersistentGiftCatalog();
+
     // Revenue Share collections are isolated and additive.
     for (const key of ["investment_plans", "investments", "investment_transactions", "investment_earnings", "investment_withdrawals", "revenue_pools", "revenue_distributions"]) {
       if (!Array.isArray(dbData[key])) dbData[key] = [];
@@ -3176,18 +3179,64 @@ const sanitizeGiftEventName = (value: any) => {
 };
 
 const DEFAULT_ADVANCED_GIFTS_SERVER = [
-  { id: "g-lion", name: "Golden Lion 🦁", cost: 10000, type: "3d", icon: "🦁", color: "from-amber-500 via-yellow-500 to-amber-700", animationClass: "animate-bounce", category: "Popular", description: "Roaring Golden Lion of supreme royalty & majesty!", animationFile: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4", animationFormat: "mp4", animationDuration: 10, animationDisplayType: "full", comboSupported: true, status: "active", featured: true, priority: 100 },
-  { id: "g-spice", name: "Indian Spice 🌶️", cost: 3000, type: "3d", icon: "🌶️", color: "from-red-600 via-amber-500 to-yellow-500", animationClass: "animate-bounce", category: "Popular", description: "Sizzling Indian Spice explosion video overlay!", animationFile: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4", animationFormat: "mp4", animationDuration: 10, animationDisplayType: "full", comboSupported: true, status: "active", featured: true, priority: 95 },
-  { id: "g-fireworks", name: "Fireworks 🎆", cost: 5000, type: "3d", icon: "🎆", color: "from-purple-500 via-pink-500 to-amber-400", animationClass: "animate-pulse", category: "Popular", description: "Grand sparkling celebration fireworks video overlay!", animationFile: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4", animationFormat: "mp4", animationDuration: 12, animationDisplayType: "full", comboSupported: true, status: "active", featured: true, priority: 90 },
-  { id: "g-rose", name: "Red Rose", cost: 10, type: "2d", icon: "🌹", color: "from-pink-500 to-rose-600", animationClass: "animate-bounce", category: "Popular", description: "A fresh beautiful red rose of deep admiration.", animationFile: "🌹", animationFormat: "svg", animationDuration: 5, animationDisplayType: "small", comboSupported: true, status: "active", featured: true, priority: 10 },
-  { id: "g-heart", name: "Love Heart", cost: 99, type: "2d", icon: "💖", color: "from-red-500 to-pink-500", animationClass: "animate-pulse", category: "Popular", description: "Express your warm affection.", animationFile: "💖", animationFormat: "svg", animationDuration: 5, animationDisplayType: "small", comboSupported: true, status: "active", featured: true, priority: 9 },
-  { id: "g-lucky-coin", name: "Lucky Coin", cost: 50, type: "2d", icon: "🪙", color: "from-yellow-400 to-amber-600", animationClass: "animate-bounce", category: "Lucky", description: "Send fortune!", animationFile: "🪙", animationFormat: "svg", animationDuration: 5, animationDisplayType: "small", comboSupported: true, status: "active", featured: false, priority: 8 },
-  { id: "g-crown", name: "VIP Crown", cost: 999, type: "3d", icon: "👑", color: "from-yellow-400 to-amber-600", animationClass: "animate-spin", category: "VIP", description: "Royal crown for the star.", animationFile: "👑", animationFormat: "svga", animationDuration: 10, animationDisplayType: "half", comboSupported: true, status: "active", featured: true, priority: 7 },
-  { id: "g-star-trophy", name: "Star Trophy", cost: 500, type: "3d", icon: "🏆", color: "from-yellow-300 to-amber-500", animationClass: "animate-pulse", category: "New", description: "Awarded to energetic hosts.", animationFile: "🏆", animationFormat: "svg", animationDuration: 8, animationDisplayType: "half", comboSupported: true, status: "active", featured: false, priority: 6 },
-  { id: "g-car", name: "Sports Car", cost: 4999, type: "luxury", icon: "🏎️", color: "from-blue-500 to-indigo-600", animationClass: "animate-bounce", category: "Luxury", description: "Rev your engine!", animationFile: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4", animationFormat: "mp4", animationDuration: 10, animationDisplayType: "full", comboSupported: false, status: "active", featured: true, priority: 4 },
-  { id: "g-rocket", name: "Space Rocket", cost: 9999, type: "luxury", icon: "🚀", color: "from-purple-600 to-pink-600", animationClass: "animate-pulse", category: "Premium", description: "Blast off into the cosmos!", animationFile: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4", animationFormat: "mp4", animationDuration: 15, animationDisplayType: "full", comboSupported: false, status: "active", featured: true, priority: 3 },
-  { id: "g-dragon", name: "Golden Dragon", cost: 29999, type: "luxury", icon: "🐉", color: "from-amber-500 to-red-600", animationClass: "animate-bounce", category: "Luxury", description: "Screaming golden fire storm!", animationFile: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4", animationFormat: "mp4", animationDuration: 30, animationDisplayType: "ultra", comboSupported: false, status: "active", featured: true, priority: 2 }
-];
+  {id: "g-rose", name: "Red Rose 🌹", cost: 10, type: "2d", icon: "🌹", color: "#ff2d75", animationClass: "animate-pulse", category: "Love", description: "Red Rose virtual gift for Pardais Party.", animationFile: "/gifts/animations/g-rose.svg", animationFormat: "svg", animationDuration: 5, animationDisplayType: "small", comboSupported: true, status: "active", featured: false, priority: 10, minLevel: 1, globalBannerEnabled: true, vipOnly: false, pkOnly: false},
+  {id: "g-heart", name: "Love Heart 💖", cost: 50, type: "2d", icon: "💖", color: "#ff3b81", animationClass: "animate-pulse", category: "Love", description: "Love Heart virtual gift for Pardais Party.", animationFile: "/gifts/animations/g-heart.svg", animationFormat: "svg", animationDuration: 5, animationDisplayType: "small", comboSupported: true, status: "active", featured: false, priority: 20, minLevel: 1, globalBannerEnabled: true, vipOnly: false, pkOnly: false},
+  {id: "g-star", name: "Shining Star ⭐", cost: 100, type: "2d", icon: "⭐", color: "#ffd43b", animationClass: "animate-pulse", category: "Popular", description: "Shining Star virtual gift for Pardais Party.", animationFile: "/gifts/animations/g-star.svg", animationFormat: "svg", animationDuration: 5, animationDisplayType: "small", comboSupported: true, status: "active", featured: false, priority: 30, minLevel: 1, globalBannerEnabled: true, vipOnly: false, pkOnly: false},
+  {id: "g-kiss", name: "Kiss 💋", cost: 250, type: "2d", icon: "💋", color: "#ff4d8d", animationClass: "animate-pulse", category: "Love", description: "Kiss virtual gift for Pardais Party.", animationFile: "/gifts/animations/g-kiss.svg", animationFormat: "svg", animationDuration: 6, animationDisplayType: "small", comboSupported: true, status: "active", featured: false, priority: 40, minLevel: 1, globalBannerEnabled: true, vipOnly: false, pkOnly: false},
+  {id: "g-lucky", name: "Lucky Coin 🪙", cost: 500, type: "2d", icon: "🪙", color: "#f5c542", animationClass: "animate-pulse", category: "Lucky", description: "Lucky Coin virtual gift for Pardais Party.", animationFile: "/gifts/animations/g-lucky.svg", animationFormat: "svg", animationDuration: 6, animationDisplayType: "small", comboSupported: true, status: "active", featured: false, priority: 50, minLevel: 1, globalBannerEnabled: true, vipOnly: false, pkOnly: false},
+  {id: "g-lovebox", name: "Love Box 💝", cost: 999, type: "2d", icon: "💝", color: "#ff5aa5", animationClass: "animate-pulse", category: "Love", description: "Love Box virtual gift for Pardais Party.", animationFile: "/gifts/animations/g-lovebox.svg", animationFormat: "svg", animationDuration: 7, animationDisplayType: "half", comboSupported: true, status: "active", featured: false, priority: 60, minLevel: 1, globalBannerEnabled: true, vipOnly: false, pkOnly: false},
+  {id: "g-crown", name: "VIP Crown 👑", cost: 1500, type: "2d", icon: "👑", color: "#ffd166", animationClass: "animate-pulse", category: "VIP", description: "VIP Crown virtual gift for Pardais Party.", animationFile: "/gifts/animations/g-crown.svg", animationFormat: "svg", animationDuration: 8, animationDisplayType: "half", comboSupported: true, status: "active", featured: true, priority: 70, minLevel: 1, globalBannerEnabled: true, vipOnly: false, pkOnly: false},
+  {id: "g-diamond", name: "Blue Diamond 💎", cost: 3000, type: "2d", icon: "💎", color: "#55c8ff", animationClass: "animate-pulse", category: "VIP", description: "Blue Diamond virtual gift for Pardais Party.", animationFile: "/gifts/animations/g-diamond.svg", animationFormat: "svg", animationDuration: 8, animationDisplayType: "half", comboSupported: true, status: "active", featured: true, priority: 80, minLevel: 1, globalBannerEnabled: true, vipOnly: false, pkOnly: false},
+  {id: "g-fire", name: "Fire Flame 🔥", cost: 5000, type: "3d", icon: "🔥", color: "#ff6b35", animationClass: "animate-pulse", category: "Popular", description: "Fire Flame virtual gift for Pardais Party.", animationFile: "/gifts/animations/g-fire.svg", animationFormat: "svg", animationDuration: 8, animationDisplayType: "full", comboSupported: true, status: "active", featured: true, priority: 90, minLevel: 1, globalBannerEnabled: true, vipOnly: false, pkOnly: false},
+  {id: "g-party", name: "Party Popper 🎉", cost: 7500, type: "3d", icon: "🎉", color: "#b65cff", animationClass: "animate-pulse", category: "Festival", description: "Party Popper virtual gift for Pardais Party.", animationFile: "/gifts/animations/g-party.svg", animationFormat: "svg", animationDuration: 8, animationDisplayType: "full", comboSupported: true, status: "active", featured: true, priority: 85, minLevel: 1, globalBannerEnabled: true, vipOnly: false, pkOnly: false},
+  {id: "g-rocket", name: "Space Rocket 🚀", cost: 10000, type: "3d", icon: "🚀", color: "#6c63ff", animationClass: "animate-pulse", category: "Premium", description: "Space Rocket virtual gift for Pardais Party.", animationFile: "/gifts/animations/g-rocket.svg", animationFormat: "svg", animationDuration: 9, animationDisplayType: "full", comboSupported: true, status: "active", featured: true, priority: 75, minLevel: 1, globalBannerEnabled: true, vipOnly: false, pkOnly: false},
+  {id: "g-rainbow", name: "Rainbow 🌈", cost: 15000, type: "3d", icon: "🌈", color: "#ff5ca8", animationClass: "animate-pulse", category: "Festival", description: "Rainbow virtual gift for Pardais Party.", animationFile: "/gifts/animations/g-rainbow.svg", animationFormat: "svg", animationDuration: 9, animationDisplayType: "full", comboSupported: true, status: "active", featured: false, priority: 65, minLevel: 1, globalBannerEnabled: true, vipOnly: false, pkOnly: false},
+  {id: "g-thunder", name: "Thunder Bolt ⚡", cost: 20000, type: "3d", icon: "⚡", color: "#6ee7ff", animationClass: "animate-pulse", category: "PK", description: "Thunder Bolt virtual gift for Pardais Party.", animationFile: "/gifts/animations/g-thunder.svg", animationFormat: "svg", animationDuration: 9, animationDisplayType: "full", comboSupported: true, status: "active", featured: false, priority: 55, minLevel: 1, globalBannerEnabled: true, vipOnly: false, pkOnly: false},
+  {id: "g-trophy", name: "Golden Trophy 🏆", cost: 30000, type: "3d", icon: "🏆", color: "#ffca3a", animationClass: "animate-pulse", category: "VIP", description: "Golden Trophy virtual gift for Pardais Party.", animationFile: "/gifts/animations/g-trophy.svg", animationFormat: "svg", animationDuration: 10, animationDisplayType: "full", comboSupported: true, status: "active", featured: false, priority: 50, minLevel: 1, globalBannerEnabled: true, vipOnly: false, pkOnly: false},
+  {id: "g-supercar", name: "Super Car 🏎️", cost: 40000, type: "3d", icon: "🏎️", color: "#4aa3ff", animationClass: "animate-pulse", category: "Luxury", description: "Super Car virtual gift for Pardais Party.", animationFile: "/gifts/animations/g-supercar.svg", animationFormat: "svg", animationDuration: 10, animationDisplayType: "full", comboSupported: true, status: "active", featured: false, priority: 45, minLevel: 1, globalBannerEnabled: true, vipOnly: false, pkOnly: false},
+  {id: "g-fireworks", name: "Grand Fireworks 🎆", cost: 50000, type: "3d", icon: "🎆", color: "#ff5cf0", animationClass: "animate-pulse", category: "Festival", description: "Grand Fireworks virtual gift for Pardais Party.", animationFile: "/gifts/animations/g-fireworks.svg", animationFormat: "svg", animationDuration: 12, animationDisplayType: "ultra", comboSupported: true, status: "active", featured: false, priority: 40, minLevel: 1, globalBannerEnabled: true, vipOnly: false, pkOnly: false},
+  {id: "g-lion", name: "Golden Lion 🦁", cost: 65000, type: "3d", icon: "🦁", color: "#ffb703", animationClass: "animate-pulse", category: "Luxury", description: "Golden Lion virtual gift for Pardais Party.", animationFile: "/gifts/animations/g-lion.svg", animationFormat: "svg", animationDuration: 12, animationDisplayType: "ultra", comboSupported: true, status: "active", featured: false, priority: 35, minLevel: 1, globalBannerEnabled: true, vipOnly: false, pkOnly: false},
+  {id: "g-dragon", name: "Golden Dragon 🐉", cost: 75000, type: "3d", icon: "🐉", color: "#ff5a36", animationClass: "animate-pulse", category: "Luxury", description: "Golden Dragon virtual gift for Pardais Party.", animationFile: "/gifts/animations/g-dragon.svg", animationFormat: "svg", animationDuration: 14, animationDisplayType: "ultra", comboSupported: true, status: "active", featured: false, priority: 30, minLevel: 1, globalBannerEnabled: true, vipOnly: false, pkOnly: false},
+  {id: "g-castle", name: "Royal Castle 🏰", cost: 90000, type: "3d", icon: "🏰", color: "#b388ff", animationClass: "animate-pulse", category: "Luxury", description: "Royal Castle virtual gift for Pardais Party.", animationFile: "/gifts/animations/g-castle.svg", animationFormat: "svg", animationDuration: 15, animationDisplayType: "ultra", comboSupported: true, status: "active", featured: false, priority: 25, minLevel: 1, globalBannerEnabled: true, vipOnly: false, pkOnly: false},
+  {id: "g-universe", name: "Pardais Universe 🌌", cost: 100000, type: "3d", icon: "🌌", color: "#8b5cf6", animationClass: "animate-pulse", category: "Premium", description: "Pardais Universe virtual gift for Pardais Party.", animationFile: "/gifts/animations/g-universe.svg", animationFormat: "svg", animationDuration: 16, animationDisplayType: "ultra", comboSupported: true, status: "active", featured: false, priority: 20, minLevel: 1, globalBannerEnabled: true, vipOnly: false, pkOnly: false},
+ ];
+
+/** Additive production gift catalog bootstrap. Existing admin/custom gifts are preserved. */
+async function ensurePersistentGiftCatalog() {
+  if (!Array.isArray(dbData.gifts)) dbData.gifts = [];
+  const existing = new Map<string, any>();
+  for (const gift of dbData.gifts) if (gift?.id) existing.set(String(gift.id), gift);
+  let changed = false;
+  for (const builtIn of DEFAULT_ADVANCED_GIFTS_SERVER) {
+    const id = String(builtIn.id);
+    const bundledImage = `${PUBLIC_API_BASE}/gifts/images/${id}.svg`;
+    const bundledAnimation = `${PUBLIC_API_BASE}/gifts/animations/${id}.svg`;
+    const current = existing.get(id);
+    if (!current) {
+      const gift = { ...builtIn, imageUrl: bundledImage, animationFile: bundledAnimation, animationUrl: bundledAnimation, isSystemGift: true };
+      dbData.gifts.push(gift);
+      existing.set(id, gift);
+      changed = true;
+      void syncDocument("gifts", id, gift).catch((err) => console.warn(`[GIFTS] Failed to persist built-in ${id}:`, err?.message || err));
+      continue;
+    }
+    // Upgrade legacy bundled/demo media only when it is still a known sample/emoji/empty value.
+    // Custom admin media is left untouched.
+    const currentAnimation = String(current.animationUrl || current.animationFile || current.videoUrl || "");
+    const looksLegacy = !currentAnimation || currentAnimation === String(current.icon || "") || /commondatastorage\.googleapis\.com\/gtv-videos-bucket\/sample/i.test(currentAnimation);
+    const next = { ...current, isSystemGift: true };
+    let updated = false;
+    if (!current.imageUrl || current.imageUrl === current.icon) { next.imageUrl = bundledImage; updated = true; }
+    if (looksLegacy) { next.animationFile = bundledAnimation; next.animationUrl = bundledAnimation; next.videoUrl = ""; next.animationFormat = "svg"; updated = true; }
+    if (updated) {
+      Object.assign(current, next);
+      changed = true;
+      void syncDocument("gifts", id, current).catch((err) => console.warn(`[GIFTS] Failed to upgrade built-in ${id}:`, err?.message || err));
+    }
+  }
+  if (changed) saveDatabase();
+  return dbData.gifts;
+}
 
 const PARDAIS_LEVEL_THRESHOLDS_SERVER = [500, 2000, 5000, 10000, 20000, 35000, 55000, 80000, 120000, 175000, 250000, 350000, 500000, 700000, 1000000, 1250000, 1550000, 1900000, 2300000, 2800000, 3300000, 3900000, 4500000, 5200000, 6000000, 7000000, 8200000, 9600000, 11200000, 13000000, 15000000, 17200000, 19600000, 22200000, 25000000, 28000000, 31500000, 35000000, 39000000, 43000000, 47000000, 51000000, 55000000, 58000000, 61000000, 63000000, 65000000, 67000000, 69000000, 70000000, 75000000, 90000000, 110000000, 135000000, 165000000, 200000000, 245000000, 300000000, 370000000, 450000000, 550000000, 670000000, 820000000, 1000000000, 1200000000, 1450000000, 1750000000, 2100000000, 2500000000, 3000000000, 3600000000, 4300000000, 5100000000, 6000000000, 7000000000, 8200000000, 9500000000, 11000000000, 12700000000, 15000000000, 17500000000, 20000000000, 23000000000, 26000000000, 30000000000, 34000000000, 38500000000, 43000000000, 48000000000, 54000000000, 59000000000, 64000000000, 69000000000, 74000000000, 80000000000, 84000000000, 88000000000, 92000000000, 96000000000, 100000000000];
 function getProgressionFromServerCoins(xp: number) {
@@ -3273,12 +3322,10 @@ async function creditCreatorEarningServer(user: any, amount: number, source: str
 }
 
 
-app.get("/api/v1/gifts", (req, res) => {
-  // The database is the single source of truth for the production gift catalog.
-  // Do not merge demo/default gifts into the catalog on every request.
-  if (!Array.isArray(dbData.gifts)) dbData.gifts = [];
-  res.setHeader("Cache-Control", "no-store");
-  res.json(dbData.gifts.filter((g: any) => g && g.id && g.status !== "deleted"));
+app.get("/api/v1/gifts", async (req, res) => {
+  await ensurePersistentGiftCatalog();
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+  res.json((dbData.gifts || []).filter((g: any) => g && g.id && g.status !== "deleted"));
 });
 
 const isGiftVideoMediaUrl = (value: any) => {
@@ -4019,6 +4066,8 @@ function syncHostPkScores(host: any) {
     host.pkTimer = 0;
     host.pkScoreHost = 0;
     host.pkScoreOpponent = 0;
+    host.pkHostASupporters = [];
+    host.pkHostBSupporters = [];
     host.coHostUsername = undefined;
     host.coHostAvatar = undefined;
     host.coHostVipLevel = 0;
@@ -4569,7 +4618,11 @@ app.post("/api/v1/hosts/:id/guest-requests/:reqId/respond", (req, res) => {
     if (Array.isArray(host.guestRequests)) {
       const match = host.guestRequests.find((r: any) => r.id === reqId || r.username === reqId);
       if (match && action === "accept") {
-        const targetSeatId = seatId || match.seatId || 1;
+        const targetSeatId = Number(seatId || match.seatId || 1);
+        const occupiedByOther = (host.guestSeats || []).some((s: any) => Number(s?.id) === targetSeatId && s?.name && String(s.name).toLowerCase() !== String(match.username).toLowerCase());
+        if (occupiedByOther) {
+          return res.status(409).json({ error: "SEAT_OCCUPIED", message: "Selected guest seat is already occupied." });
+        }
         if (!Array.isArray(host.guestSeats)) {
           host.guestSeats = [1, 2, 3, 4, 5, 6, 7, 8].map(sId => ({
             id: sId, name: null, avatar: null, diamonds: null, isMuted: false, isCamMuted: false, isBigFrame: false
@@ -4591,6 +4644,20 @@ app.post("/api/v1/hosts/:id/guest-requests/:reqId/respond", (req, res) => {
         });
       }
       host.guestRequests = host.guestRequests.filter((r: any) => r.id !== reqId && r.username !== reqId);
+      if (action === "accept") {
+        host.guestModeActive = true;
+        host.liveMode = "guest";
+        host.category = "guest";
+        host.subCategory = "Guest";
+        host.inPk = false;
+        host.pkActive = false;
+        host.pkState = "idle";
+        host.liveStateVersion = Number(host.liveStateVersion || 0) + 1;
+        host.liveStateUpdatedAt = new Date().toISOString();
+        host.lastGuestSeatEvent = { type: "accepted", username: match?.username || reqId, seatId: Number(seatId || match?.seatId || 1), timestamp: Date.now() };
+      } else if (action === "reject" || action === "decline") {
+        host.lastGuestSeatEvent = { type: "rejected", username: match?.username || reqId, timestamp: Date.now() };
+      }
     }
     saveDatabase();
     syncDocument("hosts", host.id, host);
@@ -4628,6 +4695,13 @@ app.post("/api/v1/hosts/:id/invites", (req, res) => {
   const index = findHostIndex(id);
   if (index !== -1) {
     const host = dbData.hosts[index];
+    const safeSeatId = Math.min(8, Math.max(1, Number(seatId) || 1));
+    if (!Array.isArray(host.guestSeats)) {
+      host.guestSeats = [1,2,3,4,5,6,7,8].map((sId: number) => ({ id: sId, name: null, avatar: null, diamonds: null, isMuted: false, isCamMuted: false, isBigFrame: false }));
+    }
+    if (!host.guestSeats.some((s: any) => Number(s?.id) === safeSeatId && !s?.name)) {
+      return res.status(409).json({ error: "NO_EMPTY_GUEST_SEAT", message: "No empty guest seat is available." });
+    }
     if (!Array.isArray(host.pendingInvites)) {
       host.pendingInvites = [];
     }
@@ -4635,7 +4709,7 @@ app.post("/api/v1/hosts/:id/invites", (req, res) => {
     const newInvite = {
       id: `inv-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
       targetUsername,
-      seatId: Number(seatId) || 1,
+      seatId: safeSeatId,
       hostName: host.name || host.hostUsername || "Host",
       timestamp: Date.now()
     };
@@ -4867,6 +4941,28 @@ app.get("/api/v1/pk/active-sessions", (req, res) => {
 });
 
 // Helper to synchronize active PK session time, states, fever multipliers, and host status
+function updatePkSupporter(session: any, side: "hostA" | "hostB", meta: any, points: number) {
+  if (!session) return;
+  if (!session.pkSupporters) session.pkSupporters = { hostA: {}, hostB: {} };
+  const bucket = session.pkSupporters[side] || (session.pkSupporters[side] = {});
+  const key = String(meta?.userId || meta?.username || "unknown").toLowerCase();
+  if (!key || key === "unknown") return;
+  const current = bucket[key] || {
+    id: String(meta?.userId || meta?.username || key),
+    username: String(meta?.username || "Supporter"),
+    avatar: String(meta?.avatar || ""),
+    coinsContributed: 0,
+    tapCount: 0
+  };
+  current.username = String(meta?.username || current.username);
+  current.avatar = String(meta?.avatar || current.avatar || "");
+  current.coinsContributed = Number(current.coinsContributed || 0) + Math.max(0, Number(points) || 0);
+  current.tapCount = Number(current.tapCount || 0) + (meta?.isTap ? 1 : 0);
+  bucket[key] = current;
+  session.pkHostASupporters = Object.values(session.pkSupporters.hostA).sort((a: any, b: any) => Number(b.coinsContributed || 0) - Number(a.coinsContributed || 0)).slice(0, 3);
+  session.pkHostBSupporters = Object.values(session.pkSupporters.hostB).sort((a: any, b: any) => Number(b.coinsContributed || 0) - Number(a.coinsContributed || 0)).slice(0, 3);
+}
+
 function getSynchronizedPkSession(activeSession: any, now: number = Date.now()) {
   if (!activeSession || activeSession.status === "ended") return null;
 
@@ -5147,6 +5243,9 @@ app.post("/api/v1/pk/invite/:id/respond", (req, res) => {
       session.hostAQualifyingScore = 0;
       session.hostBQualifyingScore = 0;
       session.userTapContributions = {};
+      session.pkSupporters = { hostA: {}, hostB: {} };
+      session.pkHostASupporters = [];
+      session.pkHostBSupporters = [];
       session.winner = null;
       session.lastPkResultAt = null;
       if (isPk) {
@@ -5171,6 +5270,9 @@ app.post("/api/v1/pk/invite/:id/respond", (req, res) => {
         hostAQualifyingScore: 0,
         hostBQualifyingScore: 0,
         userTapContributions: {},
+        pkSupporters: { hostA: {}, hostB: {} },
+        pkHostASupporters: [],
+        pkHostBSupporters: [],
         status: "connected",
         pkState: isPk ? "pk_countdown" : "1v1_connected",
         pkActive: false,
@@ -5232,6 +5334,9 @@ app.post("/api/v1/pk/start-battle", (req, res) => {
         s.hostAQualifyingScore = 0;
         s.hostBQualifyingScore = 0;
         s.userTapContributions = {};
+        s.pkSupporters = { hostA: {}, hostB: {} };
+        s.pkHostASupporters = [];
+        s.pkHostBSupporters = [];
         s.winner = null;
         s.lastPkResultAt = null;
         s.pkRequested = false;
@@ -5295,14 +5400,16 @@ app.post("/api/v1/pk/tap", (req, res) => {
   const sHostAId = String(targetSession.hostA?.userId || "").toLowerCase();
   const sHostBId = String(targetSession.hostB?.userId || "").toLowerCase();
 
-  let side = "hostA";
-  if (normHost === sHostB || normHost === sHostBId || normUser === sHostB || normUserId === sHostBId) {
+  // The room's host identity is authoritative. A viewer/guest inherits the
+  // side of the host stream they are watching; a host inherits their own side.
+  // Never trust a client-supplied side when it conflicts with the room host.
+  let side: "hostA" | "hostB" = "hostA";
+  if (normHost === sHostB || normHost === sHostBId) {
     side = "hostB";
-  }
-  if (targetHostSide === "hostB") {
-    side = "hostB";
-  } else if (targetHostSide === "hostA") {
+  } else if (normHost === sHostA || normHost === sHostAId) {
     side = "hostA";
+  } else if (normUser === sHostB || normUserId === sHostBId) {
+    side = "hostB";
   }
 
   const matchId = targetSession.pkMatchId || targetSession.id || "match_1";
@@ -5317,7 +5424,7 @@ app.post("/api/v1/pk/tap", (req, res) => {
   let quotaReached = false;
 
   // Real-time Double-Tap PK Score Addition: Every double tap adds +1 point directly to target host score
-  if (targetSession.status !== "ended" && (targetSession.pkActive || targetSession.pkState === "pk_active" || targetSession.pkState === "1v1_connected")) {
+  if (targetSession.status !== "ended" && (targetSession.pkActive || targetSession.pkState === "pk_active")) {
     targetSession.userTapContributions[userKey] = currentTaps + 1;
     pkScoreAdded = 1;
 
@@ -5326,6 +5433,7 @@ app.post("/api/v1/pk/tap", (req, res) => {
     } else {
       targetSession.hostA.score = (targetSession.hostA.score || 0) + 1;
     }
+    updatePkSupporter(targetSession, side, { userId: normUserId, username, avatar: req.body?.avatar || "", isTap: true }, 1);
     getSynchronizedPkSession(targetSession, currentNow);
   }
 
@@ -5341,6 +5449,8 @@ app.post("/api/v1/pk/tap", (req, res) => {
         h.multiplierA = targetSession.multiplierA || 1;
         h.multiplierB = targetSession.multiplierB || 1;
         h.feverPhase = targetSession.feverPhase;
+        h.pkHostASupporters = targetSession.pkHostASupporters || [];
+        h.pkHostBSupporters = targetSession.pkHostBSupporters || [];
       }
     });
   }
@@ -5379,18 +5489,27 @@ app.post("/api/v1/pk/gift", (req, res) => {
 
   if (targetSession && points > 0) {
     getSynchronizedPkSession(targetSession, currentNow);
+    if (!(targetSession.pkActive || targetSession.pkState === "pk_active")) {
+      return res.json({ success: true, session: targetSession, pkScoreAdded: 0 });
+    }
+    const sHostA = String(targetSession.hostA?.username || "").toLowerCase();
     const sHostB = String(targetSession.hostB?.username || "").toLowerCase();
 
+    // Prefer the actual gift recipient/host identity. The client hint is only
+    // a fallback and can never override a known host recipient.
     let isHostB = false;
-    if (normUser === sHostB) {
+    const targetNorm = String(targetHost || "").toLowerCase();
+    if (targetNorm === sHostB || targetNorm === "hostb" || targetNorm === "other") {
       isHostB = true;
-    }
-    if (targetHostSide === "hostB" || targetHost === "other" || targetHost === "hostB") {
-      isHostB = true;
-    } else if (targetHostSide === "hostA" || targetHost === "me" || targetHost === "hostA") {
+    } else if (targetNorm === sHostA || targetNorm === "hosta" || targetNorm === "me") {
       isHostB = false;
+    } else if (targetHostSide === "hostB") {
+      isHostB = true;
+    } else if (normUser === sHostB) {
+      isHostB = true;
     }
 
+    const side: "hostA" | "hostB" = isHostB ? "hostB" : "hostA";
     if (isHostB) {
       const mult = targetSession.multiplierB || 1;
       targetSession.hostB.score = (targetSession.hostB.score || 0) + (points * mult);
@@ -5398,6 +5517,7 @@ app.post("/api/v1/pk/gift", (req, res) => {
       const mult = targetSession.multiplierA || 1;
       targetSession.hostA.score = (targetSession.hostA.score || 0) + (points * mult);
     }
+    updatePkSupporter(targetSession, side, { userId: normUser, username, avatar: req.body?.avatar || "", isTap: false }, points);
     getSynchronizedPkSession(targetSession, currentNow);
 
     // Sync to dbData.hosts
@@ -5412,6 +5532,8 @@ app.post("/api/v1/pk/gift", (req, res) => {
           h.multiplierA = targetSession.multiplierA || 1;
           h.multiplierB = targetSession.multiplierB || 1;
           h.feverPhase = targetSession.feverPhase;
+          h.pkHostASupporters = targetSession.pkHostASupporters || [];
+          h.pkHostBSupporters = targetSession.pkHostBSupporters || [];
         }
       });
     }
@@ -8388,7 +8510,7 @@ app.post('/api/v1/gifts/upload-animation', giftAnimationUpload.single('file'), a
       (mime === 'video/webm' ? 'webm' : mime === 'video/mp4' ? 'mp4' : mime === 'image/svg+xml' ? 'svg' :
       mime === 'image/png' ? 'png' : mime === 'image/jpeg' ? 'jpg' : 'gif');
     const safeGiftId = String(req.body?.giftId || 'new').replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 80);
-    const objectKey = `gifts/animations/${safeGiftId}/${Date.now()}-${crypto.randomBytes(6).toString('hex')}.${ext}`;
+    const objectKey = `gifts/animations/${safeGiftId}/current.${ext}`;
     const client = getS3Client();
     const bucketName = process.env.R2_BUCKET_NAME || 'pardaisparty-reels';
 
@@ -8833,6 +8955,15 @@ app.get("/uploads/:filename", (req, res) => {
 // ------------------------------------------------------------------
 // FIREBASE STORAGE & CLOUD MESSAGING ENDPOINTS (LOCAL & MOCK FALLBACKS)
 // ------------------------------------------------------------------
+// Permanent bundled gift artwork/animations. The same URL is served to every device/room.
+const giftAssetRoots = [path.join(process.cwd(), "public", "gifts"), path.join(process.cwd(), "dist", "gifts")];
+app.use("/gifts", (req, res, next) => {
+  express.static(giftAssetRoots[0], { maxAge: "365d", immutable: true })(req, res, (err) => {
+    if (err || res.headersSent) return next(err);
+    express.static(giftAssetRoots[1], { maxAge: "365d", immutable: true })(req, res, next);
+  });
+});
+
 app.use("/uploads", express.static(path.join(process.cwd(), "public", "uploads")));
 
 app.post("/api/v1/storage/upload", async (req, res) => {

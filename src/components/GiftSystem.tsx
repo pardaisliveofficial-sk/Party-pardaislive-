@@ -49,7 +49,7 @@ const isPlayableGiftVideoUrl = (url: any) => {
 const resolveGiftAnimationVideoUrl = (gift: any): string => {
   const candidates = [gift?.videoUrl, gift?.animationUrl, gift?.animationFile];
   for (const candidate of candidates) {
-    if (isPlayableGiftVideoUrl(candidate)) return String(candidate).trim();
+    if (isPlayableGiftVideoUrl(candidate) || /\.svg(?:$|[?#])/i.test(String(candidate || "").trim())) return String(candidate).trim();
   }
   return "";
 };

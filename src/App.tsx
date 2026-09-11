@@ -2698,6 +2698,9 @@ export default function App() {
     username: string;
     avatar: string;
     level: number;
+    vipLevel?: number;
+    coins?: number;
+    seatId?: number;
   }>>([]);
 
   const [showGuestRequestsModal, setShowGuestRequestsModal] = useState<boolean>(false);
@@ -4007,7 +4010,7 @@ export default function App() {
     const candidates = [giftEvt?.videoUrl, giftEvt?.animationUrl, giftEvt?.animationFile];
     for (const candidate of candidates) {
       const value = String(candidate || "").trim();
-      if (/\.(webm|mp4)(?:$|[?#])/i.test(value) || value.startsWith("data:video/") || value.startsWith("blob:")) return value;
+      if (/\.(webm|mp4|svg)(?:$|[?#])/i.test(value) || value.startsWith("data:video/") || value.startsWith("data:image/svg+xml") || value.startsWith("blob:")) return value;
     }
     return "";
   }, []);
@@ -4060,7 +4063,7 @@ export default function App() {
         imageUrl: giftEvt.imageUrl || giftIcon,
         animationFile: resolveIncomingGiftAnimationVideo(giftEvt),
         videoUrl: /\.(webm|mp4)(?:$|[?#])/i.test(String(giftEvt.videoUrl || "")) ? String(giftEvt.videoUrl) : "",
-        animationUrl: /\.(webm|mp4)(?:$|[?#])/i.test(String(giftEvt.animationUrl || "")) ? String(giftEvt.animationUrl) : "",
+        animationUrl: /\.(webm|mp4|svg)(?:$|[?#])/i.test(String(giftEvt.animationUrl || "")) ? String(giftEvt.animationUrl) : ( /\.svg(?:$|[?#])/i.test(String(giftEvt.animationFile || "")) ? String(giftEvt.animationFile) : ""),
         animationFormat: giftEvt.animationFormat || "webm",
         animationDuration: giftEvt.animationDuration || 8,
         animationDisplayType: giftEvt.animationDisplayType || "full",
@@ -5375,6 +5378,19 @@ export default function App() {
           if (Array.isArray(data.guestSeats)) {
             setUserLiveGuestSeats(data.guestSeats);
           }
+          if (Array.isArray(data.guestRequests)) {
+            setUserLiveGuestRequests(data.guestRequests.map((r: any) => ({
+              id: String(r.id || `${r.username}-${r.timestamp || Date.now()}`),
+              username: String(r.username || "Viewer"),
+              avatar: String(r.avatar || ""),
+              level: Number(r.level || r.userLevel || 1),
+              vipLevel: Number(r.vipLevel || 0),
+              coins: Number(r.coins || 0),
+              seatId: Number(r.seatId || 1)
+            })));
+          }
+          if (Array.isArray(data.pkHostASupporters)) setPkHostASupporters(data.pkHostASupporters);
+          if (Array.isArray(data.pkHostBSupporters)) setPkHostBSupporters(data.pkHostBSupporters);
           // Synchronize total likes
           if (data.likes !== undefined) {
             setUserLiveLikes(data.likes);
@@ -5587,10 +5603,39 @@ export default function App() {
           if (data.pkTimer !== undefined) {
             setPkTimer(data.pkTimer);
           }
+          if (liveMode === "pk") {
+            if (Array.isArray(data.pkHostASupporters)) setPkHostASupporters(data.pkHostASupporters);
+            if (Array.isArray(data.pkHostBSupporters)) setPkHostBSupporters(data.pkHostBSupporters);
+          } else {
+            setPkHostASupporters([]);
+            setPkHostBSupporters([]);
+          }
 
-          // Sync guest seats from the same authoritative host snapshot.
+          // Sync guest seats and pending join requests from the authoritative host snapshot.
           if (isHostGuestMode && Array.isArray(data.guestSeats)) {
             setViewerLiveGuestSeats(data.guestSeats);
+          }
+          if (data.lastGuestSeatEvent && data.lastGuestSeatEvent.timestamp > (lastViewerJoinEventTimestamp.current || 0)) {
+            const guestEventUser = String(data.lastGuestSeatEvent.username || "").toLowerCase();
+            if (guestEventUser === String(user.username || "").toLowerCase()) {
+              if (data.lastGuestSeatEvent.type === "rejected") {
+                setViewerRequestStatus("none");
+              } else if (data.lastGuestSeatEvent.type === "accepted") {
+                setViewerRequestStatus("accepted");
+                setViewerLiveGuestModeActive(true);
+              }
+            }
+          }
+          if (Array.isArray(data.guestRequests)) {
+            setUserLiveGuestRequests(data.guestRequests.map((r: any) => ({
+              id: String(r.id || `${r.username}-${r.timestamp || Date.now()}`),
+              username: String(r.username || "Viewer"),
+              avatar: String(r.avatar || ""),
+              level: Number(r.level || r.userLevel || 1),
+              vipLevel: Number(r.vipLevel || 0),
+              coins: Number(r.coins || 0),
+              seatId: Number(r.seatId || 1)
+            })));
           }
 
           // Check for pending direct host seat invitations
@@ -6311,15 +6356,11 @@ export default function App() {
     }, 1500);
 
     const isPk = Boolean(
-      activeHost?.category === "pk" || 
-      activeHost?.subCategory === "pk" || 
-      activeHost?.category === "1v1" ||
-      activeHost?.subCategory === "1v1" ||
+      activeHost?.category === "pk" ||
+      activeHost?.subCategory === "pk" ||
       activeHost?.inPk ||
-      activeHost?.coHostUsername ||
-      activeHost?.coHostName ||
-      userLivePkActive ||
-      userLivePkConnected
+      activeHost?.pkActive ||
+      userLivePkActive
     );
 
     // Increment room likes count
@@ -6340,30 +6381,8 @@ export default function App() {
 
     // PK Match Score: Call server tap endpoint
     if (isPk) {
-      let roomSide = "hostA";
-
-      if (clientView === "user-live") {
-        const myName = (user?.username || "").toLowerCase();
-        const coHostName = (userLiveCoHost?.username || "").toLowerCase();
-        if (myName && coHostName && myName === coHostName) {
-          roomSide = "hostB";
-        }
-      } else {
-        const broadHost = (activeHost?.hostUsername || activeHost?.name || "").toLowerCase();
-        const coHost = (activeHost?.coHostUsername || activeHost?.coHostName || activeHost?.opponentName || "").toLowerCase();
-        if (broadHost && coHost && broadHost === coHost) {
-          roomSide = "hostB";
-        }
-      }
-
-      if (roomSide === "hostB") {
-        setPkScoreOpponent(prev => prev + 1);
-        setUserLivePkScoreOther(prev => prev + 1);
-      } else {
-        setPkScoreHost(prev => prev + 1);
-        setUserLivePkScoreMy(prev => prev + 1);
-      }
-
+      // Do not decide the PK side on the client. The server resolves the side
+      // from the host whose live stream the user is currently watching.
       fetch("/api/v1/pk/tap", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -6372,7 +6391,6 @@ export default function App() {
           username: user.username,
           userId: user.uid || user.username,
           hostUsername: activeHost?.hostUsername || activeHost?.name || user.username,
-          targetHostSide: roomSide
         })
       }).then(res => res.json()).then(resData => {
         if (resData.success && resData.session) {
@@ -7416,12 +7434,7 @@ export default function App() {
   // User Solo Live Broadcaster Handlers
   const startUserSoloLive = () => {
     if (!requireAuth("start live streaming as a host")) return;
-    const isAdmin = isAuthorizedAdmin(user) || isAuthorizedAdmin(user?.email || user?.username);
-    const userLvl = Number(user?.userLevel || user?.level || 1);
-    if (!isAdmin && userLvl < 5) {
-      alert(`🔒 Live Stream Lock (Minimum Level 5 Required)!\n\nLive stream turn on krny k liye Level 5 zarori hai!\n\nAap ka current level: Level ${userLvl}.\nCoins spend kare'n (games, party rooms, or reels) taake aap ka level fast level-up ho sake! 🚀`);
-      return;
-    }
+    // Level-5 live-stream restriction removed for testing rollout. Any authenticated user can start Solo Live.
 
     requestAppPermission(
       "camera",
@@ -7439,13 +7452,7 @@ export default function App() {
   };
 
   const actuallyGoLive = () => {
-    const isAdmin = isAuthorizedAdmin(user) || isAuthorizedAdmin(user?.email || user?.username);
-    const userLvl = Number(user?.userLevel || user?.level || 1);
-    if (!isAdmin && userLvl < 5) {
-      alert(`🔒 Live Stream Lock!\n\nLive stream turn on krny k liye Level 5 zarori hai! (Aap ka level: ${userLvl})`);
-      setClientView("feed");
-      return;
-    }
+    // Level-5 live-stream restriction removed for testing rollout.
 
     setClientView("user-live");
     setUserLiveDuration(0); 
@@ -12541,69 +12548,28 @@ export default function App() {
                                 {viewerLiveGuestSeats.map(seat => (
                                   <div
                                     key={seat.id}
-                                    onClick={() => {
+                                    onClick={async () => {
                                       if (!seat.name) {
-                                        const joinChoice = window.confirm(`Guest Seat #${seat.id} is vacant!\n\n- Click OK to JOIN IMMEDIATELY as a Guest.\n- Click Cancel to send an application request to the Host's requests queue.`);
-                                        if (joinChoice) {
-                                          // Seat user immediately
-                                          const updatedSeats = viewerLiveGuestSeats.map(s => {
-                                            if (s.id === seat.id) {
-                                              return {
-                                                ...s,
-                                                name: user.username,
-                                                avatar: user.avatar,
-                                                diamonds: "0.0K",
-                                                isMuted: false,
-                                                isCamMuted: false,
-                                                isBigFrame: false
-                                              };
-                                            }
-                                            return s;
-                                          });
-                                          triggerJoinNotif(user.username, user.userLevel || user.level || 1, user.vipLevel || 0);
-                                          setViewerLiveGuestSeats(updatedSeats);
-                                          setViewerRequestStatus("accepted");
-                                          setChatMessages(prev => [
-                                            ...prev,
-                                            {
-                                              id: "msg-join-" + Date.now(),
-                                              username: "System 🎙️",
-                                              message: `🎉 @${user.username} has joined Guest Seat #${seat.id}!`,
-                                              vipLevel: 0,
-                                              userLevel: 0,
-                                              isSystem: true,
-                                              isFlagged: false,
-                                              timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-                                            }
-                                          ]);
-                                          alert(`🎉 You have successfully joined Guest Seat #${seat.id}! Click on your seat to open controls.`);
-                                        } else {
-                                          setUserLiveGuestRequests(prev => [
-                                            ...prev,
-                                            {
-                                              id: "req-" + Date.now(),
+                                        if (!activeHost?.id || !user?.username) return;
+                                        try {
+                                          const res = await fetch(`/api/v1/hosts/${encodeURIComponent(activeHost.id)}/guest-requests`, {
+                                            method: "POST",
+                                            headers: { "Content-Type": "application/json" },
+                                            body: JSON.stringify({
                                               username: user.username,
                                               avatar: user.avatar,
                                               seatId: seat.id,
-                                              vipLevel: user.vipLevel,
-                                              coins: user.coins
-                                            }
-                                          ]);
-                                          // Also send system message
-                                          setChatMessages(prev => [
-                                            ...prev,
-                                            {
-                                              id: "msg-req-" + Date.now(),
-                                              username: "System 🎙️",
-                                              message: `${user.username} applied to join Seat ${seat.id}! Approval pending...`,
-                                              vipLevel: 0,
-                                              userLevel: 0,
-                                              isSystem: true,
-                                              isFlagged: false,
-                                              timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-                                            }
-                                          ]);
-                                          alert("🎙️ Application request sent to the Host's dashboard! (You can view and approve this request by switching to the 'Host Live' stream simulator).");
+                                              vipLevel: user.vipLevel || 0,
+                                              coins: user.coins || 0,
+                                              level: user.userLevel || user.level || 1
+                                            })
+                                          });
+                                          const data = await res.json().catch(() => ({}));
+                                          if (!res.ok) throw new Error(data?.error || "Guest request failed");
+                                          setViewerRequestStatus("pending");
+                                          alert(`🎙️ Guest request sent to @${activeHost.hostUsername || activeHost.name || "Host"}.`);
+                                        } catch (err: any) {
+                                          alert(`Unable to send guest request: ${err?.message || "Please try again."}`);
                                         }
                                       } else {
                                         setShowGuestSeatActionModal({ seatId: seat.id, isUserLive: false });
@@ -19182,9 +19148,9 @@ export default function App() {
                                 )}
 
                                 {/* UPPER 60%: GUEST ROOMS GRID AND HOST SEAT */}
-                                <div className={`h-[60%] w-full p-2 gap-2 bg-black/10 shrink-0 relative ${activeUserLiveGuestCount > 0 && activeUserLiveGuestCount <= 3 ? "grid" : "flex"}`} style={activeUserLiveGuestCount > 0 && activeUserLiveGuestCount <= 3 ? { gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gridTemplateRows: `repeat(${Math.ceil((activeUserLiveGuestCount + 1) / 2)}, minmax(0, 1fr))` } : undefined}>
+                                <div className={`h-[60%] w-full p-2 gap-2 bg-black/10 shrink-0 relative ${activeUserLiveGuestCount > 0 && activeUserLiveGuestCount <= 4 ? "grid" : "flex"}`} style={activeUserLiveGuestCount > 0 && activeUserLiveGuestCount <= 4 ? { gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gridTemplateRows: `repeat(${Math.ceil((activeUserLiveGuestCount + 1) / 2)}, minmax(0, 1fr))` } : undefined}>
                                   {/* LEFT: MAIN HOST OR PINNED GUEST SCREEN (50% Width) */}
-                                  <div className={`${activeUserLiveGuestCount > 0 && activeUserLiveGuestCount <= 3 ? "w-full h-full" : "w-1/2 h-full"} rounded-2xl overflow-hidden relative border border-pink-500/30 bg-[#0e0c15] shadow-lg flex items-center justify-center`}>
+                                  <div className={`${activeUserLiveGuestCount > 0 && activeUserLiveGuestCount <= 4 ? "w-full h-full" : "w-1/2 h-full"} rounded-2xl overflow-hidden relative border border-pink-500/30 bg-[#0e0c15] shadow-lg flex items-center justify-center`}>
                                     {(() => {
                                       const pinnedGuest = userLiveGuestSeats.find(s => s.name !== null && s.isBigFrame);
                                       if (pinnedGuest) {
@@ -19348,7 +19314,7 @@ export default function App() {
                                   </div>
 
                                   {/* RIGHT: 8 GUEST SEATS GRID (50% Width) */}
-                                  <div className={`${activeUserLiveGuestCount > 0 && activeUserLiveGuestCount <= 3 ? "contents" : "w-1/2 h-full grid grid-cols-2 grid-rows-4 gap-1.5"}`}>
+                                  <div className={`${activeUserLiveGuestCount > 0 && activeUserLiveGuestCount <= 4 ? "contents" : "w-1/2 h-full grid grid-cols-2 grid-rows-4 gap-1.5"}`}>
                                     {userLiveGuestSeats.map(seat => (
                                       <div
                                         key={seat.id}
@@ -19359,7 +19325,7 @@ export default function App() {
                                             setShowGuestSeatActionModal({ seatId: seat.id, isUserLive: true });
                                           }
                                         }}
-                                        className={`${!seat.name && activeUserLiveGuestCount > 0 && activeUserLiveGuestCount <= 3 ? "hidden" : ""} rounded-xl overflow-hidden relative border flex flex-col justify-center items-center transition-all cursor-pointer ${
+                                        className={`${!seat.name && activeUserLiveGuestCount > 0 && activeUserLiveGuestCount <= 4 ? "hidden" : ""} rounded-xl overflow-hidden relative border flex flex-col justify-center items-center transition-all cursor-pointer ${
                                           seat.name 
                                             ? (seat.isBigFrame 
                                                 ? "border-purple-500 ring-2 ring-purple-500/80 shadow-purple-500/20 shadow-lg bg-purple-950/20 animate-pulse" 
@@ -19682,9 +19648,9 @@ export default function App() {
                                         }
                                       }}
                                       className="text-[7.5px] font-black uppercase text-pink-500 bg-pink-950/20 px-2 py-0.5 rounded-full border border-pink-500/25 tracking-wider animate-pulse cursor-pointer hover:scale-105 active:scale-95 transition-all"
-                                      title={userLivePkActive ? "PK Battle Active" : "Click for One Versus One Lobby!"}
+                                      title={userLivePkActive ? "PK Battle Active" : "Start PK Battle"}
                                     >
-                                      {userLivePkActive ? "⚔️ PK Battle" : "👥 One Versus One Lobby"}
+                                      {userLivePkActive ? "⚔️ PK Battle" : "⚔️ PK"}
                                     </button>
                                     <span className="text-[6.5px] text-gray-500 font-mono mt-0.5">ROOM #3041</span>
                                   </div>
@@ -19701,18 +19667,6 @@ export default function App() {
                                       <span className="text-emerald-400">●</span>
                                       <span>{userLiveViewers >= 1000 ? `${(userLiveViewers / 1000).toFixed(1)}K` : userLiveViewers}</span>
                                     </div>
-                                    {/* PK Camera ON/OFF — same live camera control used in Solo */}
-                                    <button
-                                      type="button"
-                                      onClick={() => setUserLiveCam(prev => !prev)}
-                                      className={`w-6 h-6 rounded-full flex items-center justify-center border shadow-md active:scale-90 transition-all ${
-                                        userLiveCam ? "bg-emerald-600/90 border-emerald-300 text-white" : "bg-red-600/90 border-red-300 text-white"
-                                      }`}
-                                      title={userLiveCam ? "Turn PK Camera Off" : "Turn PK Camera On"}
-                                    >
-                                      {userLiveCam ? <Camera className="w-3.5 h-3.5" /> : <CameraOff className="w-3.5 h-3.5" />}
-                                    </button>
-
                                     {/* Multi-function Close Button */}
                                     <button
                                       onClick={() => setUserLiveShowExitOptions(true)}
@@ -20557,48 +20511,33 @@ export default function App() {
                                 </div>
                                 <div className="flex items-center space-x-1 shrink-0 ml-1.5">
                                   <button
-                                    onClick={() => {
+                                    onClick={async () => {
                                       const req = userLiveGuestRequests[0];
                                       const emptySeatIdx = userLiveGuestSeats.findIndex(s => s.name === null);
-                                      if (emptySeatIdx === -1) {
-                                        alert("All 8 guest seats on screen are occupied! Remove a guest first.");
-                                        return;
-                                      }
-                                      const updated = [...userLiveGuestSeats];
-                                      updated[emptySeatIdx] = {
-                                        id: updated[emptySeatIdx].id,
-                                        name: req.username || "Guest",
-                                        avatar: req.avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&h=150&q=80",
-                                        diamonds: "1.2K",
-                                        isMuted: false,
-                                        isCamMuted: false,
-                                        isBigFrame: false
-                                      };
-                                      setUserLiveGuestSeats(updated);
-                                      setUserLiveGuestRequests(prev => prev.filter(r => r.id !== req.id));
-                                      triggerJoinNotif(req.username, req.level || 1, (req as any).vipLevel || 0);
-                                      setUserLiveMessages(prev => [
-                                        ...prev,
-                                        {
-                                          id: "ul-accept-" + Date.now(),
-                                          username: "System 🎙️",
-                                          message: `🎉 Host accepted @${req.username} onto Guest Seat #${updated[emptySeatIdx].id}!`,
-                                          vipLevel: 0,
-                                          userLevel: 0,
-                                          isSystem: true,
-                                          isFlagged: false,
-                                          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-                                        }
-                                      ]);
+                                      if (emptySeatIdx === -1) { alert("All 8 guest seats on screen are occupied! Remove a guest first."); return; }
+                                      const targetSeatId = userLiveGuestSeats[emptySeatIdx].id;
+                                      try {
+                                        const res = await fetch(`/api/v1/hosts/${encodeURIComponent(`h-${user.uniqueId || user.username || "pardais_1001"}`)}/guest-requests/${encodeURIComponent(req.id)}/respond`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "accept", seatId: targetSeatId }) });
+                                        const data = await res.json().catch(() => ({}));
+                                        if (!res.ok) throw new Error(data?.error || "Accept failed");
+                                        setUserLiveGuestSeats(data.guestSeats || []);
+                                        setUserLiveGuestRequests(data.guestRequests || []);
+                                        triggerJoinNotif(req.username, req.level || 1, req.vipLevel || 0);
+                                      } catch (err: any) { alert(`Unable to accept guest: ${err?.message || "Please try again."}`); }
                                     }}
                                     className="bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white font-black text-[8.5px] px-2.5 py-1 rounded-xl shadow border border-emerald-300/40 cursor-pointer active:scale-95 transition-all"
                                   >
                                     Accept
                                   </button>
                                   <button
-                                    onClick={() => {
+                                    onClick={async () => {
                                       const reqId = userLiveGuestRequests[0].id;
-                                      setUserLiveGuestRequests(prev => prev.filter(r => r.id !== reqId));
+                                      try {
+                                        const res = await fetch(`/api/v1/hosts/${encodeURIComponent(`h-${user.uniqueId || user.username || "pardais_1001"}`)}/guest-requests/${encodeURIComponent(reqId)}/respond`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "reject" }) });
+                                        const data = await res.json().catch(() => ({}));
+                                        if (!res.ok) throw new Error(data?.error || "Reject failed");
+                                        setUserLiveGuestRequests(data.guestRequests || []);
+                                      } catch (err: any) { alert(`Unable to reject request: ${err?.message || "Please try again."}`); }
                                     }}
                                     className="bg-red-600/80 hover:bg-red-600 text-white font-bold text-[8.5px] px-2 py-1 rounded-xl shadow border border-red-400/30 cursor-pointer active:scale-95 transition-all"
                                   >
@@ -21016,7 +20955,7 @@ export default function App() {
                                       Start PK
                                     </h4>
                                     <p className="text-[9.5px] text-gray-300 font-sans leading-normal">
-                                      One Versus One Lobby Request for <strong className="text-pink-400">@{userLiveCoHost?.username || "co-host"}</strong>
+                                      1v1 PK Request for <strong className="text-pink-400">@{userLiveCoHost?.username || "co-host"}</strong>
                                     </p>
                                   </div>
 
@@ -21778,49 +21717,45 @@ export default function App() {
                                         </div>
                                         <div className="flex items-center space-x-1.5">
                                           <button
-                                            onClick={() => {
-                                              // ACCEPT REQUEST
+                                            onClick={async () => {
+                                              // ACCEPT REQUEST ON SERVER (authoritative guest seat)
                                               const emptySeatIdx = userLiveGuestSeats.findIndex(s => s.name === null);
                                               if (emptySeatIdx === -1) {
                                                 alert("All guest seats are currently full! Remove a guest first.");
                                                 return;
                                               }
-                                              const updatedSeats = [...userLiveGuestSeats];
-                                              updatedSeats[emptySeatIdx] = {
-                                                id: updatedSeats[emptySeatIdx].id,
-                                                name: req.username,
-                                                avatar: req.avatar,
-                                                vipLevel: req.vipLevel || 0,
-                                                diamonds: "10.0K",
-                                                isMuted: false,
-                                                isCamMuted: false,
-                                                isBigFrame: false
-                                              };
-                                              setUserLiveGuestSeats(updatedSeats);
-                                              setUserLiveGuestRequests(prev => prev.filter(r => r.id !== req.id));
-                                              setUserLiveMessages(prev => [
-                                                ...prev,
-                                                {
-                                                  id: "ul-accept-" + Date.now(),
-                                                  username: "System 🎙️",
-                                                  message: `${req.username} has joined Guest Seat ${updatedSeats[emptySeatIdx].id}!`,
-                                                  vipLevel: 0,
-                                                  userLevel: 0,
-                                                  isSystem: true,
-                                                  isFlagged: false,
-                                                  timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-                                                }
-                                              ]);
-                                              alert(`Accepted ${req.username} onto Guest Seat ${updatedSeats[emptySeatIdx].id}!`);
+                                              const targetSeatId = userLiveGuestSeats[emptySeatIdx].id;
+                                              try {
+                                                const res = await fetch(`/api/v1/hosts/${encodeURIComponent(`h-${user.uniqueId || user.username || "pardais_1001"}`)}/guest-requests/${encodeURIComponent(req.id)}/respond`, {
+                                                  method: "POST",
+                                                  headers: { "Content-Type": "application/json" },
+                                                  body: JSON.stringify({ action: "accept", seatId: targetSeatId })
+                                                });
+                                                const data = await res.json().catch(() => ({}));
+                                                if (!res.ok) throw new Error(data?.error || "Accept failed");
+                                                setUserLiveGuestSeats(data.guestSeats || []);
+                                                setUserLiveGuestRequests(data.guestRequests || []);
+                                                triggerJoinNotif(req.username, req.level || 1, req.vipLevel || 0);
+                                                alert(`Accepted ${req.username} onto Guest Seat ${targetSeatId}!`);
+                                              } catch (err: any) {
+                                                alert(`Unable to accept guest: ${err?.message || "Please try again."}`);
+                                              }
                                             }}
                                             className="bg-green-600 hover:bg-green-500 text-white text-[8px] font-black uppercase px-2 py-1 rounded"
                                           >
                                             Accept
                                           </button>
                                           <button
-                                            onClick={() => {
-                                              setUserLiveGuestRequests(prev => prev.filter(r => r.id !== req.id));
-                                              alert(`Rejected request from ${req.username}.`);
+                                            onClick={async () => {
+                                              try {
+                                                const res = await fetch(`/api/v1/hosts/${encodeURIComponent(`h-${user.uniqueId || user.username || "pardais_1001"}`)}/guest-requests/${encodeURIComponent(req.id)}/respond`, {
+                                                  method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "reject" })
+                                                });
+                                                const data = await res.json().catch(() => ({}));
+                                                if (!res.ok) throw new Error(data?.error || "Reject failed");
+                                                setUserLiveGuestRequests(data.guestRequests || []);
+                                                alert(`Rejected request from ${req.username}.`);
+                                              } catch (err: any) { alert(`Unable to reject request: ${err?.message || "Please try again."}`); }
                                             }}
                                             className="bg-red-600/30 hover:bg-red-600/50 text-red-300 text-[8px] font-black uppercase px-2 py-1 rounded"
                                           >
@@ -22284,6 +22219,7 @@ export default function App() {
                                   <button
                                     onClick={() => {
                                       setViewerRequestStatus("accepted");
+                                      setViewerLiveGuestModeActive(true);
                                       setViewerGuestCamEnabled(true);
                                       const targetSeatId = viewerInvitationPending.seatId;
                                       
@@ -22518,7 +22454,7 @@ export default function App() {
                                       }}
                                       className="col-span-2 p-2.5 rounded bg-gradient-to-r from-red-600 via-[#ff007f] to-purple-600 hover:from-red-500 hover:to-purple-500 text-white border border-red-500/20 text-center font-black text-[8.5px] uppercase tracking-wider animate-pulse cursor-pointer"
                                     >
-                                      👥 One Versus One Lobby
+                                      ⚔️ 1v1
                                     </button>
                                   )}
                                   <button
@@ -22594,7 +22530,7 @@ export default function App() {
                                     }}
                                     className="p-2 rounded bg-white/5 hover:bg-white/10 text-white border border-white/5 text-center font-bold text-[8px] cursor-pointer"
                                   >
-                                    👥 One Versus One Lobby
+                                    ⚔️ 1v1
                                   </button>
                                   <button
                                     onClick={() => {
@@ -23001,7 +22937,7 @@ export default function App() {
                             <div className="bg-black border-t border-white/5 py-1 px-4 z-10 flex items-center justify-between text-center select-none">
                               {[
                                 { id: "mute", label: userLiveMic ? "Mute" : "Unmute", icon: userLiveMic ? "🔇" : "🎙️" },
-                                { id: "cover", label: "Cover", icon: "🖼️" },
+                                { id: "camera", label: userLiveCam ? "Camera" : "Camera Off", icon: userLiveCam ? "📷" : "🚫" },
                                 { id: "cohost", label: "Invite Host", icon: "👥", primary: true },
                                 { id: "more", label: "More", icon: "•••" }
                               ].map((btn) => (
@@ -23011,8 +22947,8 @@ export default function App() {
                                     if (btn.id === "mute") {
                                       setUserLiveMic(!userLiveMic);
                                       alert(userLiveMic ? "🎙️ Broadcast Mic is now MUTED" : "🎙️ Broadcast Mic is now LIVE / UNMUTED");
-                                    } else if (btn.id === "cover") {
-                                      setUserLiveShowCoverModal(true);
+                                    } else if (btn.id === "camera") {
+                                      setUserLiveCam(prev => !prev);
                                     } else if (btn.id === "cohost") {
                                       setUserLivePkInvitePanelOpen(true);
                                     } else if (btn.id === "more") {
@@ -23025,7 +22961,11 @@ export default function App() {
                                       : "hover:bg-white/5 p-1 rounded-lg cursor-pointer"
                                   }`}
                                 >
-                                  <span className={btn.primary ? "text-sm text-white font-bold" : "text-sm text-gray-200"}>{btn.icon}</span>
+                                  <span className={btn.primary ? "text-sm text-white font-bold" : "text-sm text-gray-200"}>
+                                    {btn.id === "camera" ? (
+                                      userLiveCam ? <Camera className="w-4 h-4" /> : <CameraOff className="w-4 h-4" />
+                                    ) : btn.icon}
+                                  </span>
                                   <span className="text-[7px] text-gray-300 font-bold tracking-wider mt-0.5">{btn.label}</span>
                                 </button>
                               ))}

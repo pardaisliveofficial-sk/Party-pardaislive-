@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="640" viewBox="0 0 640 640">
+<defs>
+ <radialGradient id="bg"><stop offset="0" stop-color="#f5c542" stop-opacity=".32"/><stop offset="1" stop-color="#000" stop-opacity="0"/></radialGradient>
+ <filter id="glow"><feGaussianBlur stdDeviation="10" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+</defs>
+<circle cx="320" cy="320" r="250" fill="url(#bg)" opacity=".9"><animate attributeName="r" values="180;280;180" dur="1.8s" repeatCount="indefinite"/></circle>
+<g filter="url(#glow)">
+ <circle cx="320" cy="320" r="170" fill="none" stroke="#f5c542" stroke-width="9" opacity=".8"><animate attributeName="r" values="120;230;120" dur="1.5s" repeatCount="indefinite"/><animate attributeName="opacity" values=".9;.15;.9" dur="1.5s" repeatCount="indefinite"/></circle>
+ <text x="320" y="360" text-anchor="middle" font-size="180">🪙</text>
+ <text x="320" y="500" text-anchor="middle" fill="white" font-family="Arial,sans-serif" font-size="34" font-weight="800">Lucky Coin</text>
+</g>
+<g fill="#f5c542">
+ <circle cx="90" cy="130" r="9"><animate attributeName="cy" values="130;70;130" dur="1.2s" repeatCount="indefinite"/></circle>
+ <circle cx="550" cy="170" r="8"><animate attributeName="cy" values="170;90;170" dur="1.4s" repeatCount="indefinite"/></circle>
+ <circle cx="120" cy="500" r="7"><animate attributeName="cy" values="500;420;500" dur="1.1s" repeatCount="indefinite"/></circle>
+ <circle cx="520" cy="470" r="10"><animate attributeName="cy" values="470;390;470" dur="1.3s" repeatCount="indefinite"/></circle>
+</g>
+</svg>
