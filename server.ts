@@ -2159,6 +2159,31 @@ app.get("/api/v1/user/me", authenticateUser, (req: any, res) => {
   res.json(req.user);
 });
 
+// Durable per-account notification preferences.
+app.get("/api/v1/user/notification-settings", authenticateUser, (req: any, res: any) => {
+  res.json({ success: true, notificationSettings: req.user?.notificationSettings || {} });
+});
+
+app.post("/api/v1/user/notification-settings", authenticateUser, async (req: any, res: any) => {
+  const incoming = req.body?.notificationSettings;
+  if (!incoming || typeof incoming !== "object" || Array.isArray(incoming)) {
+    return res.status(400).json({ success: false, error: "Invalid notification settings." });
+  }
+  const allowed = ["followers", "followUnfollow", "likes", "comments", "friends", "messages", "gifts", "transactions", "announcements", "security", "push", "sound"];
+  const current = (req.user?.notificationSettings && typeof req.user.notificationSettings === "object") ? req.user.notificationSettings : {};
+  const next: Record<string, boolean> = { ...current };
+  for (const key of allowed) if (incoming[key] !== undefined) next[key] = Boolean(incoming[key]);
+  req.user.notificationSettings = next;
+  req.user.profileUpdatedAt = new Date().toISOString();
+  const idx = (dbData.users || []).findIndex((u: any) => (u?.uid && u.uid === req.user.uid) || (u?.email && String(u.email).toLowerCase() === String(req.user.email || "").toLowerCase()) || String(u?.username || "").toLowerCase() === String(req.user.username || "").toLowerCase());
+  if (idx >= 0) dbData.users[idx] = { ...dbData.users[idx], notificationSettings: next, profileUpdatedAt: req.user.profileUpdatedAt };
+  else dbData.users.push(req.user);
+  saveDatabase();
+  const persisted = await persistUserDurably(req.user);
+  if (!persisted) return res.status(503).json({ success: false, error: "Notification preferences could not be permanently saved." });
+  res.json({ success: true, notificationSettings: next });
+});
+
 // 6. Logout Current User Session
 app.post("/api/v1/auth/logout", authenticateUser, async (req: any, res) => {
   await writeDurableNotification({
@@ -2816,6 +2841,15 @@ app.post("/api/v1/user/following", authenticateUser, async (req: any, res: any) 
         actorUsername: req.user.username, actorUserId: req.user.uid, actorName: req.user.fullName || req.user.name || req.user.username,
         userAvatar: req.user.avatar || ""
       });
+      const targetFollowing = Array.isArray(target.followingUsernames) ? target.followingUsernames : [];
+      if (targetFollowing.some((v: any) => String(v).toLowerCase() === String(req.user.username || "").toLowerCase())) {
+        await writeDurableNotification({
+          type: "Friend", category: "social", title: "🤝 You Are Now Friends",
+          text: `You and ${target.fullName || target.name || target.username} are now friends on Pardais Party.`,
+          targetUsername: req.user.username, targetUserId: req.user.uid, actorUsername: target.username, actorUserId: target.uid,
+          actorName: target.fullName || target.name || target.username, userAvatar: target.avatar || ""
+        });
+      }
     }
   }
   for (const username of removed) {
@@ -2824,6 +2858,12 @@ app.post("/api/v1/user/following", authenticateUser, async (req: any, res: any) 
       target.followersCount = Math.max(0, Number(target.followersCount || 0) - 1);
       target.profileUpdatedAt = new Date().toISOString();
       await persistUserDurably(target);
+      await writeDurableNotification({
+        type: "Unfollow", category: "social", title: "👤 Unfollowed",
+        text: `${req.user.fullName || req.user.name || req.user.username || "Someone"} unfollowed you.`,
+        targetUsername: target.username, targetUserId: target.uid, actorUsername: req.user.username, actorUserId: req.user.uid,
+        actorName: req.user.fullName || req.user.name || req.user.username, userAvatar: req.user.avatar || ""
+      });
     }
   }
 
@@ -7852,11 +7892,23 @@ app.post('/api/v1/posts/:id/like', async (req: any, res: any) => {
   if (!post) return res.status(404).json({ error: 'Post not found.' });
   const likedBy = Array.isArray(post.likedBy) ? post.likedBy : [];
   const idx = likedBy.indexOf(username);
-  if (idx >= 0) likedBy.splice(idx, 1); else likedBy.push(username);
+  const wasLiked = idx >= 0;
+  if (wasLiked) likedBy.splice(idx, 1); else likedBy.push(username);
   post.likedBy = likedBy;
   post.likes = likedBy.length;
   saveDatabase();
   await syncDocument('posts', id, post);
+  if (!wasLiked) {
+    const ownerName = String(post.username || post.userName || post.authorUsername || '').trim();
+    if (ownerName && ownerName.toLowerCase() !== username.toLowerCase()) {
+      const owner = (dbData.users || []).find((u: any) => String(u?.username || '').toLowerCase() === ownerName.toLowerCase());
+      if (owner) await writeDurableNotification({
+        type: "Like", category: "social", title: "❤️ Your Video Got a Like", text: `${username} liked your video.`,
+        targetUsername: owner.username, targetUserId: owner.uid, actorUsername: username, actorName: username,
+        actionType: "post", actionId: id, userAvatar: ""
+      });
+    }
+  }
   res.json({ success: true, post });
 });
 

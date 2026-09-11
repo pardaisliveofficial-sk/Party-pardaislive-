@@ -466,7 +466,7 @@ button, input, form {
    Applied to Agora local and remote video renders so the same look is visible
    to hosts, co-hosts and viewers without changing the physical device camera. */
 .pardais-live-video video {
-  filter: brightness(1.20) contrast(0.98) saturate(1.10) blur(0.10px);
+  filter: brightness(1.08) contrast(1.02) saturate(1.06);
   transform-origin: center center;
   backface-visibility: hidden;
   -webkit-backface-visibility: hidden;
@@ -479,6 +479,23 @@ button, input, form {
   inset: 0;
   pointer-events: none;
   z-index: 2;
-  background: radial-gradient(circle at 50% 42%, rgba(255,255,255,0.075) 0%, rgba(255,255,255,0.025) 38%, rgba(255,255,255,0) 72%);
+  background: radial-gradient(circle at 50% 42%, rgba(255,255,255,0.035) 0%, rgba(255,255,255,0.012) 38%, rgba(255,255,255,0) 72%);
   mix-blend-mode: screen;
+}
+
+
+/* Android WebView/Agora local preview stability: keep the injected video visible
+   and avoid GPU filter/opacity combinations that can produce a black surface. */
+.pardais-live-video > video,
+.pardais-live-video video {
+  display: block !important;
+  width: 100% !important;
+  height: 100% !important;
+  min-width: 100%;
+  min-height: 100%;
+  object-fit: cover !important;
+  opacity: 1 !important;
+  visibility: visible !important;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
 }

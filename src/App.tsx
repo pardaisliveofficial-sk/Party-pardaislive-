@@ -1475,27 +1475,52 @@ export default function App() {
   const [showNotifSettingsDrawer, setShowNotifSettingsDrawer] = useState<boolean>(false);
   const [notifSettings, setNotifSettings] = useState(() => {
     const saved = localStorage.getItem("pardais_notif_settings");
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {}
-    }
-    return {
-      followers: true,
-      likes: true,
-      comments: true,
-      gifts: true,
-      transactions: true,
-      announcements: true,
-      push: true,
-      sound: true,
-    };
+    if (saved) { try { return JSON.parse(saved); } catch (e) {} }
+    return { followers: true, followUnfollow: true, likes: true, comments: true, friends: true, messages: true, gifts: true, transactions: true, announcements: true, security: true, push: true, sound: true };
   });
+  const notifSettingsRef = useRef<any>(notifSettings);
+  useEffect(() => { notifSettingsRef.current = notifSettings; }, [notifSettings]);
 
   const saveNotifSettings = (newSettings: any) => {
     setNotifSettings(newSettings);
+    notifSettingsRef.current = newSettings;
     localStorage.setItem("pardais_notif_settings", JSON.stringify(newSettings));
+    const authToken = localStorage.getItem("pardais_auth_token") || localStorage.getItem("pardais_user_token");
+    if (authToken) fetch("/api/v1/user/notification-settings", { method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${authToken}` }, body: JSON.stringify({ notificationSettings: newSettings }) }).catch(() => {});
   };
+
+  const notificationSettingKey = (notif: any): string => {
+    const type = String(notif?.type || notif?.actionType || "").toLowerCase();
+    const title = String(notif?.title || "").toLowerCase();
+    if (type === "follow") return "followers";
+    if (type === "unfollow") return "followUnfollow";
+    if (type === "friend" || title.includes("friend")) return "friends";
+    if (type === "message" || type === "chat" || title.includes("message")) return "messages";
+    if (type === "like" || title.includes("like") || title.includes("reaction")) return "likes";
+    if (type === "comment" || title.includes("comment")) return "comments";
+    if (type === "gift" || title.includes("gift")) return "gifts";
+    if (type.includes("transaction") || type === "recharge" || title.includes("coin") || title.includes("wallet")) return "transactions";
+    if (type.includes("announcement") || title.includes("announcement")) return "announcements";
+    if (type === "login" || type === "logout" || title.includes("login") || title.includes("logout")) return "security";
+    return "announcements";
+  };
+  const isNotificationEnabled = (notif: any) => notifSettingsRef.current[notificationSettingKey(notif)] !== false;
+
+  // Restore account-scoped preferences after login/reinstall. localStorage is only the fast cache.
+  useEffect(() => {
+    const authToken = localStorage.getItem("pardais_auth_token") || localStorage.getItem("pardais_user_token");
+    if (!authToken) return;
+    fetch("/api/v1/user/notification-settings", { headers: { "Authorization": `Bearer ${authToken}` } })
+      .then(res => res.ok ? res.json() : null)
+      .then(data => {
+        if (data?.notificationSettings && typeof data.notificationSettings === "object") {
+          const merged = { ...notifSettingsRef.current, ...data.notificationSettings };
+          setNotifSettings(merged);
+          notifSettingsRef.current = merged;
+          localStorage.setItem("pardais_notif_settings", JSON.stringify(merged));
+        }
+      }).catch(() => {});
+  }, []);
 
   const [appCaches, setAppCaches] = useState(() => {
     const saved = localStorage.getItem("pardais_app_caches");
@@ -3841,9 +3866,9 @@ export default function App() {
       if (response.ok) {
         const newNotif = await response.json();
         setAppNotifications(prev => [newNotif, ...prev.filter(n => n.id !== newNotif.id)]);
-        // Play chime and trigger toast for current user
-        if (!targetUsername || targetUsername === "all" || targetUsername === user?.username) {
-          playNotificationChime();
+        // Only enabled notification categories interrupt the user with a toast/sound.
+        if ((!targetUsername || targetUsername === "all" || targetUsername === user?.username) && isNotificationEnabled(newNotif)) {
+          if (notifSettingsRef.current.sound !== false) playNotificationChime();
           setActiveToastNotif(newNotif);
           setHasUnreadNotifications(true);
         }
@@ -5902,6 +5927,12 @@ export default function App() {
           .then(res => res.json())
           .then(userData => {
             if (userData && userData.username) {
+              if (userData.notificationSettings && typeof userData.notificationSettings === "object") {
+                const merged = { ...notifSettingsRef.current, ...userData.notificationSettings };
+                setNotifSettings(merged);
+                notifSettingsRef.current = merged;
+                localStorage.setItem("pardais_notif_settings", JSON.stringify(merged));
+              }
               setUser(prev => ({ ...prev, ...userData }));
               if (Array.isArray(userData.followingUsernames)) {
                 setFollowedUsers(userData.followingUsernames.map((v: any) => String(v)));
@@ -5919,7 +5950,7 @@ export default function App() {
         .then(data => {
           if (Array.isArray(data)) {
             setAppNotifications(data);
-            setHasUnreadNotifications(data.some(n => n.isNew));
+            setHasUnreadNotifications(data.some((n: any) => n.isNew && isNotificationEnabled(n)));
           }
         })
         .catch(err => console.error("Error loading notifications:", err));
@@ -6136,31 +6167,19 @@ export default function App() {
             setAppNotifications(prev => {
               const prevIds = new Set((prev || []).map(n => n.id));
               const newlyArrived = data.filter(n => n.isNew && !prevIds.has(n.id));
+              const enabledNew = newlyArrived.filter((n: any) => isNotificationEnabled(n));
 
-              if (newlyArrived.length > 0) {
-                const latest = newlyArrived[0];
-                if (notifSettings.sound !== false) {
-                  playNotificationChime();
-                }
+              if (enabledNew.length > 0) {
+                const latest = enabledNew[0];
+                if (notifSettingsRef.current.sound !== false) playNotificationChime();
                 setActiveToastNotif(latest);
                 setHasUnreadNotifications(true);
-
-                if (
-                  notifSettings.push !== false &&
-                  typeof window !== "undefined" &&
-                  "Notification" in window &&
-                  Notification.permission === "granted"
-                ) {
-                  try {
-                    new Notification(latest.title || "Pardais Alert", {
-                      body: latest.text,
-                      icon: latest.userAvatar || "/icon.png"
-                    });
-                  } catch (e) {}
+                if (notifSettingsRef.current.push !== false && typeof window !== "undefined" && "Notification" in window && Notification.permission === "granted") {
+                  try { new Notification(latest.title || "Pardais Alert", { body: latest.text, icon: latest.userAvatar || "/icon.png" }); } catch (e) {}
                 }
               }
 
-              setHasUnreadNotifications(data.some(n => n.isNew));
+              setHasUnreadNotifications(data.some((n: any) => n.isNew && isNotificationEnabled(n)));
               return data;
             });
           }
@@ -25613,7 +25632,11 @@ export default function App() {
                               </div>
                             </div>
 
-                            {/* 3-Dot Options Dropdown */}
+                            <div className="flex items-center space-x-1.5">
+                              <button type="button" onClick={() => setShowNotifSettingsDrawer(true)} className="p-1.5 rounded-lg bg-[#0e0e15] border border-[#2a2a3a] text-gray-300 hover:text-pink-400 hover:border-pink-500/50 transition-all" title="Notification Settings">
+                                <Settings className="w-3.5 h-3.5" />
+                              </button>
+                                                        {/* 3-Dot Options Dropdown */}
                             <div className="relative">
                               <button
                                 type="button"
@@ -25697,6 +25720,7 @@ export default function App() {
                                   </div>
                                 </>
                               )}
+                            </div>
                             </div>
                           </div>
 
@@ -31536,14 +31560,18 @@ export default function App() {
                           {/* Toggle Options */}
                           <div className="space-y-2 text-left bg-transparent">
                             {[
-                              { key: "sound", label: "🔊 Sound Alerts", desc: "Play audio chime on incoming notifications" },
-                              { key: "push", label: "📱 Browser Push", desc: "Receive native push alerts on desktop & mobile" },
-                              { key: "followers", label: "👤 New Followers", desc: "Get notified when someone follows you" },
-                              { key: "likes", label: "💖 Likes & Reactions", desc: "Get notified when people like your reels or profile" },
-                              { key: "comments", label: "💬 Comments", desc: "Get notified on comment replies & posts" },
-                              { key: "gifts", label: "🎁 Gifts", desc: "Get notified on real-time gift receipts" },
-                              { key: "transactions", label: "🪙 Coin Transactions", desc: "Wallet updates and coin balance activity logs" },
-                              { key: "announcements", label: "📢 Admin Announcements", desc: "Platform updates and community guidelines" },
+                              { key: "followers", label: "👤 New Followers", desc: "Someone follows you" },
+                              { key: "followUnfollow", label: "🔄 Follow / Unfollow", desc: "Follow and unfollow activity" },
+                              { key: "friends", label: "🤝 Friends", desc: "Mutual-follow friendship alerts" },
+                              { key: "likes", label: "💖 Video / Live Likes", desc: "Likes on videos, reels and live" },
+                              { key: "comments", label: "💬 Comments", desc: "Comments and replies" },
+                              { key: "messages", label: "✉️ Messages", desc: "New direct messages and chats" },
+                              { key: "gifts", label: "🎁 Gifts", desc: "Gift receipts" },
+                              { key: "transactions", label: "🪙 Coin Transactions", desc: "Wallet and coin activity" },
+                              { key: "announcements", label: "📢 Announcements", desc: "Official Pardais updates" },
+                              { key: "security", label: "🔐 Login / Logout", desc: "Account security activity" },
+                              { key: "sound", label: "🔊 Notification Sound", desc: "Sound for enabled alerts" },
+                              { key: "push", label: "📱 Push Notifications", desc: "Native/browser push when available" },
                             ].map((opt) => (
                               <div key={opt.key} className="flex items-center justify-between p-2.5 rounded-xl bg-[#0e0e15] border border-white/5">
                                 <div className="space-y-0.5 bg-transparent">
