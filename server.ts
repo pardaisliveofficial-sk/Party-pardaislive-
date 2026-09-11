@@ -25,6 +25,7 @@ import {
   getPersistedUserForSession,
   getPersistedUserForEmail,
   getPersistedUserForIdentifier,
+  listPersistedUsers,
   getPersistedEmailRegistry,
   persistEmailRegistry,
   persistAuthChallenge,
@@ -33,6 +34,11 @@ import {
 } from "./src/db/firebaseDb";
 
 dotenv.config();
+
+const getPersistentDisplayName = (user: any, fallback = "Pardais User") => {
+  const name = String(user?.fullName || user?.displayName || user?.name || fallback).trim();
+  return name || fallback;
+};
 
 const app = express();
 // Railway/Cloudflare terminate TLS before Express. Trust the proxy so generated
@@ -77,8 +83,9 @@ let dbData: any = dbDataCache;
 
 async function loadDatabase() {
   try {
-    // 1. Check if Firestore contains seeded tables, if not seed it from local database template
-    await checkAndSeedDatabase();
+    // 1. Load the local backup before any Firestore seed/read operation.
+    // This avoids the old startup cycle where seeding called /api/v1/db while
+    // /api/v1/db was itself calling loadDatabase(), racing account state.
 
     // 2. Clear all stale hosts from Firestore and local cache to ensure fresh active-only live stream directory
     await clearAllHostsInFirestore();
@@ -99,10 +106,20 @@ async function loadDatabase() {
       console.log("[PARDAIS-PARTY FIREBASE] Pre-populated in-memory cache with local database backup (production gifts preserved).");
     }
 
+    // Seed only from the now-loaded local production backup when Firestore has not
+    // been initialized yet. Never fetch /api/v1/db from inside startup (that created
+    // a recursive loadDatabase loop in previous builds).
+    await checkAndSeedDatabase();
+
     // Collapse legacy duplicate user mirrors immediately. This keeps refresh/restart
     // from rotating the visible username/Pardais ID between old documents.
     if (Array.isArray(dbDataCache.users)) {
       dbDataCache.users = canonicalizeUsers(dbDataCache.users);
+      // Public display identity is the persisted full name. Username remains an
+      // internal/account identifier and is never used as the public display name.
+      dbDataCache.users.forEach((u: any) => {
+        if (u) u.displayName = getPersistentDisplayName(u, u.username || "Pardais User");
+      });
     }
 
     if (!Array.isArray(dbDataCache.hosts)) {
@@ -1782,8 +1799,9 @@ app.post("/api/v1/auth/create-account", authenticateUser, async (req: any, res) 
     req.user.accountStatus = "registered";
     req.user.profileCompleted = true;
     req.user.profileUpdatedAt = new Date().toISOString();
+    const persisted = await persistUserDurably(req.user);
+    if (!persisted) return res.status(503).json({ success: false, error: "Account could not be permanently saved. Please try again." });
     saveDatabase();
-    void persistUserDurably(req.user).catch((err) => console.warn("[PARDAIS CREATE ACCOUNT] Background persistence delayed:", err));
     const token = await createSession(req.user);
     return res.status(200).json({
       success: true,
@@ -1817,10 +1835,9 @@ app.post("/api/v1/auth/create-account", authenticateUser, async (req: any, res) 
   req.user.uniqueId = stablePardaisId(currentEmail);
   applyAdminAccountState(req.user, { initializeCoins: true });
 
+  const persisted = await persistUserDurably(req.user);
+  if (!persisted) return res.status(503).json({ success: false, error: "Account could not be permanently saved. Please try again." });
   saveDatabase();
-  // Do not hold the signup request open on a slow Firestore mirror. The local
-  // account is complete immediately and the durable mirrors are synced in the background.
-  void persistUserDurably(req.user).catch((err) => console.warn("[PARDAIS CREATE ACCOUNT] Background persistence delayed:", err));
   const token = await createSession(req.user);
   return res.status(201).json({
     success: true,
@@ -2075,8 +2092,9 @@ app.post("/api/v1/auth/complete-google-profile", authenticateUser, async (req: a
   req.user.uniqueId = req.user.uniqueId || stablePardaisId(String(req.user.email));
   ensureStableEmailIdentity(req.user, String(req.user.email).toLowerCase());
 
+  const persisted = await persistUserDurably(req.user);
+  if (!persisted) return res.status(503).json({ success: false, error: "Google account could not be permanently saved. Please try again." });
   saveDatabase();
-  void persistUserDurably(req.user).catch((err) => console.warn("[GOOGLE PROFILE] Background persistence delayed:", err));
   const token = await createSession(req.user);
 
   return res.status(200).json({
@@ -2088,7 +2106,7 @@ app.post("/api/v1/auth/complete-google-profile", authenticateUser, async (req: a
 });
 
 // 4. Update Profile Details After Initial Verification / Setup
-app.post("/api/v1/auth/setup-profile", authenticateUser, (req: any, res) => {
+app.post("/api/v1/auth/setup-profile", authenticateUser, async (req: any, res) => {
   const { fullName, username, avatar, gender } = req.body;
   if (!req.user) {
     return res.status(401).json({ error: "Unauthorized" });
@@ -2111,7 +2129,8 @@ app.post("/api/v1/auth/setup-profile", authenticateUser, (req: any, res) => {
   ensureStableEmailIdentity(req.user, req.user.email || "");
   req.user.profileCompleted = Boolean(req.user.fullName && req.user.username);
   req.user.profileUpdatedAt = new Date().toISOString();
-  persistUser(req.user);
+  const persisted = await persistUserDurably(req.user);
+  if (!persisted) return res.status(503).json({ success: false, error: "Profile could not be permanently saved. Please try again." });
   saveDatabase();
 
   res.json({
@@ -2576,13 +2595,51 @@ function getAIClient() {
   return aiClient;
 }
 
+// Canonical registered-user directory. This is intentionally served by the
+// production API rather than a client-side Firestore listener so APK/Web builds,
+// named Firestore databases, and Railway replicas all see the same user set.
+app.get("/api/v1/users/directory", authenticateUser, async (req: any, res: any) => {
+  try {
+    const persisted = await listPersistedUsers();
+    if (persisted.length > 0) {
+      dbData.users = canonicalizeUsers([...(dbData.users || []), ...persisted]);
+      for (const u of dbData.users) {
+        if (u) u.displayName = getPersistentDisplayName(u, u.username || "Pardais User");
+      }
+    }
+    const currentUid = String(req.user?.uid || "");
+    const currentEmail = String(req.user?.email || "").toLowerCase().trim();
+    const users = (dbData.users || [])
+      .filter((u: any) => u && (u.uid || u.uniqueId || u.username))
+      .filter((u: any) => String(u.uid || "") !== currentUid && String(u.email || "").toLowerCase().trim() !== currentEmail)
+      .filter((u: any) => !u.isDeleted && !u.deletionScheduledAt)
+      .map((u: any) => ({
+        uid: u.uid || "",
+        uniqueId: u.uniqueId || "",
+        username: u.username || "",
+        fullName: getPersistentDisplayName(u, u.username || "Pardais User"),
+        displayName: getPersistentDisplayName(u, u.username || "Pardais User"),
+        avatar: u.avatar || u.photoURL || "",
+        userLevel: Number(u.userLevel || u.level || 1),
+        vipLevel: Number(u.vipLevel || 0),
+        followersCount: Number(u.followersCount || 0),
+        followingCount: Number(u.followingCount || 0),
+        totalLikesCount: Number(u.totalLikesCount || 0),
+        isVerified: u.isVerified === true
+      }));
+    res.json({ success: true, users, total: users.length, generatedAt: new Date().toISOString() });
+  } catch (err) {
+    console.warn("[USERS DIRECTORY] Failed to build directory:", err);
+    res.status(503).json({ success: false, error: "User directory temporarily unavailable." });
+  }
+});
+
 // ------------------------------------------------------------------
 // CORE APIS & REST COMPONENT CONNECTIVITY (GET/POST)
 // ------------------------------------------------------------------
 
 // Synchronize entire DB state in one call
 app.get("/api/v1/db", (req, res) => {
-  loadDatabase();
   res.json(dbData);
 });
 
@@ -4165,6 +4222,9 @@ const getActiveLiveSessions = () => {
       h.vipLevel = account.vipLevel;
       h.avatar = account.avatar || h.avatar || "";
       h.hostAvatar = account.avatar || h.hostAvatar || "";
+      h.displayName = getPersistentDisplayName(account, h.hostName || h.name || h.hostUsername || "Pardais User");
+      h.hostName = h.displayName;
+      h.name = h.displayName;
     }
     syncHostPkScores(h);
   });
@@ -4197,11 +4257,12 @@ app.post("/api/v1/live/session", (req, res) => {
   const newHost = {
     id: hostId,
     hostUserId,
-    hostName: sessionData.hostName || sessionData.name || hostUsername,
+    hostName: getPersistentDisplayName(canonicalHostUser, sessionData.hostName || sessionData.name || hostUsername),
     hostAvatar: canonicalHostUser?.avatar || sessionData.hostAvatar || sessionData.avatar || "",
     hostUsername,
     hostUid: hostUserId,
-    name: sessionData.hostName || sessionData.name || canonicalHostUser?.fullName || hostUsername,
+    displayName: getPersistentDisplayName(canonicalHostUser, sessionData.hostName || sessionData.name || hostUsername),
+    name: getPersistentDisplayName(canonicalHostUser, sessionData.hostName || sessionData.name || hostUsername),
     avatar: canonicalHostUser?.avatar || sessionData.hostAvatar || sessionData.avatar || "",
     level: canonicalHostUser?.userLevel || sessionData.level || 1,
     userLevel: canonicalHostUser?.userLevel || sessionData.userLevel || sessionData.level || 1,
@@ -4485,15 +4546,17 @@ app.post("/api/v1/hosts/:id/join", (req, res) => {
       host.connectedViewers = [];
     }
     // Avoid duplicate entries in list
+    const canonicalViewer = (dbData.users || []).find((u: any) => String(u?.username || "").toLowerCase() === String(username).toLowerCase());
     if (!host.connectedViewers.some((v: any) => v.username === username)) {
-      host.connectedViewers.push({ userId: userId || username, username, avatar: avatar || "", level: level || 1, vipLevel: vipLevel || 0 });
+      host.connectedViewers.push({ userId: userId || canonicalViewer?.uid || canonicalViewer?.uniqueId || username, username, displayName: getPersistentDisplayName(canonicalViewer, username), avatar: canonicalViewer?.avatar || avatar || "", level: canonicalViewer?.userLevel || level || 1, vipLevel: canonicalViewer?.vipLevel ?? Number(vipLevel || 0) });
     }
     host.viewers = host.connectedViewers.length;
     host.realViewerCount = host.connectedViewers.length;
     host.lastJoinEvent = {
       id: `join-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
       username,
-      userLevel: level || 1,
+      displayName: getPersistentDisplayName(canonicalViewer, username),
+      userLevel: canonicalViewer?.userLevel || level || 1,
       vipLevel: vipLevel || 0,
       timestamp: Date.now()
     };
@@ -4908,7 +4971,7 @@ app.post("/api/v1/pk/invite", (req, res) => {
     liveSessionId: liveSessionId || `session_${channelName}`,
     channelName,
     inviterUserId: fromUserId || fromUsername,
-    inviterName: fromUsername,
+    inviterName: getPersistentDisplayName((dbData.users || []).find((u: any) => String(u?.username || "").toLowerCase() === String(fromUsername).toLowerCase()), fromUsername),
     inviterAvatar: finalFromAvatar,
     fromUsername,
     fromUserId: fromUserId || fromUsername,
@@ -4917,6 +4980,7 @@ app.post("/api/v1/pk/invite", (req, res) => {
     fromFans: finalFromFans,
     inviteeUserId: finalToUserId,
     toUsername: toUsername,
+    inviteeName: getPersistentDisplayName((dbData.users || []).find((u: any) => String(u?.username || "").toLowerCase() === String(toUsername).toLowerCase()), toUsername),
     toUserId: finalToUserId,
     toAvatar: finalToAvatar,
     toLevel: finalToLevel,
@@ -5212,8 +5276,12 @@ app.post("/api/v1/pk/invite/:id/respond", (req, res) => {
     const hostAObj = (dbData.hosts || []).find((h: any) => h.hostUsername?.toLowerCase() === normA || h.name?.toLowerCase() === normA);
     const hostBObj = (dbData.hosts || []).find((h: any) => h.hostUsername?.toLowerCase() === normB || h.name?.toLowerCase() === normB);
 
+    const canonicalHostAUser = (dbData.users || []).find((u: any) => String(u?.username || "").toLowerCase() === normA);
+    const canonicalHostBUser = (dbData.users || []).find((u: any) => String(u?.username || "").toLowerCase() === normB);
     const hostAUser = {
       username: invite.fromUsername,
+      name: getPersistentDisplayName(canonicalHostAUser, invite.fromUsername),
+      displayName: getPersistentDisplayName(canonicalHostAUser, invite.fromUsername),
       userId: invite.inviterUserId || invite.fromUserId || presenceA?.userId || hostAObj?.hostUid || invite.fromUsername,
       avatar: invite.fromAvatar || presenceA?.avatar || hostAObj?.hostAvatar || hostAObj?.avatar || "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=100&q=80",
       level: Number(invite.fromLevel) || Number(presenceA?.level) || Number(hostAObj?.hostLevel) || 1,
@@ -5223,6 +5291,8 @@ app.post("/api/v1/pk/invite/:id/respond", (req, res) => {
 
     const hostBUser = {
       username: username || invite.toUsername,
+      name: getPersistentDisplayName(canonicalHostBUser, username || invite.toUsername),
+      displayName: getPersistentDisplayName(canonicalHostBUser, username || invite.toUsername),
       userId: userId || invite.inviteeUserId || invite.toUserId || presenceB?.userId || hostBObj?.hostUid || (username || invite.toUsername),
       avatar: avatar || invite.toAvatar || presenceB?.avatar || hostBObj?.hostAvatar || hostBObj?.avatar || "https://images.unsplash.com/photo-1570295999919-56ceb5ecca61?auto=format&fit=crop&w=100&q=80",
       level: Number(level) || Number(invite.toLevel) || Number(presenceB?.level) || Number(hostBObj?.hostLevel) || 1,
@@ -5694,7 +5764,7 @@ const sanitizePartyForClient = (party: any) => {
       const account = resolveCanonicalPartyUser(seat.name);
       if (!account) return seat;
       canonicalizeProgressFields(account);
-      return { ...seat, userLevel: account.userLevel, level: account.userLevel, vipLevel: account.vipLevel, avatar: account.avatar || seat.avatar || "" };
+      return { ...seat, displayName: getPersistentDisplayName(account, seat.displayName || seat.name), userLevel: account.userLevel, level: account.userLevel, vipLevel: account.vipLevel, avatar: account.avatar || seat.avatar || "" };
     });
   }
   if (Array.isArray(safe.connectedViewers)) {
@@ -5702,7 +5772,7 @@ const sanitizePartyForClient = (party: any) => {
       const account = resolveCanonicalPartyUser(viewer.username);
       if (!account) return viewer;
       canonicalizeProgressFields(account);
-      return { ...viewer, userLevel: account.userLevel, level: account.userLevel, vipLevel: account.vipLevel, avatar: account.avatar || viewer.avatar || "" };
+      return { ...viewer, displayName: getPersistentDisplayName(account, viewer.displayName || viewer.username), userLevel: account.userLevel, level: account.userLevel, vipLevel: account.vipLevel, avatar: account.avatar || viewer.avatar || "" };
     });
   }
   delete safe.password;
@@ -5737,6 +5807,8 @@ app.post("/api/v1/parties", (req, res) => {
   }
 
   const validHost = hostUsername || "Host";
+  const canonicalPartyHost = (dbData.users || []).find((u: any) => String(u?.username || "").toLowerCase() === String(validHost).toLowerCase());
+  const partyHostDisplayName = getPersistentDisplayName(canonicalPartyHost, validHost);
   const resolvedSeatCount = Number(seatCount) === 25 ? 25 : 12;
   if (isPublic === false && !String(password || "").trim()) {
     return res.status(400).json({ error: "Private rooms require a password." });
@@ -5748,8 +5820,10 @@ app.post("/api/v1/parties", (req, res) => {
   const id = existingIdx !== -1 ? dbData.parties[existingIdx].id : `party-${Date.now()}`;
   const newParty = {
     id,
-    title: title || `${validHost}'s Audio Lounge 🎙️`,
+    title: title || `${partyHostDisplayName}'s Audio Lounge 🎙️`,
     hostUsername: validHost,
+    hostName: partyHostDisplayName,
+    displayName: partyHostDisplayName,
     hostAvatar: hostAvatar || "",
     vipLevel: Number(hostVipLevel || 0),
     category: category || "Music",
@@ -5764,11 +5838,12 @@ app.post("/api/v1/parties", (req, res) => {
     allGuestsMuted: existingIdx !== -1 ? Boolean(dbData.parties[existingIdx].allGuestsMuted) : false,
     moderators: existingIdx !== -1 && Array.isArray(dbData.parties[existingIdx].moderators) ? dbData.parties[existingIdx].moderators : [],
     createdAt: existingIdx !== -1 ? (dbData.parties[existingIdx].createdAt || Date.now()) : Date.now(),
-    connectedViewers: [{ userId: validHost, username: validHost, avatar: hostAvatar || "", level: 1, vipLevel: Number(hostVipLevel || 0), joinedAt: Date.now() }],
+    connectedViewers: [{ userId: canonicalPartyHost?.uid || canonicalPartyHost?.uniqueId || validHost, username: validHost, displayName: partyHostDisplayName, avatar: canonicalPartyHost?.avatar || hostAvatar || "", level: canonicalPartyHost?.userLevel || 1, vipLevel: canonicalPartyHost?.vipLevel ?? Number(hostVipLevel || 0), joinedAt: Date.now() }],
     lastSeen: { [validHost]: Date.now() },
     seats: Array.from({ length: resolvedSeatCount }, (_, index) => ({
       id: index + 1,
       name: index === 0 ? validHost : null,
+      displayName: index === 0 ? partyHostDisplayName : null,
       avatar: index === 0 ? (hostAvatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80") : null,
       vipLevel: index === 0 ? Number(hostVipLevel || 0) : 0,
       isMuted: false,
@@ -5778,7 +5853,7 @@ app.post("/api/v1/parties", (req, res) => {
       {
         id: `sys-${Date.now()}`,
         username: "System",
-        message: `🎙️ Room created successfully by ${validHost}. Welcome everyone!`,
+        message: `🎙️ Room created successfully by ${partyHostDisplayName}. Welcome everyone!`,
         isSystem: true,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       }
@@ -5838,7 +5913,7 @@ app.post("/api/v1/parties/:id/join", (req, res) => {
     if (!party.lastSeen) party.lastSeen = {};
     party.lastSeen[username] = Date.now();
     if (!party.connectedViewers.some((v: any) => v.username === username)) {
-      party.connectedViewers.push({ userId: username, username, avatar: canonicalViewerUser?.avatar || avatar || "", level: canonicalViewerUser?.userLevel || userLevel || 1, userLevel: canonicalViewerUser?.userLevel || userLevel || 1, vipLevel: canonicalViewerUser?.vipLevel ?? Number(vipLevel || 0), joinedAt: Date.now() });
+      party.connectedViewers.push({ userId: canonicalViewerUser?.uid || canonicalViewerUser?.uniqueId || username, username, displayName: getPersistentDisplayName(canonicalViewerUser, username), avatar: canonicalViewerUser?.avatar || avatar || "", level: canonicalViewerUser?.userLevel || userLevel || 1, userLevel: canonicalViewerUser?.userLevel || userLevel || 1, vipLevel: canonicalViewerUser?.vipLevel ?? Number(vipLevel || 0), joinedAt: Date.now() });
     }
     party.participantCount = party.connectedViewers.length;
     party.lastJoinEvent = {
@@ -5912,7 +5987,7 @@ app.post("/api/v1/parties/:id/heartbeat", (req, res) => {
     party.lastSeen[username] = now;
     const viewer = (party.connectedViewers || []).find((v: any) => v.username === username);
     if (viewer) viewer.lastSeen = now;
-    else party.connectedViewers.push({ userId: username, username, avatar: "", level: 1, vipLevel: 0, joinedAt: now });
+    else { const account = (dbData.users || []).find((u: any) => String(u?.username || "").toLowerCase() === String(username).toLowerCase()); party.connectedViewers.push({ userId: account?.uid || account?.uniqueId || username, username, displayName: getPersistentDisplayName(account, username), avatar: account?.avatar || "", level: account?.userLevel || 1, vipLevel: account?.vipLevel || 0, joinedAt: now }); }
     party.participantCount = party.connectedViewers.length;
     res.json({ status: "ok" });
   } else {
@@ -5934,7 +6009,7 @@ app.post("/api/v1/parties/:id/seats/join", (req, res) => {
     if (targetSeat.isLocked && party.hostUsername !== username) return res.status(403).json({ error: "This seat is locked by the host" });
     party.seats = party.seats.map((seat: any) => {
       if (seat.id === Number(seatId)) {
-        return { ...seat, name: username, avatar: canonicalSeatUser?.avatar || avatar || "", userLevel: canonicalSeatUser?.userLevel || 1, level: canonicalSeatUser?.userLevel || 1, vipLevel: canonicalSeatUser?.vipLevel ?? Number(vipLevel || 0), isMuted: party.allGuestsMuted ? true : Boolean(seat.isMuted) };
+        return { ...seat, name: username, displayName: getPersistentDisplayName(canonicalSeatUser, username), avatar: canonicalSeatUser?.avatar || avatar || "", userLevel: canonicalSeatUser?.userLevel || 1, level: canonicalSeatUser?.userLevel || 1, vipLevel: canonicalSeatUser?.vipLevel ?? Number(vipLevel || 0), isMuted: party.allGuestsMuted ? true : Boolean(seat.isMuted) };
       }
       return seat;
     });
@@ -8011,8 +8086,14 @@ app.put("/api/v1/kyc-requests/:id", (req, res) => {
 });
 
 // Admin Users grid management (ban/unban, edit stats, toggle permissions)
-app.get("/api/v1/admin-users", (req, res) => {
+app.get("/api/v1/admin-users", async (req, res) => {
   if (!Array.isArray(dbData.users)) dbData.users = [];
+  try {
+    const persisted = await listPersistedUsers();
+    if (persisted.length > 0) dbData.users = canonicalizeUsers([...(dbData.users || []), ...persisted]);
+  } catch (err) {
+    console.warn("[ADMIN USERS] Firestore hydration delayed:", err);
+  }
   if (!Array.isArray(dbData.adminUsersList)) dbData.adminUsersList = [];
 
   const userMap = new Map();

@@ -385,6 +385,23 @@ export async function persistEmailRegistry(email: string, user: any): Promise<bo
   }
 }
 
+export async function listPersistedUsers(): Promise<any[]> {
+  if (!db || !shouldTryFirestore()) return [];
+  try {
+    const snap = await withTimeout(getDocs(collection(db, "users")), 6000, null as any);
+    if (!snap) return [];
+    const items: any[] = [];
+    snap.forEach((docSnap: any) => {
+      const data = docSnap.data();
+      if (data && (data.uid || data.uniqueId || data.username || data.email)) items.push(data);
+    });
+    return items;
+  } catch (err) {
+    handleQuotaError(err, "list persisted users");
+    return [];
+  }
+}
+
 export async function getPersistedUserForSession(session: any): Promise<any | null> {
   if (!session || !shouldTryFirestore()) return null;
   const candidates: any[] = [];

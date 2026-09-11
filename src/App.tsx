@@ -657,6 +657,11 @@ const ReelVideoPlayer: React.FC<ReelVideoPlayerProps> = ({
   );
 };
 
+const getDisplayName = (entity: any, fallback = "Pardais User") => {
+  const value = entity?.fullName || entity?.displayName || entity?.name || fallback;
+  return String(value || fallback).trim() || fallback;
+};
+
 export default function App() {
   // Authentication State
   const [isLoggedIn, setIsLoggedIn] = useState<boolean>(() => {
@@ -3270,34 +3275,33 @@ export default function App() {
     return followedUsers.some((v) => String(v || "").trim().toLowerCase() === key);
   }, [followedUsers]);
 
-  // 1. Sync all registered users from Firestore to resolve profiles in real time
+  // 1. Sync the canonical registered-user directory from the production API.
+  // The server reads the same persistent Firestore users collection used by
+  // authentication/admin, so Find Friends cannot be empty just because the
+  // browser/Capacitor Firestore listener is pointed at a different database.
   useEffect(() => {
-    if (!isLoggedIn || !user?.username || !db) return;
-    let unsubscribe = () => {};
-    try {
-      const q = collection(db, "users");
-      unsubscribe = onSnapshot(q, (snapshot) => {
-      const list: any[] = [];
-      const seenUsernames = new Set();
-      snapshot.forEach(docSnap => {
-        const u = docSnap.data();
-        if (u && u.username) {
-          const lowerUsername = u.username.toLowerCase();
-          if (!seenUsernames.has(lowerUsername)) {
-            seenUsernames.add(lowerUsername);
-            list.push(u);
-          }
-        }
-      });
-      setAllRegisteredUsers(list);
-    }, err => {
-      console.warn("Error syncing users list from Firestore:", err);
-    });
-    } catch (err) {
-      console.warn("Error initializing users list from Firestore:", err);
+    if (!isLoggedIn || !user?.username) {
+      setAllRegisteredUsers([]);
+      return;
     }
+    let cancelled = false;
+    let timer: any = null;
+    const syncUsers = async () => {
+      try {
+        const res = await authenticatedFetch(resolveApiUrl("/api/v1/users/directory"), { method: "GET" });
+        if (!res.ok) return;
+        const data = await res.json().catch(() => ({}));
+        if (!cancelled && Array.isArray(data?.users)) setAllRegisteredUsers(data.users);
+      } catch (err) {
+        console.warn("Error syncing canonical users directory:", err);
+      } finally {
+        if (!cancelled) timer = setTimeout(syncUsers, 5000);
+      }
+    };
+    void syncUsers();
     return () => {
-      try { unsubscribe(); } catch (e) {}
+      cancelled = true;
+      if (timer) clearTimeout(timer);
     };
   }, [isLoggedIn, user?.username]);
 
@@ -4361,7 +4365,7 @@ export default function App() {
   const [userLivePkActive, setUserLivePkActive] = useState<boolean>(false);
   const [userLivePkConnected, setUserLivePkConnected] = useState<boolean>(false);
   const [userLivePkInvitePanelOpen, setUserLivePkInvitePanelOpen] = useState<boolean>(false);
-  const [userLiveCoHost, setUserLiveCoHost] = useState<{ username: string; avatar: string; fans: string; level: number; vipLevel?: number; isCamOff?: boolean; userId?: string } | null>(null);
+  const [userLiveCoHost, setUserLiveCoHost] = useState<{ username: string; displayName?: string; avatar: string; fans: string; level: number; vipLevel?: number; isCamOff?: boolean; userId?: string } | null>(null);
   const [userLiveAvailableHosts, setUserLiveAvailableHosts] = useState<Array<any>>([]);
   const [userLivePkState, setUserLivePkState] = useState<string>("idle"); // "idle" | "1v1_connected" | "pk_countdown" | "pk_active" | "pk_finished"
   const [userLivePkCountdown, setUserLivePkCountdown] = useState<number>(3);
@@ -4422,7 +4426,7 @@ export default function App() {
     return () => clearInterval(interval);
   }, []);
 
-  const liveBroadcasterName = clientView === "user-live" ? user.username : (activeHost?.name || "Broadcaster");
+  const liveBroadcasterName = clientView === "user-live" ? getDisplayName(user, "Broadcaster") : getDisplayName(activeHost, "Broadcaster");
   const liveBroadcasterAvatar = clientView === "user-live" ? (user.avatar || DEFAULT_USER.avatar) : (activeHost?.avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80");
   const liveBroadcasterLevel = clientView === "user-live" ? (user.userLevel || 1) : (activeHost?.hostLevel || activeHost?.level || 1);
   const [userLiveChatVisible, setUserLiveChatVisible] = useState<boolean>(true);
@@ -4572,6 +4576,7 @@ export default function App() {
                 const otherHost = (sess.hostA?.username || "").toLowerCase() === (user.username || "").toLowerCase() ? sess.hostB : sess.hostA;
                 setUserLiveCoHost({
                   username: otherHost.username,
+                  displayName: otherHost.displayName || otherHost.name || otherHost.fullName || otherHost.username,
                   userId: otherHost.userId || otherHost.username,
                   avatar: otherHost.avatar || "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=100&q=80",
                   level: Number(otherHost.level) || 1,
@@ -4613,6 +4618,7 @@ export default function App() {
             if (otherHost && (!userLivePkConnected || userLiveCoHost?.username !== otherHost.username || userLiveCoHost?.level !== otherHost.level)) {
               setUserLiveCoHost({
                 username: otherHost.username,
+                displayName: otherHost.displayName || otherHost.name || otherHost.fullName || otherHost.username,
                 userId: otherHost.userId || otherHost.username,
                 avatar: otherHost.avatar || "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=100&q=80",
                 level: Number(otherHost.level) || 1,
@@ -5354,7 +5360,8 @@ export default function App() {
         body: JSON.stringify({
           id: hostId,
           hostUsername: user.username,
-          name: user.username,
+          displayName: getDisplayName(user),
+          name: getDisplayName(user),
           avatar: user.avatar,
           hostUid: user.uniqueId || user.username,
           hostLevel: user.userLevel || 1,
@@ -7669,11 +7676,12 @@ export default function App() {
     const newHostData = {
       id: hostId,
       hostUserId: user.uniqueId || user.username || user.id,
-      hostName: user.username || user.fullName || "Pardais Broadcaster",
+      hostName: getDisplayName(user, "Pardais Broadcaster"),
       hostAvatar: user.avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80",
       hostUsername: user.username,
+      displayName: getDisplayName(user, "Pardais Broadcaster"),
       hostUid: user.uniqueId || user.username,
-      name: user.username || "Pardais Broadcaster",
+      name: getDisplayName(user, "Pardais Broadcaster"),
       role: "Broadcaster",
       avatar: user.avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80",
       viewers: 0,
@@ -11188,12 +11196,12 @@ export default function App() {
                                                   <img 
                                                     src={seat.avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80"} 
                                                     className="w-full h-full object-cover cursor-pointer hover:scale-110 transition-transform" 
-                                                    alt={seat.name}
+                                                    alt={seat.displayName || seat.name}
                                                     onClick={(e) => {
                                                       e.stopPropagation();
                                                       handleOpenPartyUserProfile(seat.name, seat.avatar, seat.id, undefined, Number(seat.vipLevel || 0));
                                                     }}
-                                                    title={`Click to view @${seat.name}'s Profile`}
+                                                    title={`Click to view ${(seat.displayName || seat.name)}'s Profile`}
                                                   />
                                                 </VipAnimatedFrame>
                                               ) : (
@@ -11252,7 +11260,7 @@ export default function App() {
                                         {/* Seated occupant name, seat label & per-seat gifting */}
                                         <div className="flex flex-col items-center leading-none max-w-[72px] mt-1">
                                           <p className="text-[8.5px] font-extrabold text-amber-100/95 truncate text-center font-sans tracking-tight">
-                                            {isOccupied ? (isMe ? "You" : seat.name) : `Seat ${seat.id}`}
+                                            {isOccupied ? (isMe ? "You" : (seat.displayName || seat.name)) : `Seat ${seat.id}`}
                                           </p>
                                           <span className="text-[6.5px] text-amber-400/80 font-mono font-bold mt-0.5">#{seat.id}</span>
                                           <span
@@ -11741,7 +11749,7 @@ export default function App() {
                                     <div key={viewer.username} className="flex items-center justify-between p-2 rounded-xl bg-black/40 border border-white/5">
                                       <div className="flex items-center space-x-2 bg-transparent">
                                         <img src={viewer.avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80"} className="w-7 h-7 rounded-full object-cover border border-amber-400/40" alt="avatar" />
-                                        <p className="text-[9px] font-bold text-white uppercase font-mono bg-transparent">@{viewer.username}</p>
+                                        <p className="text-[9px] font-bold text-white uppercase font-mono bg-transparent">{viewer.displayName || viewer.username}</p>
                                       </div>
                                       <button
                                         onClick={async () => {
@@ -12379,7 +12387,7 @@ export default function App() {
                               <div className="flex items-center space-x-1.5">
                                 {liveRoomTopGifters.map((viewer, idx) => (
                                   <div key={viewer.id || idx} className="flex flex-col items-center bg-transparent">
-                                    <img src={viewer.avatar || DEFAULT_USER.avatar} className="w-6.5 h-6.5 rounded-full border border-white/20 object-cover shadow" title={viewer.username} />
+                                    <img src={viewer.avatar || DEFAULT_USER.avatar} className="w-6.5 h-6.5 rounded-full border border-white/20 object-cover shadow" title={viewer.displayName || viewer.username} />
                                     <span className="text-[7px] text-gray-200 font-black font-mono scale-90 mt-0.5">
                                       {viewer.coinsContributed >= 1000 ? `${(viewer.coinsContributed / 1000).toFixed(1)}K` : viewer.coinsContributed}
                                     </span>
@@ -12650,7 +12658,7 @@ export default function App() {
 
                                         {/* Guest Info overlay */}
                                         <div className="absolute bottom-1 inset-x-1 flex flex-col items-center z-10">
-                                          <span className="text-[7px] text-white font-black truncate max-w-[50px] leading-tight text-center">{seat.name}</span>
+                                          <span className="text-[7px] text-white font-black truncate max-w-[50px] leading-tight text-center">{seat.displayName || seat.name}</span>
                                           <span className="text-[6px] text-yellow-300 font-mono scale-90 leading-none mt-0.5">💎 {seat.diamonds || "0"}</span>
                                         </div>
 
@@ -12726,7 +12734,7 @@ export default function App() {
                                           className="font-black text-[#66fcf1] hover:text-[#45a29e] hover:underline cursor-pointer transition-colors"
                                           title="Tap for host controls"
                                         >
-                                          {msg.username}
+                                          {(msg as any).displayName || msg.username}
                                         </span>
                                       </div>
                                       <p className="text-gray-300 text-[8.5px] font-medium leading-tight mt-0.5">{msg.message}</p>
@@ -12939,7 +12947,7 @@ export default function App() {
                                 activeHost.coHostName
                               );
 
-                              const hostAName = activeHost.name || "Pardais User";
+                              const hostAName = getDisplayName(activeHost, "Pardais User");
                               const hostBName = activeHost.coHostUsername || activeHost.coHostName || activeHost.opponentName || "Connected Host";
                               const hostBAvatar = activeHost.coHostAvatar || activeHost.opponentAvatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&h=150&q=80";
 
@@ -13227,7 +13235,7 @@ export default function App() {
                                         {/* Streaming Chat Comments */}
                                         {chatMessages.map(msg => (
                                           <div key={msg.id} className="text-[10.5px] text-gray-200">
-                                            <span className="font-black text-cyan-300 mr-1.5">@{msg.username}:</span>
+                                            <span className="font-black text-cyan-300 mr-1.5">@{(msg as any).displayName || msg.username}:</span>
                                             <span>{msg.message}</span>
                                           </div>
                                         ))}
@@ -13496,7 +13504,7 @@ export default function App() {
                                   muted={isViewerOnGuestSeat ? isViewerGuestSeatMuted : false}
                                   videoMuted={isViewerOnGuestSeat ? !viewerGuestCamEnabled : (activeHost.category === "audio" || activeHost.cameraEnabled === false || activeHost.isCamOff === true || activeHost.cameraMuted === true)}
                                   hostAvatar={activeHost.avatar || activeHost.hostAvatar || liveBroadcasterAvatar}
-                                  hostName={activeHost.name || activeHost.hostUsername || liveBroadcasterName}
+                                  hostName={getDisplayName(activeHost, liveBroadcasterName)}
                                   vipLevel={Number(activeHost.vipLevel || 0)}
                                   coHostVipLevel={Number(activeHost.coHostVipLevel || activeHost.opponentVipLevel || 0)}
                                   coverPhoto={activeHost.coverPhoto || userLiveCoverPhoto}
@@ -13538,7 +13546,7 @@ export default function App() {
                                             </div>
                                           )}
                                         </div>
-                                        <p className="text-[8px] font-black text-gray-300 mt-1 max-w-[50px] truncate">{seat.name || "Join"}</p>
+                                        <p className="text-[8px] font-black text-gray-300 mt-1 max-w-[50px] truncate">{seat.displayName || seat.name || "Join"}</p>
                                       </div>
                                     ))}
                                   </div>
@@ -13877,7 +13885,7 @@ export default function App() {
                                           }}
                                           className="font-black text-[#66fcf1] hover:text-[#45a29e] cursor-pointer"
                                         >
-                                          {msg.username}
+                                          {(msg as any).displayName || msg.username}
                                         </span>
                                         <span className="text-gray-400 font-mono text-[8px]">{msg.timestamp}</span>
                                       </div>
@@ -15141,7 +15149,7 @@ export default function App() {
                                 <div className="flex items-center justify-between">
                                   <div className="space-y-1 bg-transparent">
                                     <div className="flex items-center space-x-2">
-                                      <h4 className="text-sm font-black text-white">{user.fullName || user.username || "Pardais User"}</h4>
+                                      <h4 className="text-sm font-black text-white">{getDisplayName(user)}</h4>
                                       <CheckCircle2 className="w-3.5 h-3.5 text-[#66fcf1]" />
                                       {user.isVerified && (
                                         <BadgeCheck className="w-4 h-4 text-green-400 fill-green-400/10" />
@@ -18408,7 +18416,7 @@ export default function App() {
                               <span className="text-[9px] font-mono font-black text-pink-400 uppercase tracking-widest bg-black/50 px-3.5 py-1 rounded-full border border-pink-500/30 backdrop-blur-md">
                                 🎙️ AUDIO BROADCAST STUDIO
                               </span>
-                              <h3 className="text-sm font-black text-white">{user.fullName || user.username}</h3>
+                              <h3 className="text-sm font-black text-white">{getDisplayName(user)}</h3>
                               <p className="text-[10px] text-gray-300 font-medium">Ready for HD Voice Live Stream</p>
                             </div>
 
@@ -19191,7 +19199,7 @@ export default function App() {
                                   <div className="flex items-center space-x-1.5">
                                     {liveRoomTopGifters.map((viewer, idx) => (
                                       <div key={viewer.id || idx} className="flex flex-col items-center bg-transparent">
-                                        <img src={viewer.avatar || DEFAULT_USER.avatar} className="w-6.5 h-6.5 rounded-full border border-white/20 object-cover shadow" title={viewer.username} />
+                                        <img src={viewer.avatar || DEFAULT_USER.avatar} className="w-6.5 h-6.5 rounded-full border border-white/20 object-cover shadow" title={viewer.displayName || viewer.username} />
                                         <span className="text-[7px] text-gray-200 font-black font-mono scale-90 mt-0.5">
                                           {viewer.coinsContributed >= 1000 ? `${(viewer.coinsContributed / 1000).toFixed(1)}K` : viewer.coinsContributed}
                                         </span>
@@ -19545,7 +19553,7 @@ export default function App() {
 
                                             {/* Guest Info text overlay */}
                                             <div className="absolute bottom-1 inset-x-1 flex flex-col items-center z-10">
-                                              <span className="text-[7px] text-white font-black truncate max-w-[50px] leading-tight text-center">{seat.name}</span>
+                                              <span className="text-[7px] text-white font-black truncate max-w-[50px] leading-tight text-center">{seat.displayName || seat.name}</span>
                                               <span className="text-[6px] text-yellow-300 font-mono scale-90 leading-none mt-0.5">💎 {seat.diamonds || "0"}</span>
                                             </div>
 
@@ -19621,7 +19629,7 @@ export default function App() {
                                               className="font-black text-[#66fcf1] hover:text-[#45a29e] hover:underline cursor-pointer transition-colors"
                                               title="Tap for host controls"
                                             >
-                                              {msg.username}
+                                              {(msg as any).displayName || msg.username}
                                             </span>
                                           </div>
                                           <p className="text-gray-300 text-[8.5px] font-medium leading-tight mt-0.5">{msg.message}</p>
@@ -19712,7 +19720,7 @@ export default function App() {
                                       </div>
                                       <div className="flex flex-col text-left">
                                         <span className="text-[9px] font-black text-white flex items-center space-x-0.5 leading-none">
-                                          <span>{user.username || user.displayName || liveBroadcasterName}</span>
+                                          <span>{getDisplayName(user, liveBroadcasterName)}</span>
                                           <span className="text-blue-400 text-[7px]">✔️</span>
                                         </span>
                                         <div className="flex items-center space-x-1 mt-0.5">
@@ -19973,7 +19981,7 @@ export default function App() {
                                             {/* Left label overlay inside camera */}
                                             <div className="absolute bottom-4 left-2 bg-black/60 backdrop-blur-md px-1.5 py-0.5 rounded-full border border-white/5 flex items-center space-x-1 z-10 select-none">
                                               <span className="w-1.5 h-1.5 bg-pink-500 rounded-full animate-ping shrink-0"></span>
-                                              <span className="text-[7.5px] font-black text-white">{user.username || user.displayName || "Host"}</span>
+                                              <span className="text-[7.5px] font-black text-white">{getDisplayName(user, "Host")}</span>
                                               <span className="text-[6.5px] text-yellow-400 font-bold font-mono">💎 {userLivePkScoreMy}</span>
                                             </div>
 
@@ -20029,7 +20037,7 @@ export default function App() {
                                                     className="w-14 h-14 rounded-full object-cover border-2 border-blue-500/70 shadow-lg"
                                                     alt={userLiveCoHost?.username || "Co-Host"}
                                                   />
-                                                  <span className="text-[9px] font-black text-white truncate max-w-[90%]">{userLiveCoHost?.username || userLiveCoHost?.name || "Co-Host"}</span>
+                                                  <span className="text-[9px] font-black text-white truncate max-w-[90%]">{getDisplayName(userLiveCoHost, "Co-Host")}</span>
                                                   <span className="text-[7px] text-blue-300 font-bold bg-blue-500/20 px-2 py-0.5 rounded-full border border-blue-500/30 uppercase tracking-wider">
                                                     📷 Camera Off
                                                   </span>
@@ -20166,7 +20174,7 @@ export default function App() {
                                                   });
                                                   const data = await res.json();
                                                   if (data.success) {
-                                                    alert(`⚔️ PK Battle challenge sent to @${userLiveCoHost?.username || "opponent"}!`);
+                                                    alert(`⚔️ PK Battle challenge sent to @${getDisplayName(userLiveCoHost, "opponent")}!`);
                                                   }
                                                 } catch (e) {
                                                   console.error("Error starting PK battle:", e);
@@ -20271,7 +20279,7 @@ export default function App() {
                                                     }}
                                                     className="font-black text-[#66fcf1] hover:text-[#45a29e] hover:underline cursor-pointer transition-colors"
                                                   >
-                                                    {msg.username}
+                                                    {(msg as any).displayName || msg.username}
                                                   </span>
                                                   <span>{msg.message}</span>
                                                 </p>
@@ -20296,7 +20304,7 @@ export default function App() {
                                                         }}
                                                         className="font-black text-[#66fcf1] hover:text-[#45a29e] hover:underline cursor-pointer transition-colors"
                                                       >
-                                                        {msg.username}
+                                                        {(msg as any).displayName || msg.username}
                                                       </span>
                                                     </span>
 
@@ -20339,7 +20347,7 @@ export default function App() {
                                                                 alert("📌 Comment unpinned.");
                                                               } else {
                                                                 setUserLivePinnedCommentId(msg.id);
-                                                                alert(`📌 Pinned @${msg.username}'s comment!`);
+                                                                alert(`📌 Pinned @${(msg as any).displayName || msg.username}'s comment!`);
                                                               }
                                                             }}
                                                             className={`${userLivePinnedCommentId === msg.id ? "text-yellow-400" : "text-gray-400 hover:text-yellow-400"} text-[8px]`}
@@ -20352,7 +20360,7 @@ export default function App() {
                                                               onClick={() => {
                                                                 setUserLiveMessages(prev => prev.filter(m => m.id !== msg.id));
                                                                 if (userLivePinnedCommentId === msg.id) setUserLivePinnedCommentId(null);
-                                                                alert(`🗑️ Moderated & deleted @${msg.username}'s comment.`);
+                                                                alert(`🗑️ Moderated & deleted @${(msg as any).displayName || msg.username}'s comment.`);
                                                               }}
                                                               className="text-red-400 hover:text-red-300 text-[8px]"
                                                               title="Moderate: Delete Comment"
@@ -20532,17 +20540,17 @@ export default function App() {
                                       <img
                                         src={viewer.avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=100&q=80"}
                                         className="w-6.5 h-6.5 rounded-full border border-emerald-400/80 object-cover shadow"
-                                        title={`@${viewer.username} (Lv.${viewer.level || 1})`}
+                                        title={`${viewer.displayName || viewer.username} (Lv.${viewer.level || 1})`}
                                       />
                                       <span className="text-[6px] text-emerald-300 font-mono font-bold scale-90 mt-0.5 truncate max-w-[35px]">
-                                        @{viewer.username}
+                                        {viewer.displayName || viewer.username}
                                       </span>
                                     </button>
                                   ))
                                 ) : (
                                   liveRoomTopGifters.map((viewer, idx) => (
                                     <div key={viewer.id || idx} className="flex flex-col items-center bg-transparent shrink-0">
-                                      <img src={viewer.avatar || DEFAULT_USER.avatar} className="w-6.5 h-6.5 rounded-full border border-white/20 object-cover shadow" title={viewer.username} />
+                                      <img src={viewer.avatar || DEFAULT_USER.avatar} className="w-6.5 h-6.5 rounded-full border border-white/20 object-cover shadow" title={viewer.displayName || viewer.username} />
                                       <span className="text-[7px] text-gray-200 font-black font-mono scale-90 mt-0.5">
                                         {viewer.coinsContributed >= 1000 ? `${(viewer.coinsContributed / 1000).toFixed(1)}K` : viewer.coinsContributed}
                                       </span>
@@ -20921,7 +20929,7 @@ export default function App() {
                                               }}
                                               className="font-black text-[#66fcf1] hover:text-[#45a29e] hover:underline cursor-pointer transition-colors"
                                             >
-                                              {msg.username}
+                                              {(msg as any).displayName || msg.username}
                                             </span>
                                             <span>{msg.message}</span>
                                           </p>
@@ -20944,7 +20952,7 @@ export default function App() {
                                                 }}
                                                 className="font-black text-[#66fcf1] hover:text-[#45a29e] hover:underline cursor-pointer transition-colors"
                                               >
-                                                {msg.username}
+                                                {(msg as any).displayName || msg.username}
                                               </span>
                                             </span>
                                             <span className="text-gray-200 inline align-middle font-medium">{msg.message}</span>
@@ -21093,7 +21101,7 @@ export default function App() {
                                       Start PK
                                     </h4>
                                     <p className="text-[9.5px] text-gray-300 font-sans leading-normal">
-                                      1v1 PK Request for <strong className="text-pink-400">@{userLiveCoHost?.username || "co-host"}</strong>
+                                      1v1 PK Request for <strong className="text-pink-400">@{getDisplayName(userLiveCoHost, "co-host")}</strong>
                                     </p>
                                   </div>
 
@@ -21105,16 +21113,16 @@ export default function App() {
                                         className="w-9 h-9 rounded-full border border-pink-500 object-cover" 
                                         alt={user.username}
                                       />
-                                      <span className="text-[7.5px] text-gray-300 font-bold mt-0.5 truncate max-w-[60px]">{user.username}</span>
+                                      <span className="text-[7.5px] text-gray-300 font-bold mt-0.5 truncate max-w-[60px]">{getDisplayName(user)}</span>
                                     </div>
                                     <span className="text-pink-500 font-black text-sm font-mono">VS</span>
                                     <div className="flex flex-col items-center">
                                       <img 
                                         src={userLiveCoHost?.avatar || "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=100&q=80"} 
                                         className="w-9 h-9 rounded-full border border-purple-500 object-cover" 
-                                        alt={userLiveCoHost?.username || "Opponent"}
+                                        alt={getDisplayName(userLiveCoHost, "Opponent")}
                                       />
-                                      <span className="text-[7.5px] text-purple-300 font-bold mt-0.5 truncate max-w-[60px]">{userLiveCoHost?.username || "Co-Host"}</span>
+                                      <span className="text-[7.5px] text-purple-300 font-bold mt-0.5 truncate max-w-[60px]">{getDisplayName(userLiveCoHost, "Co-Host")}</span>
                                     </div>
                                   </div>
 
@@ -21378,14 +21386,14 @@ export default function App() {
                                   <div className="space-y-1 bg-transparent">
                                     <div className="text-3xl">💔</div>
                                     <h3 className="text-lg font-black text-red-500 font-mono tracking-wider">DEFEAT</h3>
-                                    <p className="text-[10px] text-gray-400 font-sans">@{userLiveCoHost?.username || "Opponent"} won this battle!</p>
+                                    <p className="text-[10px] text-gray-400 font-sans">@{getDisplayName(userLiveCoHost, "Opponent")} won this battle!</p>
                                   </div>
                                 )}
 
                                 <div className="flex items-center justify-center space-x-4 py-2 px-3 bg-white/5 rounded-xl border border-white/10 font-mono text-xs">
                                   <div className="text-pink-400 font-bold">{user.username}: <span className="text-white font-black">{userLivePkScoreMy}</span></div>
                                   <span className="text-gray-500">VS</span>
-                                  <div className="text-blue-400 font-bold">{userLiveCoHost?.username || "Opponent"}: <span className="text-white font-black">{userLivePkScoreOther}</span></div>
+                                  <div className="text-blue-400 font-bold">{getDisplayName(userLiveCoHost, "Opponent")}: <span className="text-white font-black">{userLivePkScoreOther}</span></div>
                                 </div>
                               </div>
                             )}
@@ -22149,7 +22157,7 @@ export default function App() {
                                           </div>
                                           <div className="flex flex-col bg-transparent">
                                             <div className="flex items-center space-x-1 bg-transparent">
-                                              <span className="text-[10px] font-black text-white">{seat.name}</span>
+                                              <span className="text-[10px] font-black text-white">{seat.displayName || seat.name}</span>
                                               <span className="text-[6.5px] bg-yellow-400 text-black px-1 rounded font-black font-mono leading-none flex items-center">Lv.{Math.floor(Math.random() * 20) + 10}</span>
                                             </div>
                                             <span className="text-[7px] text-gray-400 font-mono mt-0.5">UID: 981726{seat.id}</span>

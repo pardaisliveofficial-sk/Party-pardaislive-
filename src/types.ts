@@ -146,6 +146,7 @@ export interface ChatMessage {
   vipLevel: number;
   userLevel: number;
   badge?: string;
+  displayName?: string;
   isSystem: boolean;
   isFlagged: boolean;
   flagReason?: string;
@@ -158,6 +159,7 @@ export interface HostProfile {
   name: string;
   hostUsername?: string;
   username?: string;
+  displayName?: string;
   uniqueId?: string;
   channelName?: string;
   userLivePkChannelName?: string;

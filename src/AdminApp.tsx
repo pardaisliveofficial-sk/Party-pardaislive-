@@ -752,7 +752,9 @@ export default function AdminApp() {
   };
 
   useEffect(() => {
-    fetchDb();
+    void fetchDb();
+    const timer = setInterval(() => { void fetchDb(); }, 5000);
+    return () => clearInterval(timer);
   }, []);
 
   // Show auto-dismiss toast helper
