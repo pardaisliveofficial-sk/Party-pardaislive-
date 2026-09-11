@@ -462,17 +462,16 @@ button, input, form {
   }
 }
 
-/* Pardais Live camera enhancement: ~20% brighter than the raw device preview, with subtle beauty softness.
-   Applied to Agora local and remote video renders so the same look is visible
-   to hosts, co-hosts and viewers without changing the physical device camera. */
-.pardais-live-video video {
-  filter: brightness(1.08) contrast(1.02) saturate(1.06);
-  transform-origin: center center;
-  backface-visibility: hidden;
-  -webkit-backface-visibility: hidden;
+/* Pardais Live beauty enhancement — non-destructive Android-safe overlay.
+   IMPORTANT: no CSS filter is applied to Agora's <video>. Android WebView/Agora
+   video surfaces can turn black when GPU filters are applied. The camera stream
+   itself stays on the previously working Agora implementation. */
+.pardais-live-video {
+  position: relative;
+  isolation: isolate;
+  background: #000;
 }
 
-/* Extra low-light lift on the live video surface without washing out highlights. */
 .pardais-live-video::after {
   content: "";
   position: absolute;
@@ -483,9 +482,7 @@ button, input, form {
   mix-blend-mode: screen;
 }
 
-
-/* Android WebView/Agora local preview stability: keep the injected video visible
-   and avoid GPU filter/opacity combinations that can produce a black surface. */
+/* Keep Agora's injected video completely untouched for Android WebView stability. */
 .pardais-live-video > video,
 .pardais-live-video video {
   display: block !important;
@@ -496,6 +493,8 @@ button, input, form {
   object-fit: cover !important;
   opacity: 1 !important;
   visibility: visible !important;
-  backface-visibility: hidden;
-  -webkit-backface-visibility: hidden;
+  filter: none !important;
+  transform: none !important;
+  backface-visibility: visible;
+  -webkit-backface-visibility: visible;
 }

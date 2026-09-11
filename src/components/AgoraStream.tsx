@@ -286,54 +286,21 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
         const agoraModule = await import("agora-rtc-sdk-ng");
         const AgoraRTC = (agoraModule as any).default || agoraModule;
         const cameraId = await findCameraId(AgoraRTC, facingMode as "user" | "environment");
-        // Android WebView camera IDs can become stale after permission changes or
-        // after switching front/back cameras. Try the selected device first, then
-        // retry with the browser's default camera, and finally fall back to a real
-        // getUserMedia track. This prevents a published-but-black local preview.
-        try {
-          track = await AgoraRTC.createCameraVideoTrack({
-            encoderConfig: "720p_1",
-            ...(cameraId ? { cameraId } : {})
-          });
-        } catch (primaryErr) {
-          console.warn("[AGORA VIDEO] Selected camera creation failed; retrying default camera", primaryErr);
-          try {
-            track = await AgoraRTC.createCameraVideoTrack({ encoderConfig: "720p_1" });
-          } catch (fallbackErr) {
-            console.warn("[AGORA VIDEO] Default Agora camera creation failed; using getUserMedia fallback", fallbackErr);
-            const mediaStream = await navigator.mediaDevices.getUserMedia({
-              video: {
-                facingMode: { ideal: facingMode === "environment" ? "environment" : "user" },
-                width: { ideal: 1280 },
-                height: { ideal: 720 },
-                frameRate: { ideal: 30, max: 30 }
-              },
-              audio: false
-            });
-            const mediaTrack = mediaStream.getVideoTracks()[0];
-            if (!mediaTrack) throw fallbackErr;
-            track = AgoraRTC.createCustomVideoTrack({ mediaStreamTrack: mediaTrack }) as ICameraVideoTrack;
-          }
-        }
-        if (cancelled || !track) {
-          track?.stop(); track?.close();
+        track = await AgoraRTC.createCameraVideoTrack({
+          encoderConfig: "720p_1",
+          ...(cameraId ? { cameraId } : {})
+        });
+        if (cancelled) {
+          track.stop(); track.close();
           return;
         }
         setLocalVideoTrack(track);
         await client.publish(track);
         if (videoMuted || !publishCameraTrack) await track.setEnabled(false);
-        const playLocal = () => {
-          const container = localVideoContainerRef.current;
-          if (!container || !track || cancelled) return false;
-          try {
-            track.play(container, { fit: "cover", mirror: facingMode === "user" });
-            return true;
-          } catch (e) {
-            return false;
-          }
-        };
         requestAnimationFrame(() => {
-          if (!playLocal()) setTimeout(() => playLocal(), 120);
+          if (localVideoContainerRef.current && track) {
+            try { track.play(localVideoContainerRef.current, { fit: "cover", mirror: facingMode === "user" }); } catch (e) {}
+          }
         });
       } catch (err) {
         console.error("[AGORA VIDEO] Camera creation/publish failed", err);
