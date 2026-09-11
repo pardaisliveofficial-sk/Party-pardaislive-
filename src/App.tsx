@@ -4217,6 +4217,7 @@ export default function App() {
   const [userLiveBgIndex, setUserLiveBgIndex] = useState<number>(0);
   const [userLiveFollowed, setUserLiveFollowed] = useState<boolean>(false);
   const [userLiveShowBeautyModal, setUserLiveShowBeautyModal] = useState<boolean>(false);
+  const [userLiveFaceFilter, setUserLiveFaceFilter] = useState<string>("Original");
   const [userLiveShowSettingsModal, setUserLiveShowSettingsModal] = useState<boolean>(false);
   const [userLiveShowMoreModal, setUserLiveShowMoreModal] = useState<boolean>(false);
   const [userLiveShowShareModal, setUserLiveShowShareModal] = useState<boolean>(false);
@@ -19177,6 +19178,7 @@ export default function App() {
                                     showCoverPhoto={userLiveShowCoverPhoto}
                                     isCoHostMode={Boolean(userLivePkConnected || userLiveCoHost)}
                                     showGuestRemoteVideos={userLiveGuestModeActive}
+                                    liveFilter={userLiveFaceFilter}
                                     coHostAvatar={userLiveCoHost?.avatar}
                                     coHostName={userLiveCoHost?.username}
                                     coHostVideoMuted={userLiveCoHost?.isCamOff}
@@ -21457,10 +21459,24 @@ export default function App() {
                                     />
                                   </div>
                                 </div>
+                                <div className="space-y-1.5 pt-1 border-t border-white/5">
+                                  <div className="flex items-center justify-between">
+                                    <span className="text-gray-300">Free AR Filter</span>
+                                    <span className="font-mono text-pink-400">{userLiveFaceFilter}</span>
+                                  </div>
+                                  <div className="grid grid-cols-3 gap-1.5 max-h-28 overflow-y-auto pr-0.5">
+                                    {["Original","Natural Beauty","Soft Glow","Fresh Skin","Cat","Bunny","Dog","Devil Horns","Crown","Cool Glasses","Hearts","Flower Crown","Sparkle","Alien"].map((f) => (
+                                      <button key={f} type="button" onClick={() => setUserLiveFaceFilter(f)} className={`px-1.5 py-1.5 rounded-lg border text-[7px] font-black ${userLiveFaceFilter === f ? "bg-pink-500/20 border-pink-500 text-white" : "bg-white/5 border-white/10 text-gray-300"}`}>
+                                        {f === "Cat" ? "🐱 Cat" : f === "Bunny" ? "🐰 Bunny" : f === "Dog" ? "🐶 Dog" : f === "Devil Horns" ? "😈 Horns" : f === "Crown" ? "👑 Crown" : f === "Cool Glasses" ? "😎 Glasses" : f === "Hearts" ? "❤️ Hearts" : f === "Flower Crown" ? "🌸 Flower" : f === "Sparkle" ? "✨ Sparkle" : f === "Alien" ? "👽 Alien" : f}
+                                      </button>
+                                    ))}
+                                  </div>
+                                  <p className="text-[7px] text-gray-500">Free filters are safe render-only effects; the Agora camera track stays untouched.</p>
+                                </div>
+
                                 <button
                                   onClick={() => {
                                     setUserLiveShowBeautyModal(false);
-                                    alert("✨ Beauty metrics updated and calibrated!");
                                   }}
                                   className="w-full bg-pink-600 hover:bg-pink-500 text-white py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all"
                                 >

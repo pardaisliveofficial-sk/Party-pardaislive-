@@ -34,6 +34,8 @@ interface AgoraStreamProps {
   coHostVideoMuted?: boolean;
   /** Render subscribed remote video tiles while the local publisher is also publishing (guest rooms). */
   showGuestRemoteVideos?: boolean;
+  /** Free, render-only face/beauty overlay. It never modifies the Agora camera track. */
+  liveFilter?: string;
 }
 
 const sanitizeChannel = (ch: string) => {
@@ -66,7 +68,8 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
   coHostAvatar = "",
   coHostName = "Co-Host",
   coHostVipLevel = 0,
-  showGuestRemoteVideos = false
+  showGuestRemoteVideos = false,
+  liveFilter = "Original"
 }) => {
   // Real Agora States
   const [client, setClient] = useState<IAgoraRTCClient | null>(null);
@@ -926,6 +929,43 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
   }
 
   // SOLO LIVE VIDEO / AUDIO STAGE
+  // IMPORTANT: filters below are render-only overlays. We intentionally do NOT
+  // apply CSS filter/blur/transform to the Agora <video> element because that
+  // can break Android WebView/GPU camera rendering and cause a black screen.
+  const renderLiveFilterOverlay = () => {
+    if (!liveFilter || liveFilter === "Original") return null;
+    const isBeauty = ["Natural Beauty", "Soft Glow", "Fresh Skin"].includes(liveFilter);
+    const isCat = liveFilter === "Cat";
+    const isBunny = liveFilter === "Bunny";
+    const isDog = liveFilter === "Dog";
+    const isHorns = liveFilter === "Devil Horns";
+    const isCrown = liveFilter === "Crown";
+    const isGlasses = liveFilter === "Cool Glasses";
+    const isHearts = liveFilter === "Hearts";
+    const isFlower = liveFilter === "Flower Crown";
+    const isSparkle = liveFilter === "Sparkle";
+    const isAlien = liveFilter === "Alien";
+    const emoji = isCat ? "🐱" : isBunny ? "🐰" : isDog ? "🐶" : isHorns ? "😈" : isCrown ? "👑" : isFlower ? "🌸" : isAlien ? "👽" : "";
+    return (
+      <div className="absolute inset-0 z-[6] pointer-events-none overflow-hidden" aria-hidden="true">
+        {isBeauty && (
+          <div className={`absolute inset-0 ${liveFilter === "Natural Beauty" ? "bg-[radial-gradient(ellipse_at_center,rgba(255,245,235,0.10),transparent_62%)]" : liveFilter === "Soft Glow" ? "bg-[radial-gradient(ellipse_at_center,rgba(255,220,240,0.16),transparent_64%)]" : "bg-[radial-gradient(ellipse_at_center,rgba(255,245,220,0.13),transparent_65%)]"}`} />
+        )}
+        {emoji && (
+          <div className="absolute left-1/2 top-[24%] -translate-x-1/2 text-[76px] leading-none drop-shadow-[0_4px_12px_rgba(0,0,0,0.65)] opacity-95">{emoji}</div>
+        )}
+        {isGlasses && <div className="absolute left-1/2 top-[39%] -translate-x-1/2 text-[58px] leading-none opacity-95 drop-shadow-[0_4px_10px_rgba(0,0,0,0.8)]">😎</div>}
+        {isHearts && <div className="absolute inset-0 text-pink-300/80">
+          <span className="absolute left-[18%] top-[24%] text-4xl animate-bounce">💕</span>
+          <span className="absolute right-[18%] top-[32%] text-3xl animate-pulse">❤️</span>
+          <span className="absolute left-[28%] bottom-[28%] text-2xl animate-pulse">💗</span>
+          <span className="absolute right-[28%] bottom-[24%] text-4xl animate-bounce">💖</span>
+        </div>}
+        {isSparkle && <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_35%,rgba(255,255,255,0.20),transparent_22%),radial-gradient(circle_at_25%_25%,rgba(255,215,0,0.18),transparent_15%),radial-gradient(circle_at_78%_42%,rgba(255,255,255,0.16),transparent_14%)] animate-pulse" />}
+      </div>
+    );
+  };
+
   return (
     <div className="w-full h-full relative overflow-hidden bg-black flex flex-col items-center justify-center select-none">
       {role === "publisher" ? (
@@ -973,6 +1013,8 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
           ))}
         </div>
       )}
+
+      {renderLiveFilterOverlay()}
 
       {/* 2. CENTRAL HOST STATUS OVERLAY */}
       <div className={`relative z-10 flex flex-col items-center text-center space-y-4 max-w-xs mx-auto animate-scale-up ${((role === "publisher" && publishCameraTrack && !videoMuted) || (role === "subscriber" && remoteUsersList.some(u => u.videoTrack))) ? "opacity-0 pointer-events-none" : ""}`}>
