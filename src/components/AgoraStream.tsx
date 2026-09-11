@@ -76,6 +76,10 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
   const localVideoContainerRef = useRef<HTMLDivElement | null>(null);
   const remoteVideoRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const [remoteUsersList, setRemoteUsersList] = useState<IAgoraRTCRemoteUser[]>([]);
+  // Explicit remote video publication state. Agora can keep a remote user object
+  // alive after a video mute/unpublish, so rendering must follow the video events
+  // rather than only checking whether videoTrack exists.
+  const [remoteVideoStates, setRemoteVideoStates] = useState<Record<string, boolean>>({});
   const [audioBlocked, setAudioBlocked] = useState<boolean>(false);
   
   // App Streaming Status
@@ -281,7 +285,7 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
       try {
         const agoraModule = await import("agora-rtc-sdk-ng");
         const AgoraRTC = (agoraModule as any).default || agoraModule;
-        const cameraId = await findCameraId(AgoraRTC, facingMode);
+        const cameraId = await findCameraId(AgoraRTC, facingMode as "user" | "environment");
         track = await AgoraRTC.createCameraVideoTrack({
           encoderConfig: "720p_1",
           ...(cameraId ? { cameraId } : {})
@@ -369,7 +373,7 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
         }
       }
     });
-  }, [remoteUsersList]);
+  }, [remoteUsersList, remoteVideoStates]);
 
   // Main Engine: Agora RTC Audio Stream for crystal-clear real-time voice broadcasting
   useEffect(() => {
@@ -453,6 +457,12 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
 
         agoraClient.on("user-left", (user, reason) => {
           console.log("[AGORA EVENT: USER-LEFT]", { remoteUid: user.uid, reason });
+          setRemoteVideoStates(prev => {
+            const next = { ...prev };
+            delete next[String(user.uid)];
+            return next;
+          });
+          setRemoteUsersList(prev => prev.filter(u => u.uid !== user.uid));
         });
 
         // Set Client Role
@@ -515,6 +525,7 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
                   if (prev.some(u => u.uid === user.uid)) return prev;
                   return [...prev, user];
                 });
+                setRemoteVideoStates(prev => ({ ...prev, [String(user.uid)]: true }));
                 requestAnimationFrame(() => {
                   const el = remoteVideoRefs.current[String(user.uid)];
                   if (el && user.videoTrack) {
@@ -532,7 +543,10 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
 
         const handleUserUnpublished = (user: IAgoraRTCRemoteUser, mediaType: "video" | "audio") => {
           console.log("[AGORA EVENT: USER-UNPUBLISHED]", { remoteUid: user.uid, mediaType });
-          if (mediaType === "audio") {
+          if (mediaType === "video") {
+            // Keep the user for audio/metadata, but immediately hide the video.
+            setRemoteVideoStates(prev => ({ ...prev, [String(user.uid)]: false }));
+          } else if (mediaType === "audio") {
             setRemoteUsersList(prev => prev.filter(u => u.uid !== user.uid));
           }
         };
@@ -545,6 +559,12 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
           if (isUnmounted || !agoraClient || agoraClient.connectionState !== "CONNECTED") return;
           agoraClient.remoteUsers.forEach(async (u) => {
             try {
+              if (u.hasVideo && !u.videoTrack) {
+                try {
+                  await agoraClient.subscribe(u, "video");
+                  setRemoteVideoStates(prev => ({ ...prev, [String(u.uid)]: true }));
+                } catch (_) {}
+              }
               if (u.hasAudio && !u.audioTrack) {
                 console.log("[AGORA EVENT: SUBSCRIBE START (WATCHER)]", { remoteUid: u.uid });
                 await agoraClient.subscribe(u, "audio");
@@ -661,6 +681,12 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
 
           for (const user of agoraClient.remoteUsers) {
             try {
+              if (user.hasVideo) {
+                try {
+                  await agoraClient.subscribe(user, "video");
+                  setRemoteVideoStates(prev => ({ ...prev, [String(user.uid)]: true }));
+                } catch (_) {}
+              }
               if (!user.audioTrack) {
                 console.log("[AGORA EVENT: SUBSCRIBE START (REMOTE USER IN HOST)]", { remoteUid: user.uid });
                 await agoraClient.subscribe(user, "audio");
@@ -680,6 +706,12 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
 
           for (const user of agoraClient.remoteUsers) {
             try {
+              if (user.hasVideo) {
+                try {
+                  await agoraClient.subscribe(user, "video");
+                  setRemoteVideoStates(prev => ({ ...prev, [String(user.uid)]: true }));
+                } catch (_) {}
+              }
               if (!user.audioTrack) {
                 console.log("[AGORA EVENT: SUBSCRIBE START (VIEWER)]", { remoteUid: user.uid });
                 await agoraClient.subscribe(user, "audio");
@@ -729,6 +761,7 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
         }
       }
       setRemoteUsersList([]);
+      setRemoteVideoStates({});
       setLocalVideoTrack(null);
     };
   }, [channelName, role, isCoHostMode]);
@@ -808,7 +841,7 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
         <div className="w-1/2 h-full relative bg-gradient-to-b from-[#0a1430] via-[#080d1a] to-[#0d1630] flex flex-col items-center justify-center p-2 text-center overflow-hidden">
           {/* REAL OPPONENT CAMERA: right side of 1v1 / PK */}
           {(() => {
-            const remoteWithVideo = remoteUsersList.find((u: any) => Boolean(u.videoTrack));
+            const remoteWithVideo = remoteUsersList.find((u: any) => remoteVideoStates[String(u.uid)] === true && Boolean(u.videoTrack));
             return remoteWithVideo ? (
               <div
                 ref={(el) => { remoteVideoRefs.current[String(remoteWithVideo.uid)] = el; }}
@@ -825,7 +858,7 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
           <div className="absolute inset-0 z-20 bg-gradient-to-t from-black/80 via-transparent to-black/40 pointer-events-none" />
 
           {/* Central Host B Audio Visualizer */}
-          <div className={`relative z-30 flex flex-col items-center space-y-2 my-auto ${remoteUsersList.some((u: any) => Boolean(u.videoTrack)) ? "opacity-0 pointer-events-none" : ""}`}>
+          <div className={`relative z-30 flex flex-col items-center space-y-2 my-auto ${remoteUsersList.some((u: any) => remoteVideoStates[String(u.uid)] === true && Boolean(u.videoTrack)) ? "opacity-0 pointer-events-none" : ""}`}>
             {/* Audio pulse ring */}
             <div className="relative">
               <div className="absolute -inset-3 rounded-full bg-blue-500/30 animate-ping" />
@@ -910,9 +943,9 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
         )
       ) : (
         <div className="absolute inset-0 z-0 bg-black">
-          {remoteUsersList.filter(u => u.videoTrack).length > 0 ? (
+          {remoteUsersList.filter(u => remoteVideoStates[String(u.uid)] === true && u.videoTrack).length > 0 ? (
             <div className="w-full h-full relative">
-              {remoteUsersList.filter(u => u.videoTrack).map((remote, index) => (
+              {remoteUsersList.filter(u => remoteVideoStates[String(u.uid)] === true && u.videoTrack).map((remote, index) => (
                 <div
                   key={String(remote.uid)}
                   ref={(el) => { remoteVideoRefs.current[String(remote.uid)] = el; }}
@@ -928,9 +961,9 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
           )}
         </div>
       )}
-      {showGuestRemoteVideos && remoteUsersList.some((u: any) => Boolean(u.videoTrack)) && (
+      {showGuestRemoteVideos && remoteUsersList.some((u: any) => remoteVideoStates[String(u.uid)] === true && Boolean(u.videoTrack)) && (
         <div className="absolute inset-0 z-[5] grid grid-cols-2 gap-1 p-1 pointer-events-none bg-black">
-          {remoteUsersList.filter((u: any) => Boolean(u.videoTrack)).slice(0, 8).map((remote: any) => (
+          {remoteUsersList.filter((u: any) => remoteVideoStates[String(u.uid)] === true && Boolean(u.videoTrack)).slice(0, 8).map((remote: any) => (
             <div key={String(remote.uid)} className="relative min-h-0 overflow-hidden rounded-lg bg-black">
               <div
                 ref={(el) => { remoteVideoRefs.current[String(remote.uid)] = el; }}
