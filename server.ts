@@ -4515,7 +4515,7 @@ app.post("/api/v1/live/end", (req, res) => {
   res.json({ success: true, message: "Live session ended successfully" });
 });
 
-app.post("/api/v1/hosts/:id/like", (req, res) => {
+app.post("/api/v1/hosts/:id/like", async (req, res) => {
   const { id } = req.params;
   const { count = 1, senderUsername, xPercent, yPercent } = req.body || {};
   const index = findHostIndex(id);
@@ -4627,7 +4627,7 @@ app.post("/api/v1/hosts/:id/leave", (req, res) => {
   }
 });
 
-app.post("/api/v1/hosts/:id/comments", (req, res) => {
+app.post("/api/v1/hosts/:id/comments", async (req, res) => {
   const { id } = req.params;
   const { message, username, vipLevel, userLevel, isSystem, avatar } = req.body;
   if (!message || !username) {
@@ -7949,7 +7949,7 @@ app.get("/api/v1/chats", (req, res) => {
   res.json(dbData.chats || []);
 });
 
-app.post("/api/v1/chats", (req, res) => {
+app.post("/api/v1/chats", async (req, res) => {
   const newMsg = {
     id: `msg-${Date.now()}`,
     timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
