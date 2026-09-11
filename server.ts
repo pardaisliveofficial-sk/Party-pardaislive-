@@ -1907,6 +1907,12 @@ app.post("/api/v1/auth/password-login", async (req, res) => {
   void persistUserDurably(user).catch(err => console.warn("[PARDAIS LOGIN] Background sync note:", err));
 
   const token = await createSession(user);
+  await writeDurableNotification({
+    type: "Login", category: "system", title: "🔐 New Login",
+    text: "Your Pardais Party account was logged in successfully.",
+    targetUsername: user.username, targetUserId: user.uid, actorUsername: user.username,
+    isSelfEvent: true
+  });
   return res.json({ success: true, message: "Logged in successfully.", token, isNewUser: false, needsPassword: false, user });
 });
 
@@ -2154,7 +2160,13 @@ app.get("/api/v1/user/me", authenticateUser, (req: any, res) => {
 });
 
 // 6. Logout Current User Session
-app.post("/api/v1/auth/logout", authenticateUser, (req: any, res) => {
+app.post("/api/v1/auth/logout", authenticateUser, async (req: any, res) => {
+  await writeDurableNotification({
+    type: "Logout", category: "system", title: "👋 Account Logout",
+    text: "Your Pardais Party account was logged out on this device.",
+    targetUsername: req.user?.username, targetUserId: req.user?.uid, actorUsername: req.user?.username,
+    isSelfEvent: true
+  });
   if (req.token && dbData.sessions[req.token]) {
     delete dbData.sessions[req.token];
     deleteDocument("sessions", req.token);
@@ -2797,6 +2809,13 @@ app.post("/api/v1/user/following", authenticateUser, async (req: any, res: any) 
       target.followersCount = Number(target.followersCount || 0) + 1;
       target.profileUpdatedAt = new Date().toISOString();
       await persistUserDurably(target);
+      await writeDurableNotification({
+        type: "Follow", category: "social", title: "👤 New Follower",
+        text: `${req.user.fullName || req.user.name || req.user.username || "Someone"} started following you.`,
+        targetUsername: target.username, targetUserId: target.uid,
+        actorUsername: req.user.username, actorUserId: req.user.uid, actorName: req.user.fullName || req.user.name || req.user.username,
+        userAvatar: req.user.avatar || ""
+      });
     }
   }
   for (const username of removed) {
@@ -4512,6 +4531,18 @@ app.post("/api/v1/hosts/:id/like", (req, res) => {
     };
     saveDatabase();
     syncDocument("hosts", host.id, host);
+    const hostOwner = (dbData.users || []).find((u: any) =>
+      String(u?.username || "").toLowerCase() === String(host.username || host.hostUsername || "").toLowerCase() ||
+      String(u?.uid || "") === String(host.userId || "")
+    );
+    const sender = String(senderUsername || "").trim();
+    if (hostOwner && sender && sender.toLowerCase() !== String(hostOwner.username || "").toLowerCase()) {
+      await writeDurableNotification({
+        type: "Like", category: "social", title: "❤️ Your Live Got a Like",
+        text: `${sender} liked your live stream.`, targetUsername: hostOwner.username, targetUserId: hostOwner.uid,
+        actorUsername: sender, userAvatar: ""
+      });
+    }
     res.json({ success: true, likes: host.likes, lastLikeEvent: host.lastLikeEvent });
   } else {
     res.status(404).json({ error: "Host not found" });
@@ -4621,6 +4652,17 @@ app.post("/api/v1/hosts/:id/comments", (req, res) => {
     host.comments.push(newComment);
     saveDatabase();
     syncDocument("hosts", host.id, host);
+    const hostOwner = (dbData.users || []).find((u: any) =>
+      String(u?.username || "").toLowerCase() === String(host.username || host.hostUsername || "").toLowerCase() ||
+      String(u?.uid || "") === String(host.userId || "")
+    );
+    if (hostOwner && String(username).toLowerCase() !== String(hostOwner.username || "").toLowerCase()) {
+      await writeDurableNotification({
+        type: "Comment", category: "social", title: "💬 New Comment",
+        text: `${username} commented on your live stream.`, targetUsername: hostOwner.username, targetUserId: hostOwner.uid,
+        actorUsername: username, userAvatar: avatar || ""
+      });
+    }
     res.status(201).json(host.comments);
   } else {
     res.status(404).json({ error: "Host not found" });
@@ -7178,37 +7220,27 @@ app.post("/api/v1/transactions", (req, res) => {
   res.status(201).json(newTxn);
 });
 
+// Durable notification writer. Notifications are event history: never overwrite or
+// expire them during app updates. Each event is synced to Firestore immediately.
+async function writeDurableNotification(input: any) {
+  if (!dbData.notifications) dbData.notifications = [];
+  const newNotif = {
+    id: `N-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    isNew: true,
+    time: "Just Now",
+    timestamp: new Date().toISOString(),
+    ...input
+  };
+  dbData.notifications.unshift(newNotif);
+  saveDatabase();
+  await syncDocument("notifications", String(newNotif.id), newNotif);
+  return newNotif;
+}
+
 // Notifications inbox dispatcher with auto-cleanup (24 hours expiry)
 async function cleanupExpiredNotifications() {
-  try {
-    const now = Date.now();
-    const expiryLimit = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
-    const activeNotifs: any[] = [];
-    const expiredNotifs: any[] = [];
-
-    const notifsList = dbData.notifications || [];
-    for (const item of notifsList) {
-      const ts = item.timestamp ? new Date(item.timestamp).getTime() : (item.id && typeof item.id === 'number' ? item.id : now);
-      if (now - ts > expiryLimit) {
-        expiredNotifs.push(item);
-      } else {
-        activeNotifs.push(item);
-      }
-    }
-
-    if (expiredNotifs.length > 0) {
-      console.log(`[PARDAIS-PARTY NOTIFICATION CLEANER] Automatically cleaning up ${expiredNotifs.length} expired notifications.`);
-      dbData.notifications = activeNotifs;
-      saveDatabase();
-      for (const expired of expiredNotifs) {
-        if (expired.id) {
-          await deleteDocument("notifications", String(expired.id));
-        }
-      }
-    }
-  } catch (err) {
-    console.error("[PARDAIS-PARTY NOTIFICATION CLEANER] Error during clean-up:", err);
-  }
+  // Notifications are permanent history. Do not delete them based on age.
+  return;
 }
 
 // Periodically run cleanup every 10 minutes
@@ -7246,20 +7278,7 @@ app.get("/api/v1/notifications", async (req, res) => {
 });
 
 app.post("/api/v1/notifications", async (req, res) => {
-  const notifId = Date.now();
-  const newNotif = {
-    id: notifId,
-    isNew: true,
-    time: "Just Now",
-    timestamp: new Date().toISOString(),
-    ...req.body
-  };
-  if (!dbData.notifications) {
-    dbData.notifications = [];
-  }
-  dbData.notifications.unshift(newNotif);
-  saveDatabase();
-  await syncDocument("notifications", String(newNotif.id), newNotif);
+  const newNotif = await writeDurableNotification(req.body || {});
   res.status(201).json(newNotif);
 });
 
@@ -7940,6 +7959,16 @@ app.post("/api/v1/chats", (req, res) => {
   dbData.chats.push(newMsg);
   saveDatabase();
   syncDocument("chats", newMsg.id, newMsg);
+  const chatTarget = newMsg.recipientUsername || newMsg.toUsername || newMsg.targetUsername;
+  if (chatTarget && String(chatTarget).toLowerCase() !== String(newMsg.username || newMsg.senderUsername || "").toLowerCase()) {
+    const recipient = (dbData.users || []).find((u: any) => String(u?.username || "").toLowerCase() === String(chatTarget).toLowerCase());
+    if (recipient) await writeDurableNotification({
+      type: "Message", category: "social", title: "💬 New Message",
+      text: `${newMsg.username || newMsg.senderUsername || "Someone"} sent you a message.`,
+      targetUsername: recipient.username, targetUserId: recipient.uid, actorUsername: newMsg.username || newMsg.senderUsername,
+      userAvatar: newMsg.avatar || ""
+    });
+  }
   res.status(201).json(newMsg);
 });
 

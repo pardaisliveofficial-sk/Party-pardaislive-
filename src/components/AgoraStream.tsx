@@ -774,7 +774,7 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
         <div className="w-1/2 h-full relative border-r border-pink-500/20 bg-gradient-to-b from-[#250a2b] via-[#150a21] to-[#1c0822] flex flex-col items-center justify-center p-2 text-center overflow-hidden">
           {/* REAL LOCAL CAMERA: left side of 1v1 / PK */}
           {role === "publisher" && publishCameraTrack && !videoMuted && (
-            <div ref={localVideoContainerRef} className="absolute inset-0 z-10 bg-black" />
+            <div ref={localVideoContainerRef} className="absolute inset-0 z-10 bg-black pardais-live-video" />
           )}
           {/* Animated blurred background */}
           <img 
@@ -845,7 +845,7 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
             return remoteWithVideo ? (
               <div
                 ref={(el) => { remoteVideoRefs.current[String(remoteWithVideo.uid)] = el; }}
-                className="absolute inset-0 z-10 bg-black"
+                className="absolute inset-0 z-10 bg-black pardais-live-video"
               />
             ) : null;
           })()}
@@ -930,7 +930,7 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
     <div className="w-full h-full relative overflow-hidden bg-black flex flex-col items-center justify-center select-none">
       {role === "publisher" ? (
         publishCameraTrack && !videoMuted ? (
-          <div ref={localVideoContainerRef} className="absolute inset-0 z-0 bg-black" />
+          <div ref={localVideoContainerRef} className="absolute inset-0 z-0 bg-black pardais-live-video" />
         ) : (
           <div className="absolute inset-0 z-0 bg-gradient-to-b from-[#1c0d38] via-[#120e2e] to-[#2b0c36]">
             {showCoverPhoto && coverPhoto ? (
@@ -942,14 +942,14 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
           </div>
         )
       ) : (
-        <div className="absolute inset-0 z-0 bg-black">
+        <div className="absolute inset-0 z-0 bg-black pardais-live-video">
           {remoteUsersList.filter(u => remoteVideoStates[String(u.uid)] === true && u.videoTrack).length > 0 ? (
             <div className="w-full h-full relative">
               {remoteUsersList.filter(u => remoteVideoStates[String(u.uid)] === true && u.videoTrack).map((remote, index) => (
                 <div
                   key={String(remote.uid)}
                   ref={(el) => { remoteVideoRefs.current[String(remote.uid)] = el; }}
-                  className={`absolute inset-0 bg-black ${index === 0 ? "block" : "hidden"}`}
+                  className={`absolute inset-0 bg-black pardais-live-video ${index === 0 ? "block" : "hidden"}`}
                 />
               ))}
             </div>
@@ -967,7 +967,7 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
             <div key={String(remote.uid)} className="relative min-h-0 overflow-hidden rounded-lg bg-black">
               <div
                 ref={(el) => { remoteVideoRefs.current[String(remote.uid)] = el; }}
-                className="absolute inset-0 bg-black"
+                className="absolute inset-0 bg-black pardais-live-video"
               />
             </div>
           ))}

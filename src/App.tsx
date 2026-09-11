@@ -1487,6 +1487,8 @@ export default function App() {
       gifts: true,
       transactions: true,
       announcements: true,
+      push: true,
+      sound: true,
     };
   });
 
@@ -6374,13 +6376,14 @@ export default function App() {
     const rect = e.currentTarget.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
+    const visualY = Math.min(rect.height - 120, y + 70);
 
     const heartId = Date.now().toString() + Math.random();
     const colors = ["#ff007f", "#ff3366", "#ef4444", "#ec4899", "#d946ef", "#8b5cf6", "#f59e0b"];
     const randomColor = colors[Math.floor(Math.random() * colors.length)];
 
     setActiveHearts(prev => [...prev, { id: heartId, left: (x / rect.width) * 100 }]);
-    setDoubleTapHearts(prev => [...prev, { id: heartId, x, y, color: randomColor }]);
+    setDoubleTapHearts(prev => [...prev, { id: heartId, x, y: visualY, color: randomColor }]);
 
     setTimeout(() => {
       setActiveHearts(prev => prev.filter(h => h.id !== heartId));
@@ -13833,7 +13836,7 @@ export default function App() {
                               )}
 
                               {/* TRANSPARENT COMMENTS OVERLAY ON TOP OF LIVE VIDEO */}
-                              <div className="absolute bottom-16 left-2 z-20 w-[82%] sm:w-[320px] max-h-[30vh] overflow-y-auto space-y-1.5 pr-1 text-left no-scrollbar pointer-events-none flex flex-col justify-end">
+                              <div className="absolute bottom-[72px] left-2 right-2 z-20 w-auto max-h-[52vh] overflow-y-auto overscroll-contain touch-pan-y space-y-1.5 pr-1 text-left no-scrollbar pointer-events-auto flex flex-col justify-end">
                                 {/* Pinned comment if any */}
                                 {pinnedCommentId && (() => {
                                   const pinnedMsg = chatMessages.find(m => m.id === pinnedCommentId);
@@ -13861,7 +13864,7 @@ export default function App() {
                                 {chatMessages.slice(-20).map(msg => (
                                   <div
                                     key={msg.id}
-                                    className={`pointer-events-auto text-[10px] rounded-xl p-2 backdrop-blur-md border border-white/10 shadow-lg transition-all ${
+                                    className={`pointer-events-auto w-full max-w-[96%] text-[10px] rounded-xl px-2 py-1.5 backdrop-blur-[2px] border border-white/10 shadow-lg transition-all break-words whitespace-normal ${
                                       msg.isSystem
                                         ? "bg-purple-950/50 text-purple-200 border-l-2 border-purple-400"
                                         : msg.isFlagged
@@ -13946,7 +13949,7 @@ export default function App() {
                                         </button>
                                       </div>
                                     ) : (
-                                      <p className="mt-0.5 text-gray-200 font-medium drop-shadow">{msg.message}</p>
+                                      <p className="mt-0.5 text-gray-100 font-medium drop-shadow leading-snug break-words whitespace-normal">{msg.message}</p>
                                     )}
                                   </div>
                                 ))}
@@ -20501,7 +20504,7 @@ export default function App() {
                             {/* TOP HEADER ROW OVERLAYS */}
                             <div className="px-3 py-1 flex items-center justify-between z-10 bg-transparent select-none pt-2">
                               {/* Left Host Bubble */}
-                              <div className="flex items-center space-x-2 bg-black/40 backdrop-blur-md px-2 py-1 rounded-full border border-white/10 shadow-lg">
+                              <div className="flex items-center space-x-2 bg-black/40 backdrop-blur-md px-2 py-1 rounded-2xl border border-white/10 shadow-lg min-w-0 max-w-[55%] shrink">
                                 <div className="relative">
                                   <img
                                     src={liveBroadcasterAvatar || DEFAULT_USER.avatar}
@@ -20511,20 +20514,21 @@ export default function App() {
                                     ✓
                                   </span>
                                 </div>
-                                <div className="flex flex-col text-left pr-1">
-                                  <span className="text-[10px] font-black text-white flex items-center space-x-0.5">
-                                    <span>{liveBroadcasterName}</span>
-                                    <span className="text-blue-400 text-[8px]">✔️</span>
+                                <div className="flex flex-col text-left pr-1 min-w-0 max-w-[150px]">
+                                  <span className="text-[10.5px] font-black text-white flex items-center space-x-0.5 whitespace-nowrap truncate max-w-[150px]">
+                                    <span className="truncate">{liveBroadcasterName}</span>
+                                    <span className="text-blue-400 text-[8px] shrink-0">✔️</span>
                                   </span>
-                                  <div className="flex items-center space-x-1 bg-transparent">
-                                    <span className="text-[7.5px] bg-purple-600 text-white px-1 py-0.2 rounded font-black font-mono">Lv.{liveBroadcasterLevel}</span>
-                                    <span className="text-[7.5px] text-gray-300 font-bold font-mono">Solo Live</span>
+                                  <div className="flex items-center space-x-1 bg-transparent mt-0.5">
+                                    <span className="text-[7.5px] bg-purple-600 text-white px-1 py-0.2 rounded font-black font-mono shrink-0">Lv.{liveBroadcasterLevel}</span>
+                                    <span className="text-[7px] bg-gradient-to-r from-amber-400 to-yellow-500 text-black px-1.5 py-0.2 rounded-full font-black font-mono shrink-0">👑 VIP</span>
+                                    <span className="text-[7px] text-gray-300 font-bold font-mono shrink-0">Solo Live</span>
                                   </div>
                                 </div>
                               </div>
 
-                              {/* Center-Right Connected Viewers & Contributors List */}
-                              <div className="flex items-center space-x-1.5 overflow-x-auto max-w-[120px] no-scrollbar">
+                              {/* Top-right Supporters / viewers — keep this compact in the corner so the host name has room. */}
+                              <div className="ml-auto mr-1 flex items-center justify-end space-x-1.5 overflow-x-auto max-w-[96px] no-scrollbar shrink-0">
                                 {userLiveViewerList.length > 0 ? (
                                   userLiveViewerList.map((viewer, idx) => (
                                     <button
@@ -20561,21 +20565,6 @@ export default function App() {
 
                               {/* Far Right Ranking, Stats & Close */}
                               <div className="flex items-center space-x-1.5">
-                                {/* Ranking 🔥 Button in Solo Live top bar header */}
-                                <button
-                                  onClick={() => {
-                                    setRankingType("host");
-                                    setRankingPeriod("hourly");
-                                    setRankingSearchQuery("");
-                                    setShowRankingModal(true);
-                                  }}
-                                  className="bg-gradient-to-r from-orange-500 via-red-500 to-pink-600 hover:brightness-110 active:scale-95 text-white text-[7.5px] font-black px-2 py-1 rounded-full flex items-center space-x-1 shadow-lg border border-yellow-400/20 transition-all cursor-pointer select-none shrink-0"
-                                  title="Open Rankings"
-                                >
-                                  <Flame className="w-2.5 h-2.5 text-yellow-300 fill-yellow-300 animate-pulse" />
-                                  <span>Ranking 🔥</span>
-                                </button>
-
                                 <div className="bg-black/45 backdrop-blur-md px-2.5 py-1 rounded-full border border-white/5 flex items-center space-x-1 text-[9px] font-black text-white font-mono shadow-md">
                                   <Eye className="w-3 h-3 text-[#66fcf1]" />
                                   <span>{userLiveViewers >= 1000 ? `${(userLiveViewers / 1000).toFixed(1)}K` : userLiveViewers}</span>
@@ -20908,12 +20897,12 @@ export default function App() {
 
                               {/* BOTTOM LIVE CHAT STREAM FEED */}
                               {userLiveChatVisible && (
-                                <div className="h-32 px-3 overflow-y-auto space-y-1 z-10 flex flex-col justify-end pb-1 max-w-[210px]">
-                                  <div className="space-y-1 max-h-full overflow-y-auto scrollbar-none pr-1 bg-transparent">
+                                <div className="h-[42vh] min-h-[150px] max-h-[360px] w-full px-3 overflow-y-auto overscroll-contain touch-pan-y space-y-1 z-10 flex flex-col justify-end pb-1">
+                                  <div className="space-y-1 max-h-full overflow-y-auto scrollbar-none pr-1 bg-transparent w-full">
                                     {userLiveMessages.slice(-15).map(msg => (
                                       <div
                                         key={msg.id}
-                                        className={`text-[9px] rounded-xl p-1 bg-black/35 text-left`}
+                                        className={`w-full text-[9px] rounded-xl p-1.5 bg-black/25 backdrop-blur-[2px] text-left break-words whitespace-normal`}
                                       >
                                         {msg.isSystem ? (
                                           <p className="leading-normal flex items-center flex-wrap gap-1 bg-transparent text-pink-300">
@@ -31204,7 +31193,18 @@ export default function App() {
                           <div className="space-y-1.5 pt-2 bg-transparent">
                             <button
                               type="button"
-                              onClick={() => {
+                              onClick={async () => {
+                                if (activePermissionRequest.type === "notifications" && typeof window !== "undefined" && "Notification" in window) {
+                                  try {
+                                    const result = await Notification.requestPermission();
+                                    if (result !== "granted") {
+                                      const newPerms = { ...permissionStates, notifications: "denied" };
+                                      savePermissionStates(newPerms);
+                                      setActivePermissionRequest(null);
+                                      return;
+                                    }
+                                  } catch {}
+                                }
                                 const newPerms = { ...permissionStates, [activePermissionRequest.type]: "granted" };
                                 savePermissionStates(newPerms);
                                 activePermissionRequest.onGranted();
@@ -31218,7 +31218,17 @@ export default function App() {
                             </button>
                             <button
                               type="button"
-                              onClick={() => {
+                              onClick={async () => {
+                                if (activePermissionRequest.type === "notifications" && typeof window !== "undefined" && "Notification" in window) {
+                                  try {
+                                    const result = await Notification.requestPermission();
+                                    if (result !== "granted") {
+                                      savePermissionStates({ ...permissionStates, notifications: "denied" });
+                                      setActivePermissionRequest(null);
+                                      return;
+                                    }
+                                  } catch {}
+                                }
                                 const newPerms = { ...permissionStates, [activePermissionRequest.type]: "granted" };
                                 savePermissionStates(newPerms);
                                 activePermissionRequest.onGranted();

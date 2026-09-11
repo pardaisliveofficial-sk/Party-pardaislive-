@@ -9,3 +9,10 @@
 ## Validation
 - Modified TypeScript files were checked with delimiter balance and the existing TypeScript environment was inspected.
 - Full build could not be completed in this container because the repository dependencies were not installed before the build timeout. Existing repository dependency errors are unchanged.
+
+## Camera Quality Enhancement
+- Added a live camera presentation enhancement for Agora video surfaces.
+- Default look lifts exposure/brightness, slightly reduces harsh contrast, adds mild saturation and a very subtle softening.
+- Applied consistently to local and remote live video containers so hosts, co-hosts and viewers see the improved result.
+- Does not rotate the device screen or replace the camera device.
+- Kept existing camera ON/OFF and front/back switching behavior unchanged.

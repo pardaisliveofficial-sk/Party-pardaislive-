@@ -461,3 +461,24 @@ button, input, form {
     gap: 4px !important;
   }
 }
+
+/* Pardais Live camera enhancement: ~20% brighter than the raw device preview, with subtle beauty softness.
+   Applied to Agora local and remote video renders so the same look is visible
+   to hosts, co-hosts and viewers without changing the physical device camera. */
+.pardais-live-video video {
+  filter: brightness(1.20) contrast(0.98) saturate(1.10) blur(0.10px);
+  transform-origin: center center;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+
+/* Extra low-light lift on the live video surface without washing out highlights. */
+.pardais-live-video::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 2;
+  background: radial-gradient(circle at 50% 42%, rgba(255,255,255,0.075) 0%, rgba(255,255,255,0.025) 38%, rgba(255,255,255,0) 72%);
+  mix-blend-mode: screen;
+}
