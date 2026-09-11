@@ -32,6 +32,8 @@ interface AgoraStreamProps {
   coHostName?: string;
   coHostVipLevel?: number;
   coHostVideoMuted?: boolean;
+  /** Render subscribed remote video tiles while the local publisher is also publishing (guest rooms). */
+  showGuestRemoteVideos?: boolean;
 }
 
 const sanitizeChannel = (ch: string) => {
@@ -63,7 +65,8 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
   isCoHostMode = false,
   coHostAvatar = "",
   coHostName = "Co-Host",
-  coHostVipLevel = 0
+  coHostVipLevel = 0,
+  showGuestRemoteVideos = false
 }) => {
   // Real Agora States
   const [client, setClient] = useState<IAgoraRTCClient | null>(null);
@@ -245,28 +248,43 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
     };
   }, [role, hostName, remoteUsersList.length]);
 
-  // Real camera/video publisher layer. This is intentionally separate from the
-  // audio engine so camera ON/OFF never tears down the live audio session.
+  // Real camera/video publisher layer. Camera creation is intentionally kept
+  // independent from facingMode so a front/back switch never destroys the
+  // Agora session or briefly leaves a black camera. The existing track is
+  // switched to the selected physical camera instead.
   useEffect(() => {
-    if (role !== "publisher" || !client || !publishCameraTrack) {
-      if (localVideoTrack && role === "publisher" && !publishCameraTrack) {
-        try { client?.unpublish(localVideoTrack).catch(() => {}); } catch (e) {}
-        try { localVideoTrack.stop(); localVideoTrack.close(); } catch (e) {}
-        setLocalVideoTrack(null);
-      }
-      return;
-    }
+    if (role !== "publisher" || !client || !publishCameraTrack || localVideoTrack) return;
 
     let cancelled = false;
     let track: ICameraVideoTrack | null = null;
+
+    const findCameraId = async (AgoraRTC: any, wanted: "user" | "environment") => {
+      try {
+        const cameras = await AgoraRTC.getCameras();
+        if (!Array.isArray(cameras) || cameras.length === 0) return undefined;
+        const normalized = cameras.map((c: any) => ({
+          id: c.deviceId,
+          label: String(c.label || "").toLowerCase()
+        }));
+        const backWords = ["back", "rear", "environment", "world", "camera 0", "camera2"];
+        const frontWords = ["front", "user", "selfie", "facetime"];
+        const words = wanted === "environment" ? backWords : frontWords;
+        const match = normalized.find((c: any) => words.some(w => c.label.includes(w)));
+        return match?.id || normalized[0]?.id;
+      } catch (e) {
+        console.warn("[AGORA VIDEO] Could not enumerate cameras", e);
+        return undefined;
+      }
+    };
 
     const startCamera = async () => {
       try {
         const agoraModule = await import("agora-rtc-sdk-ng");
         const AgoraRTC = (agoraModule as any).default || agoraModule;
+        const cameraId = await findCameraId(AgoraRTC, facingMode);
         track = await AgoraRTC.createCameraVideoTrack({
           encoderConfig: "720p_1",
-          cameraId: undefined
+          ...(cameraId ? { cameraId } : {})
         });
         if (cancelled) {
           track.stop(); track.close();
@@ -274,9 +292,7 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
         }
         setLocalVideoTrack(track);
         await client.publish(track);
-        if (videoMuted || !publishCameraTrack) {
-          await track.setEnabled(false);
-        }
+        if (videoMuted || !publishCameraTrack) await track.setEnabled(false);
         requestAnimationFrame(() => {
           if (localVideoContainerRef.current && track) {
             try { track.play(localVideoContainerRef.current, { fit: "cover", mirror: facingMode === "user" }); } catch (e) {}
@@ -297,7 +313,7 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
       }
       setLocalVideoTrack(null);
     };
-  }, [client, role, publishCameraTrack, facingMode]);
+  }, [client, role, publishCameraTrack]);
 
   // Enable/disable the already-published camera without rebuilding the Agora session.
   useEffect(() => {
@@ -309,6 +325,38 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
       try { localVideoTrack.play(localVideoContainerRef.current, { fit: "cover", mirror: facingMode === "user" }); } catch (e) {}
     }
   }, [publishCameraTrack, videoMuted, localVideoTrack, facingMode, role]);
+
+  // Switch the physical camera in-place. This is the real meaning of the
+  // Rotate button: front <-> back camera, not screen/orientation rotation.
+  useEffect(() => {
+    if (role !== "publisher" || !localVideoTrack || !publishCameraTrack) return;
+    let cancelled = false;
+    const switchPhysicalCamera = async () => {
+      try {
+        const agoraModule = await import("agora-rtc-sdk-ng");
+        const AgoraRTC = (agoraModule as any).default || agoraModule;
+        const cameras = await (AgoraRTC as any).getCameras();
+        if (!Array.isArray(cameras) || cameras.length < 2) {
+          console.warn("[AGORA VIDEO] Fewer than two cameras are available");
+          return;
+        }
+        const labels = cameras.map((c: any) => ({ id: c.deviceId, label: String(c.label || "").toLowerCase() }));
+        const backWords = ["back", "rear", "environment", "world", "camera 0", "camera2"];
+        const frontWords = ["front", "user", "selfie", "facetime"];
+        const words = facingMode === "environment" ? backWords : frontWords;
+        const target = labels.find((c: any) => words.some(w => c.label.includes(w))) || labels[0];
+        if (!target?.id || cancelled) return;
+        await (localVideoTrack as any).setDevice(target.id);
+        if (!cancelled && localVideoContainerRef.current) {
+          try { localVideoTrack.play(localVideoContainerRef.current, { fit: "cover", mirror: facingMode === "user" }); } catch (e) {}
+        }
+      } catch (err) {
+        console.error("[AGORA VIDEO] Front/back camera switch failed", err);
+      }
+    };
+    switchPhysicalCamera();
+    return () => { cancelled = true; };
+  }, [facingMode, localVideoTrack, publishCameraTrack, role]);
 
   // Render remote live video tracks for viewers.
   useEffect(() => {
@@ -691,16 +739,20 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
       <div className="w-full h-full relative overflow-hidden bg-[#0a0814] flex flex-row select-none">
         {/* LEFT HOST (HOST A / MAIN HOST / RED TEAM) */}
         <div className="w-1/2 h-full relative border-r border-pink-500/20 bg-gradient-to-b from-[#250a2b] via-[#150a21] to-[#1c0822] flex flex-col items-center justify-center p-2 text-center overflow-hidden">
+          {/* REAL LOCAL CAMERA: left side of 1v1 / PK */}
+          {role === "publisher" && publishCameraTrack && !videoMuted && (
+            <div ref={localVideoContainerRef} className="absolute inset-0 z-10 bg-black" />
+          )}
           {/* Animated blurred background */}
           <img 
             src={avatarUrl} 
-            className="absolute inset-0 w-full h-full object-cover opacity-35 blur-2xl scale-125 animate-pulse pointer-events-none"
+            className="absolute inset-0 z-0 w-full h-full object-cover opacity-35 blur-2xl scale-125 animate-pulse pointer-events-none"
             alt={hostName}
           />
-          <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/40 pointer-events-none" />
+          <div className="absolute inset-0 z-20 bg-gradient-to-t from-black/80 via-transparent to-black/40 pointer-events-none" />
 
           {/* Central Host A Audio Visualizer */}
-          <div className="relative z-10 flex flex-col items-center space-y-2 my-auto">
+          <div className={`relative z-30 flex flex-col items-center space-y-2 my-auto ${role === "publisher" && publishCameraTrack && !videoMuted ? "opacity-0 pointer-events-none" : ""}`}>
             {/* Audio pulse ring */}
             <div className="relative">
               <div className="absolute -inset-3 rounded-full bg-red-500/30 animate-ping" />
@@ -754,16 +806,26 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
 
         {/* RIGHT HOST (HOST B / OPPONENT / BLUE TEAM) */}
         <div className="w-1/2 h-full relative bg-gradient-to-b from-[#0a1430] via-[#080d1a] to-[#0d1630] flex flex-col items-center justify-center p-2 text-center overflow-hidden">
+          {/* REAL OPPONENT CAMERA: right side of 1v1 / PK */}
+          {(() => {
+            const remoteWithVideo = remoteUsersList.find((u: any) => Boolean(u.videoTrack));
+            return remoteWithVideo ? (
+              <div
+                ref={(el) => { remoteVideoRefs.current[String(remoteWithVideo.uid)] = el; }}
+                className="absolute inset-0 z-10 bg-black"
+              />
+            ) : null;
+          })()}
           {/* Animated blurred background */}
           <img 
             src={coHostAvatarUrl} 
-            className="absolute inset-0 w-full h-full object-cover opacity-35 blur-2xl scale-125 animate-pulse pointer-events-none"
+            className="absolute inset-0 z-0 w-full h-full object-cover opacity-35 blur-2xl scale-125 animate-pulse pointer-events-none"
             alt={coHostName}
           />
-          <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/40 pointer-events-none" />
+          <div className="absolute inset-0 z-20 bg-gradient-to-t from-black/80 via-transparent to-black/40 pointer-events-none" />
 
           {/* Central Host B Audio Visualizer */}
-          <div className="relative z-10 flex flex-col items-center space-y-2 my-auto">
+          <div className={`relative z-30 flex flex-col items-center space-y-2 my-auto ${remoteUsersList.some((u: any) => Boolean(u.videoTrack)) ? "opacity-0 pointer-events-none" : ""}`}>
             {/* Audio pulse ring */}
             <div className="relative">
               <div className="absolute -inset-3 rounded-full bg-blue-500/30 animate-ping" />
@@ -866,6 +928,19 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
           )}
         </div>
       )}
+      {showGuestRemoteVideos && remoteUsersList.some((u: any) => Boolean(u.videoTrack)) && (
+        <div className="absolute inset-0 z-[5] grid grid-cols-2 gap-1 p-1 pointer-events-none bg-black">
+          {remoteUsersList.filter((u: any) => Boolean(u.videoTrack)).slice(0, 8).map((remote: any) => (
+            <div key={String(remote.uid)} className="relative min-h-0 overflow-hidden rounded-lg bg-black">
+              <div
+                ref={(el) => { remoteVideoRefs.current[String(remote.uid)] = el; }}
+                className="absolute inset-0 bg-black"
+              />
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* 2. CENTRAL HOST STATUS OVERLAY */}
       <div className={`relative z-10 flex flex-col items-center text-center space-y-4 max-w-xs mx-auto animate-scale-up ${((role === "publisher" && publishCameraTrack && !videoMuted) || (role === "subscriber" && remoteUsersList.some(u => u.videoTrack))) ? "opacity-0 pointer-events-none" : ""}`}>
         {/* Host status/avatar remains as a lightweight overlay when video is unavailable. */}

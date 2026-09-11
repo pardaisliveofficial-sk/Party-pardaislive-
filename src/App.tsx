@@ -3104,6 +3104,7 @@ export default function App() {
   // Viewer live guest states
   const [viewerLiveGuestModeActive, setViewerLiveGuestModeActive] = useState<boolean>(false);
   const [viewerRequestStatus, setViewerRequestStatus] = useState<"none" | "pending" | "accepted">("none");
+  const [viewerGuestCamEnabled, setViewerGuestCamEnabled] = useState<boolean>(true);
   const [viewerGiftDrawerOpen, setViewerGiftDrawerOpen] = useState<boolean>(false);
   const [viewerLiveGiftRecipient, setViewerLiveGiftRecipient] = useState<string>("Host");
   const [viewerLiveGuestSeats, setViewerLiveGuestSeats] = useState<Array<{
@@ -3126,6 +3127,13 @@ export default function App() {
     { id: 7, name: null, avatar: null, diamonds: null, isMuted: false, isCamMuted: false, isBigFrame: false, isModerator: false },
     { id: 8, name: null, avatar: null, diamonds: null, isMuted: false, isCamMuted: false, isBigFrame: false, isModerator: false }
   ]);
+
+  const viewerIsCurrentlyGuest = viewerLiveGuestSeats.some(s => Boolean(s.name) && (
+    s.name === user?.username ||
+    s.name === "You (Guest)" ||
+    (user?.username && s.name.toLowerCase() === user.username.toLowerCase()) ||
+    (user?.name && s.name.toLowerCase() === user.name.toLowerCase())
+  ));
 
   // Live Chat Messages
   const [chatInput, setChatInput] = useState<string>("");
@@ -4452,9 +4460,11 @@ export default function App() {
             level: user.userLevel || 1,
             fans: user.fans || "12K fans",
             isLive: clientView === "user-live" || clientView === "live-room",
-            inPk: userLivePkConnected || userLivePkActive,
+            inPk: userLivePkActive || userLivePkState === "pk_active" || userLivePkState === "pk_countdown" || userLivePkState === "pk_finished",
             liveCategory: clientView === "user-live"
-              ? (userLivePkConnected || userLivePkActive ? "pk" : (userLiveGuestModeActive ? "guest" : "solo"))
+              ? ((userLivePkActive || userLivePkState === "pk_active" || userLivePkState === "pk_countdown" || userLivePkState === "pk_finished")
+                  ? "pk"
+                  : (userLivePkConnected || userLiveCoHost?.username ? "1v1" : (userLiveGuestModeActive ? "guest" : "solo")))
               : "viewer",
             guestModeActive: Boolean(userLiveGuestModeActive),
             guestSeatCount: activeUserLiveGuestCount
@@ -5260,16 +5270,55 @@ export default function App() {
     }
   }, [clientView, activeHost?.id, activeHost?.category]);
 
+  // Direct Guest Invitation Receiver. This is deliberately independent from the
+  // host-state polling so an invite is still delivered while the viewer is already
+  // inside the host's Solo Live room.
+  useEffect(() => {
+    if (clientView !== "live-room" || !activeHost?.id || !user?.username) return;
+
+    let cancelled = false;
+    const pollGuestInvite = async () => {
+      try {
+        const res = await fetch(`/api/v1/hosts/${encodeURIComponent(activeHost.id)}/invites/${encodeURIComponent(user.username)}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (cancelled) return;
+        if (data?.pendingInvite) {
+          setViewerInvitationPending({
+            seatId: Number(data.pendingInvite.seatId) || 1,
+            hostName: data.pendingInvite.hostName || activeHost.name || "Host"
+          });
+          setViewerRequestStatus("pending");
+        }
+      } catch (_) {}
+    };
+
+    pollGuestInvite();
+    const interval = window.setInterval(pollGuestInvite, 700);
+    return () => { cancelled = true; window.clearInterval(interval); };
+  }, [clientView, activeHost?.id, activeHost?.name, user?.username]);
+
   // Host Side Live State Synchronizer (Pushes camera status, pulls viewers, comments, gifts, likes & join events in real-time)
   useEffect(() => {
     if (clientView !== "user-live" || !user?.username) return;
 
     const hostId = `h-${user.uniqueId || user.username || "pardais_1001"}`;
     const syncHostState = () => {
-      const isPk = Boolean(userLivePkActive || userLivePkConnected || userLiveCoHost?.username);
-      const isGuest = Boolean(userLiveGuestModeActive || (Array.isArray(userLiveGuestSeats) && userLiveGuestSeats.some(s => s.name !== null)));
-      const currentCategory = isPk ? "pk" : (isGuest ? "guest" : "video");
-      const currentSubCategory = isPk ? (prepLiveCategory === "1v1" ? "1v1" : "PK") : (isGuest ? "Guest" : (prepLiveCategory || "Solo"));
+      // Canonical live mode is mutually exclusive and is what every viewer should see.
+      const isPk = Boolean(
+        userLivePkActive ||
+        userLivePkState === "pk_active" ||
+        userLivePkState === "pk_countdown" ||
+        userLivePkState === "pk_finished"
+      );
+      const isOneVsOne = !isPk && Boolean(userLivePkConnected || userLiveCoHost?.username);
+      const isGuest = !isPk && !isOneVsOne && Boolean(
+        userLiveGuestModeActive ||
+        (Array.isArray(userLiveGuestSeats) && userLiveGuestSeats.some(s => s.name !== null))
+      );
+      const liveMode = isPk ? "pk" : (isOneVsOne ? "1v1" : (isGuest ? "guest" : "solo"));
+      const currentCategory = liveMode === "pk" ? "pk" : (liveMode === "1v1" ? "1v1" : (liveMode === "guest" ? "guest" : "video"));
+      const currentSubCategory = liveMode === "pk" ? "PK" : (liveMode === "1v1" ? "1v1" : (liveMode === "guest" ? "Guest" : "Solo"));
 
       fetch(`/api/v1/hosts/${hostId}`, {
         method: "PUT",
@@ -5285,6 +5334,7 @@ export default function App() {
           vipLevel: user.vipLevel || 0,
           cameraEnabled: userLiveCam,
           isCamOff: !userLiveCam,
+          liveMode,
           pkActive: isPk,
           inPk: isPk,
           pkScoreHost: userLivePkScoreMy,
@@ -5318,6 +5368,12 @@ export default function App() {
           }
           if (Array.isArray(data.connectedViewers)) {
             setUserLiveViewerList(data.connectedViewers);
+          }
+          // Keep host-side guest seats synchronized with the authoritative backend.
+          // This prevents the 1-second host PUT loop from overwriting a guest seat
+          // that was just accepted by the invited viewer.
+          if (Array.isArray(data.guestSeats)) {
+            setUserLiveGuestSeats(data.guestSeats);
           }
           // Synchronize total likes
           if (data.likes !== undefined) {
@@ -5486,17 +5542,35 @@ export default function App() {
             triggerJoinNotif(data.lastJoinEvent.username, data.lastJoinEvent.userLevel, data.lastJoinEvent.vipLevel);
           }
 
-          // Sync PK battle score & active state
-          const isHostPkActive = Boolean(
-            data.pkActive || 
-            data.inPk || 
-            data.category === "pk" || 
-            data.subCategory === "PK" || 
-            data.subCategory === "1v1" || 
-            data.coHostUsername
-          );
-          if (data.pkActive !== undefined || data.inPk !== undefined || isHostPkActive) {
-            setUserLivePkActive(isHostPkActive);
+          // Canonical live mode synchronization. The server's liveMode is the
+          // single source of truth for viewers: solo, guest, 1v1 or pk.
+          const liveMode = String(
+            data.liveMode ||
+            (data.category === "pk" ? "pk" :
+              (data.category === "1v1" || data.subCategory === "1v1" ? "1v1" :
+                (data.category === "guest" || data.guestModeActive ? "guest" : "solo")))
+          ).toLowerCase();
+          const isHostPkActive = liveMode === "pk";
+          const isHostOneVsOne = liveMode === "1v1";
+          const isHostGuestMode = liveMode === "guest";
+
+          // Immediately clear stale mode state when the host changes mode.
+          // This is what prevents a viewer from remaining on the previous PK
+          // screen after the host returns to 1v1/guest/solo.
+          setUserLivePkActive(isHostPkActive);
+          setViewerLiveGuestModeActive(isHostGuestMode);
+          if (liveMode === "solo") {
+            setUserLivePkState("idle");
+            setUserLivePkCountdown(0);
+            setUserLivePkWinner(null);
+            setViewerLiveGuestSeats([]);
+          } else if (isHostOneVsOne) {
+            setUserLivePkState("1v1_connected");
+            setUserLivePkCountdown(0);
+            setUserLivePkWinner(null);
+            setViewerLiveGuestSeats([]);
+          } else if (isHostGuestMode) {
+            setUserLivePkState("idle");
           }
           if (data.pkScoreHost !== undefined) {
             setPkScoreHost(data.pkScoreHost);
@@ -5514,17 +5588,8 @@ export default function App() {
             setPkTimer(data.pkTimer);
           }
 
-          // Sync guest mode state & seats
-          const isHostGuestMode = Boolean(
-            data.guestModeActive || 
-            data.subCategory === "Guest" || 
-            data.subCategory === "Multi-guest" || 
-            data.category === "guest" || 
-            (Array.isArray(data.guestSeats) && data.guestSeats.some((s: any) => s.name !== null))
-          );
-          setViewerLiveGuestModeActive(isHostGuestMode);
-
-          if (Array.isArray(data.guestSeats)) {
+          // Sync guest seats from the same authoritative host snapshot.
+          if (isHostGuestMode && Array.isArray(data.guestSeats)) {
             setViewerLiveGuestSeats(data.guestSeats);
           }
 
@@ -5574,16 +5639,19 @@ export default function App() {
               level: data.hostLevel || data.level || prev.level || 1,
               cameraEnabled: isCamOn,
               isCamOff: !isCamOn,
-              category: data.category || prev.category,
-              subCategory: data.subCategory || prev.subCategory,
+              liveMode,
+              category: liveMode === "pk" ? "pk" : (liveMode === "1v1" ? "1v1" : (liveMode === "guest" ? "guest" : "video")),
+              subCategory: liveMode === "pk" ? "PK" : (liveMode === "1v1" ? "1v1" : (liveMode === "guest" ? "Guest" : "Solo")),
               guestModeActive: isHostGuestMode,
-              coHostUsername: data.coHostUsername !== undefined ? data.coHostUsername : prev.coHostUsername,
-              coHostAvatar: data.coHostAvatar !== undefined ? data.coHostAvatar : prev.coHostAvatar,
-              coHostVipLevel: data.coHostVipLevel !== undefined ? Number(data.coHostVipLevel) : Number(prev.coHostVipLevel || 0),
-              opponentName: data.coHostUsername || data.opponentName || prev.opponentName,
-              opponentAvatar: data.coHostAvatar || data.opponentAvatar || prev.opponentAvatar,
+              guestSeats: isHostGuestMode ? (Array.isArray(data.guestSeats) ? data.guestSeats : prev.guestSeats || []) : [],
+              coHostUsername: (liveMode === "pk" || liveMode === "1v1") ? (data.coHostUsername !== undefined ? data.coHostUsername : prev.coHostUsername) : undefined,
+              coHostAvatar: (liveMode === "pk" || liveMode === "1v1") ? (data.coHostAvatar !== undefined ? data.coHostAvatar : prev.coHostAvatar) : undefined,
+              coHostVipLevel: (liveMode === "pk" || liveMode === "1v1") ? (data.coHostVipLevel !== undefined ? Number(data.coHostVipLevel) : Number(prev.coHostVipLevel || 0)) : 0,
+              opponentName: (liveMode === "pk" || liveMode === "1v1") ? (data.coHostUsername || data.opponentName || prev.opponentName) : undefined,
+              opponentAvatar: (liveMode === "pk" || liveMode === "1v1") ? (data.coHostAvatar || data.opponentAvatar || prev.opponentAvatar) : undefined,
               inPk: isHostPkActive,
-              pkActive: isHostPkActive
+              pkActive: isHostPkActive,
+              pkState: isHostPkActive ? (data.pkState || prev.pkState) : (liveMode === "1v1" ? "1v1_connected" : "idle")
             };
           });
         })
@@ -12786,6 +12854,21 @@ export default function App() {
                                     <span>Tap to Send Hearts</span>
                                   </button>
 
+                                  {/* Guest Camera Toggle — real camera publish control */}
+                                  {viewerIsCurrentlyGuest && (
+                                    <button
+                                      onClick={() => setViewerGuestCamEnabled(prev => !prev)}
+                                      className={`w-full py-1.5 rounded-lg text-[8px] font-black uppercase tracking-wider flex items-center justify-center space-x-1 transition-all cursor-pointer active:scale-95 border ${
+                                        viewerGuestCamEnabled
+                                          ? "bg-emerald-600/80 hover:bg-emerald-500 text-white border-emerald-400/30"
+                                          : "bg-red-600/80 hover:bg-red-500 text-white border-red-400/30"
+                                      }`}
+                                    >
+                                      {viewerGuestCamEnabled ? <Camera className="w-3 h-3" /> : <CameraOff className="w-3 h-3" />}
+                                      <span>{viewerGuestCamEnabled ? "Camera On" : "Camera Off"}</span>
+                                    </button>
+                                  )}
+
                                   {/* Exit Broadcast */}
                                   <button
                                     onClick={() => {
@@ -13417,16 +13500,17 @@ export default function App() {
                                   }
                                   role={isViewerOnGuestSeat ? "publisher" : "subscriber"}
                                   userId={user.username || user.uniqueId || "viewer_101"}
-                                  publishCameraTrack={false}
+                                  publishCameraTrack={isViewerOnGuestSeat && viewerGuestCamEnabled}
                                   publishMicrophoneTrack={isViewerOnGuestSeat && !isViewerGuestSeatMuted}
                                   muted={isViewerOnGuestSeat ? isViewerGuestSeatMuted : false}
-                                  videoMuted={activeHost.category === "audio" || activeHost.cameraEnabled === false || activeHost.isCamOff === true || activeHost.cameraMuted === true}
+                                  videoMuted={isViewerOnGuestSeat ? !viewerGuestCamEnabled : (activeHost.category === "audio" || activeHost.cameraEnabled === false || activeHost.isCamOff === true || activeHost.cameraMuted === true)}
                                   hostAvatar={activeHost.avatar || activeHost.hostAvatar || liveBroadcasterAvatar}
                                   hostName={activeHost.name || activeHost.hostUsername || liveBroadcasterName}
                                   vipLevel={Number(activeHost.vipLevel || 0)}
                                   coHostVipLevel={Number(activeHost.coHostVipLevel || activeHost.opponentVipLevel || 0)}
                                   coverPhoto={activeHost.coverPhoto || userLiveCoverPhoto}
                                   showCoverPhoto={activeHost.showCoverPhoto !== undefined ? activeHost.showCoverPhoto : userLiveShowCoverPhoto}
+                                  showGuestRemoteVideos={viewerLiveGuestModeActive}
                                   isCoHostMode={Boolean(
                                     activeHost.category === "pk" ||
                                     activeHost.category === "1v1" ||
@@ -13590,13 +13674,11 @@ export default function App() {
                               {/* PK SCORE PROGRESS BAR & SYSTEM COMMENT (LOWERED & CENTERED IN GAP) */}
                               {(() => {
                                 const isPkMatch = Boolean(
+                                  activeHost.liveMode === "pk" ||
                                   activeHost.category === "pk" ||
-                                  activeHost.category === "1v1" ||
-                                  activeHost.subCategory === "pk" ||
-                                  activeHost.subCategory === "1v1" ||
+                                  activeHost.subCategory === "PK" ||
                                   activeHost.inPk ||
-                                  activeHost.coHostUsername ||
-                                  activeHost.coHostName
+                                  activeHost.pkActive
                                 );
 
                                 if (!isPkMatch) return null;
@@ -18961,6 +19043,7 @@ export default function App() {
                                     coverPhoto={userLiveCoverPhoto}
                                     showCoverPhoto={userLiveShowCoverPhoto}
                                     isCoHostMode={Boolean(userLivePkConnected || userLiveCoHost)}
+                                    showGuestRemoteVideos={userLiveGuestModeActive}
                                     coHostAvatar={userLiveCoHost?.avatar}
                                     coHostName={userLiveCoHost?.username}
                                     coHostVideoMuted={userLiveCoHost?.isCamOff}
@@ -19618,6 +19701,18 @@ export default function App() {
                                       <span className="text-emerald-400">●</span>
                                       <span>{userLiveViewers >= 1000 ? `${(userLiveViewers / 1000).toFixed(1)}K` : userLiveViewers}</span>
                                     </div>
+                                    {/* PK Camera ON/OFF — same live camera control used in Solo */}
+                                    <button
+                                      type="button"
+                                      onClick={() => setUserLiveCam(prev => !prev)}
+                                      className={`w-6 h-6 rounded-full flex items-center justify-center border shadow-md active:scale-90 transition-all ${
+                                        userLiveCam ? "bg-emerald-600/90 border-emerald-300 text-white" : "bg-red-600/90 border-red-300 text-white"
+                                      }`}
+                                      title={userLiveCam ? "Turn PK Camera Off" : "Turn PK Camera On"}
+                                    >
+                                      {userLiveCam ? <Camera className="w-3.5 h-3.5" /> : <CameraOff className="w-3.5 h-3.5" />}
+                                    </button>
+
                                     {/* Multi-function Close Button */}
                                     <button
                                       onClick={() => setUserLiveShowExitOptions(true)}
@@ -19640,6 +19735,7 @@ export default function App() {
                                       publishCameraTrack={userLiveCam}
                                       publishMicrophoneTrack={userLiveMic}
                                       videoMuted={!userLiveCam}
+                                      facingMode={cameraFacingMode}
                                       hostAvatar={user.avatar || DEFAULT_USER.avatar}
                                       hostName={user.username || DEFAULT_USER.username}
                                       vipLevel={Number(user.vipLevel || 0)}
@@ -22188,6 +22284,7 @@ export default function App() {
                                   <button
                                     onClick={() => {
                                       setViewerRequestStatus("accepted");
+                                      setViewerGuestCamEnabled(true);
                                       const targetSeatId = viewerInvitationPending.seatId;
                                       
                                       const updatedSeats = [...viewerLiveGuestSeats];

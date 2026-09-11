@@ -4009,11 +4009,39 @@ function syncHostPkScores(host: any) {
     }
   });
 
-  if (!activePkMatch && host.inPk) {
+  // Canonical live mode: every client (host, guest and viewer) reads the same
+  // authoritative mode from this host record. A PK/1v1 session owns the mode;
+  // when no session exists we fall back to the host's current guest/solo state.
+  if (!activePkMatch) {
     host.inPk = false;
     host.pkActive = false;
+    host.pkState = "idle";
+    host.pkTimer = 0;
+    host.pkScoreHost = 0;
+    host.pkScoreOpponent = 0;
+    host.coHostUsername = undefined;
+    host.coHostAvatar = undefined;
+    host.coHostVipLevel = 0;
     if (host.originalChannelName) {
       host.channelName = host.originalChannelName;
+    }
+
+    const hasGuest = Boolean(
+      host.guestModeActive ||
+      host.category === "guest" ||
+      host.subCategory === "Guest" ||
+      host.subCategory === "Multi-guest" ||
+      (Array.isArray(host.guestSeats) && host.guestSeats.some((seat: any) => seat && seat.name))
+    );
+    const previousLiveMode = host.liveMode;
+    host.liveMode = hasGuest ? "guest" : "solo";
+    host.category = hasGuest ? "guest" : "video";
+    host.subCategory = hasGuest ? "Guest" : "Solo";
+    if (previousLiveMode !== host.liveMode) {
+      host.liveStateVersion = Number(host.liveStateVersion || 0) + 1;
+      host.liveStateUpdatedAt = new Date().toISOString();
+    } else {
+      host.liveStateVersion = Number(host.liveStateVersion || 1);
     }
   }
 }
@@ -4136,6 +4164,9 @@ app.post("/api/v1/live/session", (req, res) => {
     status: "LIVE",
     isLive: true,
     streamType: "SOLO",
+    liveMode: "solo",
+    liveStateVersion: 1,
+    liveStateUpdatedAt: new Date().toISOString(),
     inPk: false,
     category: sessionData.category || "video",
     viewers: sessionData.viewers || 0,
@@ -4171,6 +4202,9 @@ app.post("/api/v1/hosts", (req, res) => {
     hostAvatar: hostData.hostAvatar || hostData.avatar || "",
     isLive: true,
     status: "LIVE",
+    liveMode: "solo",
+    liveStateVersion: 1,
+    liveStateUpdatedAt: new Date().toISOString(),
     category: hostData.category || "video",
     viewers: hostData.viewers || 0,
     realViewerCount: hostData.realViewerCount || 0,
@@ -4244,7 +4278,47 @@ app.put("/api/v1/hosts/:id", (req, res) => {
       updateData.lastJoinEvent = existing.lastJoinEvent;
     }
 
-    dbData.hosts[index] = { ...existing, ...updateData, lastSeen: Date.now(), updatedAt: new Date().toISOString() };
+    const mergedHost = { ...existing, ...updateData, lastSeen: Date.now(), updatedAt: new Date().toISOString() };
+    // The host heartbeat is the authoritative live-mode update for viewers.
+    // Prefer explicit liveMode when supplied; otherwise derive it from the
+    // mutually-exclusive PK/1v1/guest/solo flags.
+    if (mergedHost.liveMode !== "pk" && mergedHost.liveMode !== "1v1" && mergedHost.liveMode !== "guest" && mergedHost.liveMode !== "solo") {
+      mergedHost.liveMode = mergedHost.pkActive || mergedHost.inPk
+        ? "pk"
+        : (mergedHost.guestModeActive || (Array.isArray(mergedHost.guestSeats) && mergedHost.guestSeats.some((seat: any) => seat && seat.name)) ? "guest" : "solo");
+    }
+    if (mergedHost.liveMode === "solo") {
+      mergedHost.category = "video";
+      mergedHost.subCategory = "Solo";
+      mergedHost.inPk = false;
+      mergedHost.pkActive = false;
+      mergedHost.pkState = "idle";
+    } else if (mergedHost.liveMode === "guest") {
+      mergedHost.category = "guest";
+      mergedHost.subCategory = "Guest";
+      mergedHost.inPk = false;
+      mergedHost.pkActive = false;
+      mergedHost.pkState = "idle";
+    } else if (mergedHost.liveMode === "1v1") {
+      mergedHost.category = "1v1";
+      mergedHost.subCategory = "1v1";
+      mergedHost.inPk = false;
+      mergedHost.pkActive = false;
+      mergedHost.pkState = "1v1_connected";
+    } else if (mergedHost.liveMode === "pk") {
+      mergedHost.category = "pk";
+      mergedHost.subCategory = "PK";
+      mergedHost.inPk = true;
+    }
+    const previousMode = existing.liveMode || existing.category || "solo";
+    if (previousMode !== mergedHost.liveMode) {
+      mergedHost.liveStateVersion = Number(existing.liveStateVersion || 0) + 1;
+      mergedHost.liveStateUpdatedAt = new Date().toISOString();
+    } else {
+      mergedHost.liveStateVersion = Number(existing.liveStateVersion || 1);
+      mergedHost.liveStateUpdatedAt = existing.liveStateUpdatedAt || new Date().toISOString();
+    }
+    dbData.hosts[index] = mergedHost;
     syncHostPkScores(dbData.hosts[index]);
     saveDatabase();
     syncDocument("hosts", dbData.hosts[index].id, dbData.hosts[index]);
@@ -4811,7 +4885,9 @@ function getSynchronizedPkSession(activeSession: any, now: number = Date.now()) 
     activeSession.pkActive = false;
     activeSession.timer = 0;
     activeSession.countdown = 0;
-  } else if (activeSession.pkState === "pk_countdown" || (startedAtMs && now < startedAtMs)) {
+  } else if (activeSession.pkState === "pk_countdown" && now < startedAtMs) {
+    // Keep the countdown only while the 3-second pre-match window is actually running.
+    // Once startedAt is reached, the next poll MUST transition to pk_active.
     activeSession.pkState = "pk_countdown";
     activeSession.countdown = Math.max(0, Math.ceil((startedAtMs - now) / 1000));
     activeSession.pkActive = false;
@@ -4895,9 +4971,23 @@ function getSynchronizedPkSession(activeSession: any, now: number = Date.now()) 
     dbData.hosts.forEach((h: any) => {
       const hNorm = h.hostUsername?.toLowerCase() || h.name?.toLowerCase();
       if (hNorm === normA || hNorm === normB) {
-        h.inPk = true;
-        h.category = "pk";
-        h.subCategory = activeSession.pkState === "pk_active" ? "pk" : "1v1";
+        const sessionMode = activeSession.pkState === "1v1_connected" ? "1v1" : "pk";
+        h.liveMode = sessionMode;
+        h.inPk = sessionMode === "pk";
+        h.category = sessionMode === "pk" ? "pk" : "1v1";
+        h.subCategory = sessionMode === "pk" ? "PK" : "1v1";
+        h.coHostUsername = (hNorm === normA ? activeSession.hostB?.username : activeSession.hostA?.username) || undefined;
+        h.coHostAvatar = (hNorm === normA ? activeSession.hostB?.avatar : activeSession.hostA?.avatar) || undefined;
+        h.coHostVipLevel = Number((hNorm === normA ? activeSession.hostB?.vipLevel : activeSession.hostA?.vipLevel) || 0);
+        const previousLiveMode = h.liveMode;
+        h.pkState = activeSession.pkState;
+        h.pkStateUpdatedAt = new Date().toISOString();
+        if (previousLiveMode !== sessionMode) {
+          h.liveStateVersion = Number(h.liveStateVersion || 0) + 1;
+          h.liveStateUpdatedAt = new Date().toISOString();
+        } else {
+          h.liveStateVersion = Number(h.liveStateVersion || 1);
+        }
         h.pkScoreHost = activeSession.hostA?.score || 0;
         h.pkScoreOpponent = activeSession.hostB?.score || 0;
         h.multiplierA = multiplierA;
@@ -5404,7 +5494,13 @@ app.post("/api/v1/pk/end", (req, res) => {
       dbData.hosts.forEach((h: any) => {
         if (h.hostUsername?.toLowerCase() === normA || h.hostUsername?.toLowerCase() === normB) {
           h.inPk = false;
-          h.category = "video";
+          h.pkActive = false;
+          h.pkState = "idle";
+          h.liveMode = h.guestModeActive ? "guest" : "solo";
+          h.category = h.guestModeActive ? "guest" : "video";
+          h.subCategory = h.guestModeActive ? "Guest" : "Solo";
+          h.liveStateVersion = Number(h.liveStateVersion || 0) + 1;
+          h.liveStateUpdatedAt = new Date().toISOString();
           h.streamType = "SOLO";
         }
       });
