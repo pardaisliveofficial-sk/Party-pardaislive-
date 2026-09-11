@@ -19179,6 +19179,7 @@ export default function App() {
                                     isCoHostMode={Boolean(userLivePkConnected || userLiveCoHost)}
                                     showGuestRemoteVideos={userLiveGuestModeActive}
                                     liveFilter={userLiveFaceFilter}
+                                    beautySettings={userLiveBeauty}
                                     coHostAvatar={userLiveCoHost?.avatar}
                                     coHostName={userLiveCoHost?.username}
                                     coHostVideoMuted={userLiveCoHost?.isCamOff}
@@ -19867,6 +19868,8 @@ export default function App() {
                                       coHostName={userLiveCoHost?.username}
                                       coHostVipLevel={Number(userLiveCoHost?.vipLevel || 0)}
                                       coHostVideoMuted={userLiveCoHost?.isCamOff}
+                                      liveFilter={userLiveFaceFilter}
+                                      beautySettings={userLiveBeauty}
                                       onPublishSuccess={handleHostPublishSuccess}
                                     />
                                   </div>
@@ -21465,7 +21468,7 @@ export default function App() {
                                     <span className="font-mono text-pink-400">{userLiveFaceFilter}</span>
                                   </div>
                                   <div className="grid grid-cols-3 gap-1.5 max-h-28 overflow-y-auto pr-0.5">
-                                    {["Original","Natural Beauty","Soft Glow","Fresh Skin","Cat","Bunny","Dog","Devil Horns","Crown","Cool Glasses","Hearts","Flower Crown","Sparkle","Alien"].map((f) => (
+                                    {["Original","Natural Beauty","Glass Skin","Soft Glow","Fresh Skin","Cat","Bunny","Dog","Devil Horns","Crown","Cool Glasses","Hearts","Flower Crown","Sparkle","Alien"].map((f) => (
                                       <button key={f} type="button" onClick={() => setUserLiveFaceFilter(f)} className={`px-1.5 py-1.5 rounded-lg border text-[7px] font-black ${userLiveFaceFilter === f ? "bg-pink-500/20 border-pink-500 text-white" : "bg-white/5 border-white/10 text-gray-300"}`}>
                                         {f === "Cat" ? "🐱 Cat" : f === "Bunny" ? "🐰 Bunny" : f === "Dog" ? "🐶 Dog" : f === "Devil Horns" ? "😈 Horns" : f === "Crown" ? "👑 Crown" : f === "Cool Glasses" ? "😎 Glasses" : f === "Hearts" ? "❤️ Hearts" : f === "Flower Crown" ? "🌸 Flower" : f === "Sparkle" ? "✨ Sparkle" : f === "Alien" ? "👽 Alien" : f}
                                       </button>
@@ -22660,15 +22663,6 @@ export default function App() {
                                   </button>
                                   <button
                                     onClick={() => {
-                                      setUserLiveShowBeautyModal(true);
-                                      setUserLiveShowMoreModal(false);
-                                    }}
-                                    className="p-2 rounded bg-white/5 hover:bg-white/10 text-white border border-white/5 text-center font-bold text-[8px] cursor-pointer"
-                                  >
-                                    ✨ Beauty & Filters
-                                  </button>
-                                  <button
-                                    onClick={() => {
                                       setUserLiveShowMusicModal(true);
                                       setUserLiveShowMoreModal(false);
                                     }}
@@ -23108,6 +23102,7 @@ export default function App() {
                               {[
                                 { id: "mute", label: userLiveMic ? "Mute" : "Unmute", icon: userLiveMic ? "🔇" : "🎙️" },
                                 { id: "camera", label: userLiveCam ? "Camera" : "Camera Off", icon: userLiveCam ? "📷" : "🚫" },
+                                { id: "beauty", label: "Beauty", icon: "✨" },
                                 { id: "cohost", label: "Invite Host", icon: "👥", primary: true },
                                 { id: "more", label: "More", icon: "•••" }
                               ].map((btn) => (
@@ -23119,6 +23114,8 @@ export default function App() {
                                       alert(userLiveMic ? "🎙️ Broadcast Mic is now MUTED" : "🎙️ Broadcast Mic is now LIVE / UNMUTED");
                                     } else if (btn.id === "camera") {
                                       setUserLiveCam(prev => !prev);
+                                    } else if (btn.id === "beauty") {
+                                      setUserLiveShowBeautyModal(true);
                                     } else if (btn.id === "cohost") {
                                       setUserLivePkInvitePanelOpen(true);
                                     } else if (btn.id === "more") {

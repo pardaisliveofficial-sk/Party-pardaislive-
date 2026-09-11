@@ -36,7 +36,175 @@ interface AgoraStreamProps {
   showGuestRemoteVideos?: boolean;
   /** Free, render-only face/beauty overlay. It never modifies the Agora camera track. */
   liveFilter?: string;
+  beautySettings?: { smooth: number; brightness: number; whitening: number };
 }
+
+
+
+/**
+ * Free, client-side Face Landmarker overlay.
+ *
+ * IMPORTANT: this never replaces, transforms, or republishes the Agora camera
+ * track. It only renders an effect layer above the already-working video.
+ * MediaPipe is loaded at runtime from the public CDN so no paid SDK/license
+ * is required. If the model cannot load, the Agora camera remains untouched.
+ */
+const TrackedFaceEffects: React.FC<{ videoContainerRef: React.RefObject<HTMLDivElement | null>; effect: string; enabled: boolean; beautySettings?: { smooth: number; brightness: number; whitening: number } }> = ({ videoContainerRef, effect, enabled, beautySettings = { smooth: 70, brightness: 80, whitening: 50 } }) => {
+  const [face, setFace] = useState<any | null>(null);
+  const [trackingReady, setTrackingReady] = useState(false);
+
+  useEffect(() => {
+    if (!enabled || effect === "Original" || !videoContainerRef.current) {
+      setFace(null);
+      return;
+    }
+    let cancelled = false;
+    let landmarker: any = null;
+    let raf = 0;
+    let lastVideo: HTMLVideoElement | null = null;
+    let lastTs = -1;
+
+    const start = async () => {
+      try {
+        // Runtime import keeps the core Agora bundle independent of the AR engine.
+        const mod: any = await import(/* @vite-ignore */ "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22-rc.20250304/vision_bundle.mjs");
+        if (cancelled) return;
+        const { FaceLandmarker, FilesetResolver } = mod;
+        const vision = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22-rc.20250304/wasm");
+        landmarker = await FaceLandmarker.createFromOptions(vision, {
+          baseOptions: {
+            modelAssetPath: "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
+            delegate: "GPU"
+          },
+          runningMode: "VIDEO",
+          numFaces: 1,
+          minFaceDetectionConfidence: 0.45,
+          minFacePresenceConfidence: 0.45,
+          minTrackingConfidence: 0.45,
+          outputFaceBlendshapes: true,
+          outputFacialTransformationMatrixes: true
+        });
+        if (cancelled) return;
+        setTrackingReady(true);
+
+        const tick = () => {
+          if (cancelled) return;
+          const container = videoContainerRef.current;
+          const video = container?.querySelector("video") as HTMLVideoElement | null;
+          if (video && video.readyState >= 2 && video.videoWidth > 0 && video.videoHeight > 0 && landmarker) {
+            if (video !== lastVideo) { lastVideo = video; lastTs = -1; }
+            const now = performance.now();
+            if (now - lastTs > 33) {
+              try {
+                const result = landmarker.detectForVideo(video, now);
+                const lm = result?.faceLandmarks?.[0];
+                if (lm?.length) setFace(lm);
+                else setFace(null);
+                lastTs = now;
+              } catch { /* keep camera alive if a frame is temporarily unavailable */ }
+            }
+          }
+          raf = requestAnimationFrame(tick);
+        };
+        tick();
+      } catch (err) {
+        console.warn("[Pardais AR] Face tracking unavailable; leaving Agora camera untouched.", err);
+        setTrackingReady(false);
+      }
+    };
+    start();
+
+    return () => {
+      cancelled = true;
+      if (raf) cancelAnimationFrame(raf);
+      try { landmarker?.close?.(); } catch {}
+      setFace(null);
+      setTrackingReady(false);
+    };
+  }, [effect, enabled, videoContainerRef]);
+
+  if (!enabled || effect === "Original" || !face || !trackingReady) return null;
+
+  const container = videoContainerRef.current;
+  const video = container?.querySelector("video") as HTMLVideoElement | null;
+  const cw = container?.clientWidth || 1;
+  const ch = container?.clientHeight || 1;
+  const vw = video?.videoWidth || cw;
+  const vh = video?.videoHeight || ch;
+  const coverScale = Math.max(cw / vw, ch / vh);
+  const rw = vw * coverScale;
+  const rh = vh * coverScale;
+  const ox = (cw - rw) / 2;
+  const oy = (ch - rh) / 2;
+  const mirrored = facingMode === "user";
+
+  const pt = (i: number) => {
+    const p = face[i] || { x: 0.5, y: 0.5 };
+    // Agora mirrors the front-camera preview; match the visible preview.
+    const nx = mirrored ? 1 - p.x : p.x;
+    return { x: nx * rw + ox, y: p.y * rh + oy };
+  };
+  const leftCheek = pt(234), rightCheek = pt(454), forehead = pt(10), chin = pt(152);
+  const nose = pt(1), leftEye = pt(33), rightEye = pt(263);
+  const cx = (leftCheek.x + rightCheek.x + forehead.x + chin.x) / 4;
+  const cy = (leftCheek.y + rightCheek.y + forehead.y + chin.y) / 4;
+  const faceW = Math.max(80, Math.hypot(rightCheek.x - leftCheek.x, rightCheek.y - leftCheek.y) * 1.08);
+  const faceH = Math.max(100, Math.hypot(chin.x - forehead.x, chin.y - forehead.y) * 1.04);
+  const eyeAngle = Math.atan2(rightEye.y - leftEye.y, rightEye.x - leftEye.x) * 180 / Math.PI;
+  const eyeMidX = (leftEye.x + rightEye.x) / 2;
+  const eyeMidY = (leftEye.y + rightEye.y) / 2;
+
+  const beauty = ["Natural Beauty", "Soft Glow", "Fresh Skin", "Glass Skin"].includes(effect);
+  const smoothPx = 3 + Math.max(0, Math.min(100, beautySettings.smooth)) * 0.09;
+  const bright = 1 + Math.max(0, Math.min(100, beautySettings.brightness)) * 0.00125;
+  const whiteAlpha = 0.035 + Math.max(0, Math.min(100, beautySettings.whitening)) * 0.00115;
+  const glasses = effect === "Cool Glasses";
+  const crown = effect === "Crown";
+  const cat = effect === "Cat";
+  const bunny = effect === "Bunny";
+  const dog = effect === "Dog";
+  const horns = effect === "Devil Horns";
+  const hearts = effect === "Hearts";
+  const flower = effect === "Flower Crown";
+  const sparkle = effect === "Sparkle";
+  const alien = effect === "Alien";
+
+  const Horn = ({ side }: { side: "l" | "r" }) => (
+    <div style={{
+      position: "absolute", left: side === "l" ? cx - faceW * .42 : cx + faceW * .25,
+      top: forehead.y - faceH * .30, width: faceW * .18, height: faceH * .28,
+      transform: `rotate(${side === "l" ? -28 : 28 + eyeAngle}deg)`, transformOrigin: "bottom center",
+      borderRadius: "70% 30% 55% 45%", background: "linear-gradient(135deg,#ffb26b 0%,#ff3d3d 52%,#8b1e55 100%)",
+      boxShadow: "0 4px 10px rgba(0,0,0,.45)", border: "2px solid rgba(255,255,255,.3)"
+    }} />
+  );
+
+  return (
+    <div className="absolute inset-0 z-[7] pointer-events-none overflow-hidden" aria-hidden="true">
+      {beauty && (
+        <>
+          <div style={{ position: "absolute", left: cx - faceW/2, top: cy - faceH/2, width: faceW, height: faceH, transform: `rotate(${eyeAngle}deg)`, borderRadius: "50%", background: `rgba(255,225,215,${whiteAlpha})`, backdropFilter: `blur(${smoothPx}px) saturate(1.18) brightness(${bright})`, WebkitBackdropFilter: `blur(${smoothPx}px) saturate(1.18) brightness(${bright})`, boxShadow: "inset 0 0 30px rgba(255,220,205,.10)" }} />
+          <div style={{ position: "absolute", left: cx - faceW*.32, top: cy - faceH*.26, width: faceW*.64, height: faceH*.48, transform: `rotate(${eyeAngle}deg)`, borderRadius: "50%", background: "rgba(255,244,238,.06)", filter: "blur(10px)" }} />
+        </>
+      )}
+
+      {glasses && <div style={{ position: "absolute", left: eyeMidX - faceW*.40, top: eyeMidY - faceH*.08, width: faceW*.80, height: faceH*.18, transform: `rotate(${eyeAngle}deg)`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <span style={{ width: faceW*.34, height: faceH*.15, borderRadius: "45%", background: "rgba(12,15,24,.82)", border: "2px solid rgba(255,255,255,.7)", boxShadow: "0 2px 8px rgba(0,0,0,.55)" }} />
+        <span style={{ width: faceW*.34, height: faceH*.15, borderRadius: "45%", background: "rgba(12,15,24,.82)", border: "2px solid rgba(255,255,255,.7)", boxShadow: "0 2px 8px rgba(0,0,0,.55)" }} />
+        <span style={{ position: "absolute", left: "44%", width: "12%", height: 3, background: "rgba(255,255,255,.7)" }} />
+      </div>}
+      {crown && <div style={{ position: "absolute", left: cx - faceW*.43, top: forehead.y - faceH*.30, width: faceW*.86, textAlign: "center", fontSize: Math.max(42, faceW*.38), lineHeight: 1, transform: `rotate(${eyeAngle}deg)`, filter: "drop-shadow(0 3px 7px rgba(0,0,0,.6))" }}>👑</div>}
+      {cat && <><div style={{ position: "absolute", left: cx-faceW*.47, top: forehead.y-faceH*.20, width: faceW*.26, height: faceW*.30, background: "linear-gradient(135deg,#ff9bcd,#ff4d9d)", clipPath:"polygon(0 100%, 20% 0, 100% 75%)", transform:`rotate(${eyeAngle-8}deg)`, borderRadius: "18%" }}/><div style={{ position: "absolute", left: cx+faceW*.21, top: forehead.y-faceH*.20, width: faceW*.26, height: faceW*.30, background: "linear-gradient(135deg,#ff9bcd,#ff4d9d)", clipPath:"polygon(0 75%, 80% 0, 100% 100%)", transform:`rotate(${eyeAngle+8}deg)`, borderRadius: "18%" }}/><div style={{ position:"absolute", left: nose.x-faceW*.12, top:nose.y-faceH*.02, width:faceW*.24, height:faceH*.08, borderRadius:"50%", background:"rgba(255,105,180,.8)" }}/></>}
+      {bunny && <><div style={{position:"absolute",left:cx-faceW*.36,top:forehead.y-faceH*.72,width:faceW*.22,height:faceH*.52,borderRadius:"55% 55% 45% 45%",background:"linear-gradient(#fff,#f7b6da)",transform:`rotate(${eyeAngle-12}deg)`,border:"2px solid rgba(255,255,255,.7)"}}/><div style={{position:"absolute",left:cx+faceW*.14,top:forehead.y-faceH*.72,width:faceW*.22,height:faceH*.52,borderRadius:"55% 55% 45% 45%",background:"linear-gradient(#fff,#f7b6da)",transform:`rotate(${eyeAngle+12}deg)`,border:"2px solid rgba(255,255,255,.7)"}}/></>}
+      {dog && <div style={{position:"absolute",left:cx-faceW*.50,top:forehead.y-faceH*.12,width:faceW,height:faceH*.55,transform:`rotate(${eyeAngle}deg)`,borderRadius:"50%",background:"radial-gradient(circle at 20% 45%,#8b5a2b 0 18%,transparent 19%),radial-gradient(circle at 80% 45%,#8b5a2b 0 18%,transparent 19%)",opacity:.85}} />}
+      {horns && <><Horn side="l"/><Horn side="r"/></>}
+      {hearts && <div style={{position:"absolute",left:cx-faceW*.55,top:forehead.y-faceH*.05,width:faceW*1.1,height:faceH*.8,transform:`rotate(${eyeAngle}deg)`,fontSize:Math.max(24,faceW*.16)}}><span style={{position:"absolute",left:"3%",top:"10%"}}>💕</span><span style={{position:"absolute",right:"3%",top:"24%"}}>💗</span><span style={{position:"absolute",left:"15%",bottom:"3%"}}>❤️</span><span style={{position:"absolute",right:"15%",bottom:"8%"}}>💖</span></div>}
+      {flower && <div style={{position:"absolute",left:cx-faceW*.5,top:forehead.y-faceH*.28,width:faceW,height:faceH*.18,transform:`rotate(${eyeAngle}deg)`,display:"flex",justifyContent:"space-around",fontSize:Math.max(24,faceW*.16)}}><span>🌸</span><span>🌸</span><span>🌸</span><span>🌸</span><span>🌸</span></div>}
+      {sparkle && <div style={{position:"absolute",left:cx-faceW*.65,top:forehead.y-faceH*.05,width:faceW*1.3,height:faceH*.9,transform:`rotate(${eyeAngle}deg)`,background:"radial-gradient(circle at 15% 25%,rgba(255,255,255,.95) 0 2%,transparent 3%),radial-gradient(circle at 85% 32%,rgba(255,215,0,.95) 0 2%,transparent 3%),radial-gradient(circle at 25% 78%,rgba(255,255,255,.9) 0 1.5%,transparent 2%),radial-gradient(circle at 78% 75%,rgba(255,255,255,.85) 0 2%,transparent 3%)",filter:"drop-shadow(0 0 7px rgba(255,255,255,.8))",opacity:.9}} />}
+      {alien && <div style={{position:"absolute",left:cx-faceW*.48,top:eyeMidY-faceH*.18,width:faceW*.96,height:faceH*.36,transform:`rotate(${eyeAngle}deg)`,borderRadius:"50%",background:"rgba(96,255,210,.12)",boxShadow:"inset 0 0 18px rgba(96,255,210,.35)",border:"1px solid rgba(96,255,210,.45)"}}/>}
+    </div>
+  );
+};
 
 const sanitizeChannel = (ch: string) => {
   if (!ch) return "room_default";
@@ -69,7 +237,8 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
   coHostName = "Co-Host",
   coHostVipLevel = 0,
   showGuestRemoteVideos = false,
-  liveFilter = "Original"
+  liveFilter = "Original",
+  beautySettings = { smooth: 70, brightness: 80, whitening: 50 }
 }) => {
   // Real Agora States
   const [client, setClient] = useState<IAgoraRTCClient | null>(null);
@@ -933,37 +1102,8 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
   // apply CSS filter/blur/transform to the Agora <video> element because that
   // can break Android WebView/GPU camera rendering and cause a black screen.
   const renderLiveFilterOverlay = () => {
-    if (!liveFilter || liveFilter === "Original") return null;
-    const isBeauty = ["Natural Beauty", "Soft Glow", "Fresh Skin"].includes(liveFilter);
-    const isCat = liveFilter === "Cat";
-    const isBunny = liveFilter === "Bunny";
-    const isDog = liveFilter === "Dog";
-    const isHorns = liveFilter === "Devil Horns";
-    const isCrown = liveFilter === "Crown";
-    const isGlasses = liveFilter === "Cool Glasses";
-    const isHearts = liveFilter === "Hearts";
-    const isFlower = liveFilter === "Flower Crown";
-    const isSparkle = liveFilter === "Sparkle";
-    const isAlien = liveFilter === "Alien";
-    const emoji = isCat ? "🐱" : isBunny ? "🐰" : isDog ? "🐶" : isHorns ? "😈" : isCrown ? "👑" : isFlower ? "🌸" : isAlien ? "👽" : "";
-    return (
-      <div className="absolute inset-0 z-[6] pointer-events-none overflow-hidden" aria-hidden="true">
-        {isBeauty && (
-          <div className={`absolute inset-0 ${liveFilter === "Natural Beauty" ? "bg-[radial-gradient(ellipse_at_center,rgba(255,245,235,0.10),transparent_62%)]" : liveFilter === "Soft Glow" ? "bg-[radial-gradient(ellipse_at_center,rgba(255,220,240,0.16),transparent_64%)]" : "bg-[radial-gradient(ellipse_at_center,rgba(255,245,220,0.13),transparent_65%)]"}`} />
-        )}
-        {emoji && (
-          <div className="absolute left-1/2 top-[24%] -translate-x-1/2 text-[76px] leading-none drop-shadow-[0_4px_12px_rgba(0,0,0,0.65)] opacity-95">{emoji}</div>
-        )}
-        {isGlasses && <div className="absolute left-1/2 top-[39%] -translate-x-1/2 text-[58px] leading-none opacity-95 drop-shadow-[0_4px_10px_rgba(0,0,0,0.8)]">😎</div>}
-        {isHearts && <div className="absolute inset-0 text-pink-300/80">
-          <span className="absolute left-[18%] top-[24%] text-4xl animate-bounce">💕</span>
-          <span className="absolute right-[18%] top-[32%] text-3xl animate-pulse">❤️</span>
-          <span className="absolute left-[28%] bottom-[28%] text-2xl animate-pulse">💗</span>
-          <span className="absolute right-[28%] bottom-[24%] text-4xl animate-bounce">💖</span>
-        </div>}
-        {isSparkle && <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_35%,rgba(255,255,255,0.20),transparent_22%),radial-gradient(circle_at_25%_25%,rgba(255,215,0,0.18),transparent_15%),radial-gradient(circle_at_78%_42%,rgba(255,255,255,0.16),transparent_14%)] animate-pulse" />}
-      </div>
-    );
+    if (role !== "publisher") return null;
+    return <TrackedFaceEffects videoContainerRef={localVideoContainerRef} effect={liveFilter} enabled={Boolean(liveFilter && liveFilter !== "Original")} beautySettings={beautySettings} />;
   };
 
   return (
