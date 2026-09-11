@@ -356,6 +356,12 @@ async function authenticateUser(req: any, res: any, next: any) {
   if (user) {
     // Every authenticated request receives the same canonical, durable progression fields.
     canonicalizeProgressFields(user);
+    // Persist a one-time legacy level/spending migration immediately so an old
+    // account becomes permanently update-safe even before the next wallet action.
+    if (user.legacyProgressMigratedAt && !user.progressMigrationPersistedAt) {
+      user.progressMigrationPersistedAt = new Date().toISOString();
+      void persistUserDurably(user).catch(() => undefined);
+    }
     req.user = user;
     req.token = token;
     return next();
@@ -3369,7 +3375,44 @@ function getProgressionFromServerCoins(xp: number) {
 
 function canonicalizeProgressFields(user: any) {
   if (!user) return user;
-  const lifetimeSpent = Math.max(0, Number(user.coinSpendTotal ?? user.giftSpentCoins ?? user.xp ?? 0) || 0);
+
+  // Lifetime spending is the ONLY source of Pardais Party user level.
+  // Migrate legacy accounts safely: if an older build stored spending only in
+  // history/giftSpentCoins/xp, recover the largest durable value instead of
+  // interpreting a missing field as zero. This prevents an app/backend update
+  // from dropping an existing user's level back to Level 1.
+  const history = Array.isArray(user.coinSpendHistory) ? user.coinSpendHistory : [];
+  const historyTotal = history.reduce((sum: number, entry: any) => {
+    const amount = Math.max(0, Number(entry?.amount) || 0);
+    return sum + amount;
+  }, 0);
+
+  const legacyLevel = Math.max(1, Math.min(100, Math.floor(Number(user.userLevel ?? user.level) || 1)));
+  const explicitLifetimeSpent = Math.max(
+    0,
+    Number(user.coinSpendTotal) || 0,
+    Number(user.giftSpentCoins) || 0,
+    historyTotal
+  );
+
+  // xp was the legacy progression field. It is now a compatibility mirror of
+  // lifetime spending. If a very old account has a persisted level but no
+  // spending ledger, the level itself is the stronger signal: preserve it by
+  // migrating to that level's minimum cumulative threshold instead of dropping
+  // the account to Level 1 because xp happened to be missing/smaller.
+  const legacyLevelFloor = legacyLevel > 1
+    ? (PARDAIS_LEVEL_THRESHOLDS_SERVER[legacyLevel - 1] || 0)
+    : 0;
+  let lifetimeSpent = Math.max(
+    explicitLifetimeSpent,
+    Number(user.xp) || 0,
+    legacyLevelFloor
+  );
+
+  if (legacyLevelFloor > 0 && explicitLifetimeSpent <= 0) {
+    user.legacyProgressMigratedAt = user.legacyProgressMigratedAt || new Date().toISOString();
+  }
+
   user.coinSpendTotal = lifetimeSpent;
   // xp is retained as the compatibility field, but it now means lifetime coins actually spent.
   user.xp = lifetimeSpent;
@@ -3378,7 +3421,7 @@ function canonicalizeProgressFields(user: any) {
   user.level = progression.level;
   user.vipLevel = progression.vipLevel;
   user.progressUpdatedAt = user.progressUpdatedAt || new Date().toISOString();
-  if (!Array.isArray(user.coinSpendHistory)) user.coinSpendHistory = [];
+  user.coinSpendHistory = history;
   return user;
 }
 
@@ -7530,12 +7573,13 @@ app.post("/api/v1/daily-tasks/claim", authenticateUser, async (req: any, res) =>
   }
 
   const beforeCoins = Number(user.coins) || 0;
-  const beforeXp = Number(user.xp) || 0;
+  // Daily reward coins are spendable wallet balance only. They are NOT lifetime
+  // spending and therefore must never increase the user's level. Keep a separate
+  // legacy-compatible reward XP counter for the UI instead of mutating xp, which
+  // is now reserved for permanent coins actually spent.
   user.coins = beforeCoins + DAILY_COIN_REWARD;
-  user.xp = beforeXp + DAILY_XP_REWARD;
-  const progression = getProgressionFromServerCoins(user.xp);
-  user.userLevel = progression.level;
-  user.vipLevel = progression.vipLevel;
+  user.dailyRewardXp = (Number(user.dailyRewardXp) || 0) + DAILY_XP_REWARD;
+  canonicalizeProgressFields(user);
   user.dailyCoinClaimAt = Date.now();
   user.dailyCoinClaimCount = (Number(user.dailyCoinClaimCount) || 0) + 1;
   user.updatedAt = new Date().toISOString();
@@ -7563,7 +7607,7 @@ app.post("/api/v1/daily-tasks/claim", authenticateUser, async (req: any, res) =>
   const persisted = await persistUserDurably(user);
   if (!persisted) return res.status(503).json({ success: false, error: "Daily reward could not be permanently saved. Please try again." });
   void syncDocument("coinTransactions", tx.id, tx).catch(() => undefined);
-  res.json({ success: true, rewardCoins: DAILY_COIN_REWARD, rewardXp: DAILY_XP_REWARD, remainingCoins: user.coins, xp: user.xp, userLevel: user.userLevel, vipLevel: user.vipLevel, nextClaimAt: Date.now() + 24 * 60 * 60 * 1000 });
+  res.json({ success: true, rewardCoins: DAILY_COIN_REWARD, rewardXp: DAILY_XP_REWARD, remainingCoins: user.coins, xp: user.xp, coinSpendTotal: user.coinSpendTotal, userLevel: user.userLevel, vipLevel: user.vipLevel, nextClaimAt: Date.now() + 24 * 60 * 60 * 1000 });
 });
 
 // ------------------------------------------------------------------

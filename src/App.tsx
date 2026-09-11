@@ -8333,38 +8333,36 @@ export default function App() {
     }
 
     if (!data || !data.token || !data.user) {
-      // Keep Google signup resilient, but never mark a Google account as
-      // permanently registered until the user chooses a username and password.
-      const fallbackToken = `pardais_session_${userUid}_${Math.random().toString(36).substring(2, 10)}`;
-      const fallbackUser: UserProfile = {
-        uid: userUid,
-        email: userEmail,
-        username: "",
-        uniqueId: `pardes_${userEmail.toLowerCase().replace(/[^a-zA-Z0-9]/g, "").slice(0, 10).toUpperCase()}`,
-        fullName: userDisplayName || "",
-        avatar: userPhotoURL,
-        coverPhoto: "",
-        bio: "",
-        gender: "",
-        country: "Pakistan",
-        language: "Urdu / Hinglish",
-        familyId: "",
-        agencyId: "",
-        isVerified: true,
-        isBanned: false,
-        twoFactorEnabled: false,
-        coins: 0,
-        diamonds: 0,
-        vipLevel: 0,
-        userLevel: 1,
-        hostLevel: 1,
-        wealthLevel: 1,
-        xp: 0,
-        authProvider: "google",
-        accountStatus: "pending_profile",
-        profileCompleted: false
-      } as any;
-      data = { token: fallbackToken, user: fallbackUser, isNewUser: true, needsProfileCompletion: true };
+      // NEVER synthesize a new Level-1/zero-wallet profile when the backend is
+      // temporarily unavailable. That old fallback could make an existing
+      // Google account look freshly created after an app/backend update.
+      // Restore the same local account snapshot if it belongs to this UID/email;
+      // otherwise stop here and ask the user to retry once the API is reachable.
+      let savedProfile: UserProfile | null = null;
+      try {
+        const raw = localStorage.getItem("pardais_user_profile");
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          const sameUid = Boolean(parsed?.uid && userUid && String(parsed.uid) === String(userUid));
+          const sameEmail = Boolean(parsed?.email && userEmail && String(parsed.email).toLowerCase() === String(userEmail).toLowerCase());
+          if (sameUid || sameEmail) savedProfile = parsed;
+        }
+      } catch {}
+
+      if (savedProfile && (savedProfile.username || savedProfile.uniqueId)) {
+        console.warn("[GOOGLE AUTH] Backend unavailable; preserving existing local account state instead of creating a reset profile.");
+        data = {
+          token: localStorage.getItem("pardais_auth_token") || "",
+          user: savedProfile,
+          isNewUser: false,
+          needsProfileCompletion: false,
+          offlineRestore: true
+        };
+      } else {
+        setLoginError("Pardais server is temporarily unavailable. Please try again in a moment.");
+        setChooserError("Pardais server is temporarily unavailable. Please try again in a moment.");
+        return;
+      }
     }
 
     localStorage.setItem("pardais_auth_token", data.token);
@@ -15756,7 +15754,15 @@ export default function App() {
                                                   if (data?.nextClaimAt) { setDailyClaimAvailable(false); setDailyNextClaimAt(data.nextClaimAt); }
                                                   throw new Error(data?.error || "Daily reward could not be claimed.");
                                                 }
-                                                setUser(prev => ({ ...prev, coins: data.remainingCoins, xp: data.xp, userLevel: data.userLevel, vipLevel: data.vipLevel }));
+                                                setUser(prev => ({
+                                                  ...prev,
+                                                  coins: data.remainingCoins,
+                                                  xp: data.xp !== undefined ? data.xp : prev.xp,
+                                                  coinSpendTotal: data.coinSpendTotal !== undefined ? data.coinSpendTotal : prev.coinSpendTotal,
+                                                  userLevel: data.userLevel !== undefined ? data.userLevel : prev.userLevel,
+                                                  level: data.userLevel !== undefined ? data.userLevel : prev.level,
+                                                  vipLevel: data.vipLevel !== undefined ? data.vipLevel : prev.vipLevel
+                                                }));
                                                 setMissions(prev => prev.map(item => ({ ...item, current: item.target, status: "Completed" })));
                                                 setDailyClaimAvailable(false);
                                                 setDailyNextClaimAt(data.nextClaimAt || Date.now() + 86400000);

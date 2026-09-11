@@ -49,7 +49,7 @@ interface AgoraStreamProps {
  * MediaPipe is loaded at runtime from the public CDN so no paid SDK/license
  * is required. If the model cannot load, the Agora camera remains untouched.
  */
-const TrackedFaceEffects: React.FC<{ videoContainerRef: React.RefObject<HTMLDivElement | null>; effect: string; enabled: boolean; beautySettings?: { smooth: number; brightness: number; whitening: number } }> = ({ videoContainerRef, effect, enabled, beautySettings = { smooth: 70, brightness: 80, whitening: 50 } }) => {
+const TrackedFaceEffects: React.FC<{ videoContainerRef: React.RefObject<HTMLDivElement | null>; effect: string; enabled: boolean; facingMode?: "user" | "environment"; beautySettings?: { smooth: number; brightness: number; whitening: number } }> = ({ videoContainerRef, effect, enabled, facingMode = "user", beautySettings = { smooth: 70, brightness: 80, whitening: 50 } }) => {
   const [face, setFace] = useState<any | null>(null);
   const [trackingReady, setTrackingReady] = useState(false);
 
@@ -71,11 +71,9 @@ const TrackedFaceEffects: React.FC<{ videoContainerRef: React.RefObject<HTMLDivE
         if (cancelled) return;
         const { FaceLandmarker, FilesetResolver } = mod;
         const vision = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22-rc.20250304/wasm");
-        landmarker = await FaceLandmarker.createFromOptions(vision, {
-          baseOptions: {
-            modelAssetPath: "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
-            delegate: "GPU"
-          },
+        const modelAssetPath = "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task";
+        const options = {
+          baseOptions: { modelAssetPath, delegate: "GPU" },
           runningMode: "VIDEO",
           numFaces: 1,
           minFaceDetectionConfidence: 0.45,
@@ -83,7 +81,15 @@ const TrackedFaceEffects: React.FC<{ videoContainerRef: React.RefObject<HTMLDivE
           minTrackingConfidence: 0.45,
           outputFaceBlendshapes: true,
           outputFacialTransformationMatrixes: true
-        });
+        };
+        // Some Android WebViews/devices cannot create the GPU delegate.
+        // Fall back to CPU instead of disabling the filter completely.
+        try {
+          landmarker = await FaceLandmarker.createFromOptions(vision, options);
+        } catch (gpuError) {
+          console.warn("[Pardais AR] GPU delegate unavailable, using CPU fallback", gpuError);
+          landmarker = await FaceLandmarker.createFromOptions(vision, { ...options, baseOptions: { modelAssetPath, delegate: "CPU" } });
+        }
         if (cancelled) return;
         setTrackingReady(true);
 
@@ -1103,7 +1109,7 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
   // can break Android WebView/GPU camera rendering and cause a black screen.
   const renderLiveFilterOverlay = () => {
     if (role !== "publisher") return null;
-    return <TrackedFaceEffects videoContainerRef={localVideoContainerRef} effect={liveFilter} enabled={Boolean(liveFilter && liveFilter !== "Original")} beautySettings={beautySettings} />;
+    return <TrackedFaceEffects videoContainerRef={localVideoContainerRef} effect={liveFilter} enabled={Boolean(liveFilter && liveFilter !== "Original")} facingMode={facingMode} beautySettings={beautySettings} />;
   };
 
   return (

@@ -765,7 +765,29 @@ export async function syncDocument(collectionName: string, docId: string, data: 
   if (!shouldTryFirestore()) return false;
   try {
     if (!docId) return false;
-    await setDoc(doc(db, collectionName, String(docId)), sanitizeForFirestore(data), { merge: true });
+    const cleanData = sanitizeForFirestore(data);
+
+    // IMPORTANT: user state is account-scoped and must never depend on which
+    // legacy mirror happened to be written last. Older builds wrote follows,
+    // likes, gifts, wallets, etc. only to the username document while login
+    // could later resolve the uid_/email_ mirror. That made an app/backend
+    // restart look like a data reset. Whenever ANY user document is synced,
+    // fan the exact same canonical snapshot out to every stable identity key.
+    if (collectionName === "users" && data && typeof data === "object") {
+      const mirrors = new Set<string>();
+      mirrors.add(String(docId));
+      if (data.username) mirrors.add(String(data.username));
+      if (data.uid) mirrors.add(`uid_${String(data.uid)}`);
+      if (data.uniqueId) mirrors.add(`id_${String(data.uniqueId).toLowerCase()}`);
+      if (data.email) mirrors.add(`email_${String(data.email).toLowerCase().replace(/[^a-zA-Z0-9]/g, "_")}`);
+
+      for (const mirrorId of mirrors) {
+        await setDoc(doc(db, "users", mirrorId), cleanData, { merge: true });
+      }
+      return true;
+    }
+
+    await setDoc(doc(db, collectionName, String(docId)), cleanData, { merge: true });
     return true;
   } catch (err) {
     handleQuotaError(err, `syncDocument ${collectionName}/${docId}`);
