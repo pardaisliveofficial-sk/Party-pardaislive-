@@ -4649,7 +4649,7 @@ const onlineUserPresence: Record<string, any> = {};
 
 // Heartbeat / Presence Registration
 app.post("/api/v1/presence", (req, res) => {
-  const { username, userId, avatar, level, fans, isLive, inPk } = req.body || {};
+  const { username, userId, avatar, level, fans, isLive, inPk, liveCategory, guestModeActive, guestSeatCount } = req.body || {};
   if (!username) {
     return res.status(400).json({ error: "Username required for presence" });
   }
@@ -4663,6 +4663,9 @@ app.post("/api/v1/presence", (req, res) => {
     fans: fans || "10K fans",
     isLive: !!isLive,
     inPk: !!inPk,
+    liveCategory: String(liveCategory || (inPk ? "pk" : "solo")),
+    guestModeActive: !!guestModeActive,
+    guestSeatCount: Number(guestSeatCount || 0),
     lastSeen: Date.now()
   };
 
@@ -4680,52 +4683,30 @@ app.post("/api/v1/presence", (req, res) => {
 // Get Available Hosts for 1v1 Invites
 app.get("/api/v1/pk/available-hosts", (req, res) => {
   const currentUsername = String(req.query.username || "").toLowerCase();
-  const currentUserId = String(req.query.userId || req.query.username || "").toLowerCase();
   const now = Date.now();
+  const fallbackAvatar = "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=100&q=80";
+  const rows = new Map<string, any>();
 
-  // 1. Gather live real hosts from dbData.hosts
-  const liveHostsList = (dbData.hosts || [])
-    .filter((h: any) => h.isLive !== false && !h.inPk && !h.inPkBattle && !h.isDemoHost)
-    .map((h: any) => ({
-      id: String(h.id || h.hostUid || h.hostUsername),
-      userId: String(h.hostUid || h.id || h.hostUsername),
-      username: String(h.hostUsername || h.name || "Live Host"),
-      avatar: String(h.hostAvatar || h.avatar || "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=100&q=80"),
-      level: Number(h.hostLevel || h.level || 1),
-      fans: `${h.followersCount || h.fans || 0} fans`,
-      isLive: true,
-      inPk: false,
-      status: "🔴 Live Solo"
-    }));
-
-  // 2. Gather online presence users
-  const onlinePresenceList = Object.values(onlineUserPresence)
-    .filter((u: any) => (now - u.lastSeen <= 15000) && !u.inPk)
-    .map((u: any) => ({
-      id: String(u.userId || u.username),
-      userId: String(u.userId || u.username),
-      username: String(u.username),
-      avatar: String(u.avatar || "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=100&q=80"),
-      level: Number(u.level || 1),
-      fans: String(u.fans || "0 fans"),
-      isLive: !!u.isLive,
-      inPk: false,
-      status: u.isLive ? "🔴 Live Solo" : "🟢 Online"
-    }));
-
-  // Combine liveHostsList and onlinePresenceList, deduplicating by username and filtering out self
-  const combinedMap = new Map<string, any>();
-
-  [...liveHostsList, ...onlinePresenceList].forEach(item => {
-    const key = item.username.toLowerCase();
-    const itemUserId = String(item.userId).toLowerCase();
-    if (key !== currentUsername && itemUserId !== currentUserId && !combinedMap.has(key)) {
-      combinedMap.set(key, item);
-    }
+  (dbData.hosts || []).forEach((h: any) => {
+    const username = String(h.hostUsername || h.name || "").trim();
+    if (!username || username.toLowerCase() === currentUsername || h.isDemoHost || h.isLive === false) return;
+    const inPk = Boolean(h.inPk || h.inPkBattle || h.pkActive || h.category === "pk" || h.subCategory === "PK");
+    const inGuest = Boolean(h.guestModeActive || h.category === "guest" || h.subCategory === "Guest" || h.subCategory === "Multi-guest" || (Array.isArray(h.guestSeats) && h.guestSeats.some((g: any) => g?.name)));
+    const mode = inPk ? "pk" : (inGuest ? "guest" : "solo");
+    rows.set(username.toLowerCase(), { id: String(h.id || h.hostUid || username), userId: String(h.hostUid || h.id || username), username, avatar: String(h.hostAvatar || h.avatar || fallbackAvatar), level: Number(h.hostLevel || h.level || 1), fans: `${h.followersCount || h.fans || 0} fans`, isLive: true, mode, canInvite: mode === "solo", status: mode === "pk" ? "⚔️ PK" : mode === "guest" ? "👥 Guest" : "🔴 Live Solo" });
   });
 
-  const result = Array.from(combinedMap.values());
-  res.json(result);
+  Object.values(onlineUserPresence).forEach((u: any) => {
+    if (!u?.isLive || now - Number(u.lastSeen || 0) > 15000) return;
+    const username = String(u.username || "").trim();
+    if (!username || username.toLowerCase() === currentUsername) return;
+    const inPk = Boolean(u.inPk || u.liveCategory === "pk");
+    const inGuest = Boolean(u.guestModeActive || u.liveCategory === "guest");
+    const mode = inPk ? "pk" : (inGuest ? "guest" : "solo");
+    rows.set(username.toLowerCase(), { id: String(u.userId || username), userId: String(u.userId || username), username, avatar: String(u.avatar || fallbackAvatar), level: Number(u.level || 1), fans: String(u.fans || "0 fans"), isLive: true, mode, canInvite: mode === "solo", status: mode === "pk" ? "⚔️ PK" : mode === "guest" ? "👥 Guest" : "🔴 Live Solo" });
+  });
+
+  res.json(Array.from(rows.values()));
 });
 
 // Send PK / 1v1 Co-Host Invite (Strict Real Host-to-Host, NO Auto-Accept Timeout)
@@ -4751,6 +4732,13 @@ app.post("/api/v1/pk/invite", (req, res) => {
   const finalToAvatar = toAvatar || presenceTo?.avatar || hostTo?.hostAvatar || hostTo?.avatar || "https://images.unsplash.com/photo-1570295999919-56ceb5ecca61?auto=format&fit=crop&w=100&q=80";
   const finalToLevel = Number(toLevel) || Number(presenceTo?.level) || Number(hostTo?.level) || Number(hostTo?.hostLevel) || 1;
   const finalToFans = toFans || presenceTo?.fans || `${hostTo?.followersCount || 0} fans` || "15K fans";
+
+  const targetInPk = Boolean(presenceTo?.inPk || presenceTo?.liveCategory === "pk" || hostTo?.inPk || hostTo?.inPkBattle || hostTo?.pkActive || hostTo?.category === "pk");
+  const targetInGuest = Boolean(presenceTo?.guestModeActive || presenceTo?.liveCategory === "guest" || hostTo?.guestModeActive || hostTo?.category === "guest" || hostTo?.subCategory === "Guest" || hostTo?.subCategory === "Multi-guest");
+  const targetIsLive = Boolean(presenceTo?.isLive || hostTo?.isLive);
+  if (!targetIsLive || targetInPk || targetInGuest) {
+    return res.status(409).json({ error: targetInPk ? "HOST_BUSY_PK" : targetInGuest ? "HOST_BUSY_GUEST" : "HOST_NOT_SOLO_LIVE", message: targetInPk ? "This host is currently in PK." : targetInGuest ? "This host is currently in Guest mode." : "This host is not currently in Solo Live." });
+  }
 
   // Expire or cancel any previous pending invite from same sender
   Object.keys(activePkInvites).forEach(id => {
@@ -4808,7 +4796,7 @@ app.get("/api/v1/pk/active-sessions", (req, res) => {
 function getSynchronizedPkSession(activeSession: any, now: number = Date.now()) {
   if (!activeSession || activeSession.status === "ended") return null;
 
-  const duration = activeSession.duration || 180;
+  const duration = activeSession.duration || 300;
   let startedAtMs = typeof activeSession.startedAt === "number"
     ? activeSession.startedAt
     : (activeSession.startedAt ? new Date(activeSession.startedAt).getTime() : now);
@@ -4818,7 +4806,12 @@ function getSynchronizedPkSession(activeSession: any, now: number = Date.now()) 
     activeSession.startedAt = now;
   }
 
-  if (activeSession.pkState === "pk_countdown" || (startedAtMs && now < startedAtMs)) {
+  if (activeSession.pkState === "1v1_connected") {
+    // Free 1v1 mode has no battle timer. It remains connected until one host exits or starts PK.
+    activeSession.pkActive = false;
+    activeSession.timer = 0;
+    activeSession.countdown = 0;
+  } else if (activeSession.pkState === "pk_countdown" || (startedAtMs && now < startedAtMs)) {
     activeSession.pkState = "pk_countdown";
     activeSession.countdown = Math.max(0, Math.ceil((startedAtMs - now) / 1000));
     activeSession.pkActive = false;
@@ -4829,19 +4822,31 @@ function getSynchronizedPkSession(activeSession: any, now: number = Date.now()) 
     const elapsed = Math.max(0, Math.floor((now - startedAtMs) / 1000));
     activeSession.timer = Math.max(0, duration - elapsed);
   } else if (now >= startedAtMs + duration * 1000) {
-    activeSession.pkState = "pk_finished";
-    activeSession.pkActive = false;
-    activeSession.timer = 0;
     const scoreA = activeSession.hostA?.score || 0;
     const scoreB = activeSession.hostB?.score || 0;
-    if (scoreA > scoreB) {
-      activeSession.winner = activeSession.hostA?.username;
-      activeSession.loser = activeSession.hostB?.username;
-    } else if (scoreB > scoreA) {
-      activeSession.winner = activeSession.hostB?.username;
-      activeSession.loser = activeSession.hostA?.username;
+    if (!activeSession.lastPkResultAt) {
+      activeSession.lastPkResultAt = now;
+      if (scoreA > scoreB) {
+        activeSession.winner = activeSession.hostA?.username;
+        activeSession.loser = activeSession.hostB?.username;
+      } else if (scoreB > scoreA) {
+        activeSession.winner = activeSession.hostB?.username;
+        activeSession.loser = activeSession.hostA?.username;
+      } else {
+        activeSession.winner = "draw";
+      }
+    }
+    // Show the result briefly, then return both hosts to the same free 1v1 room.
+    if (now - activeSession.lastPkResultAt < 6000) {
+      activeSession.pkState = "pk_finished";
+      activeSession.pkActive = false;
+      activeSession.timer = 0;
     } else {
-      activeSession.winner = "draw";
+      activeSession.pkState = "1v1_connected";
+      activeSession.pkActive = false;
+      activeSession.timer = 0;
+      activeSession.pkRequested = false;
+      activeSession.pkRequestStatus = "finished";
     }
   }
 
@@ -5053,16 +5058,17 @@ app.post("/api/v1/pk/invite/:id/respond", (req, res) => {
       session.hostBQualifyingScore = 0;
       session.userTapContributions = {};
       session.winner = null;
+      session.lastPkResultAt = null;
       if (isPk) {
         session.pkState = "pk_countdown";
         session.countdownStartTime = currentNow;
         session.startedAt = currentNow + 3000;
-        session.duration = 180;
-        session.timer = 180;
+        session.duration = 300;
+        session.timer = 300;
       } else {
         session.pkState = "1v1_connected";
-        session.duration = 180;
-        session.timer = 180;
+        session.duration = 300;
+        session.timer = 300;
       }
     } else {
       session = {
@@ -5079,10 +5085,11 @@ app.post("/api/v1/pk/invite/:id/respond", (req, res) => {
         pkState: isPk ? "pk_countdown" : "1v1_connected",
         pkActive: false,
         countdownStartTime: currentNow,
-        duration: 180,
-        timer: 180,
+        duration: 300,
+        timer: 300,
         startedAt: isPk ? currentNow + 3000 : currentNow,
-        winner: null
+        winner: null,
+        lastPkResultAt: null
       };
       activePkSessions[sessionId] = session;
     }
@@ -5136,13 +5143,14 @@ app.post("/api/v1/pk/start-battle", (req, res) => {
         s.hostBQualifyingScore = 0;
         s.userTapContributions = {};
         s.winner = null;
+        s.lastPkResultAt = null;
         s.pkRequested = false;
         s.pkRequestStatus = "accepted";
         s.pkState = "pk_countdown";
         s.countdownStartTime = currentNow;
         s.startedAt = currentNow + 3000; // 3-second countdown
-        s.duration = 180; // 3 minutes match
-        s.timer = 180;
+        s.duration = 300; // 5 minutes match
+        s.timer = 300;
         s.pkActive = false;
         updatedSession = getSynchronizedPkSession(s, currentNow);
       } else if (action === "reject" || action === "decline") {

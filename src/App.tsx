@@ -2688,6 +2688,11 @@ export default function App() {
     { id: 8, name: null, avatar: null, diamonds: null, isMuted: false, isCamMuted: false, isBigFrame: false }
   ]);
 
+  const activeUserLiveGuestCount = useMemo(
+    () => (userLiveGuestSeats || []).filter((seat: any) => Boolean(seat?.name)).length,
+    [userLiveGuestSeats]
+  );
+
   const [userLiveGuestRequests, setUserLiveGuestRequests] = useState<Array<{
     id: string;
     username: string;
@@ -2757,6 +2762,8 @@ export default function App() {
     username: string;
     userLevel: number;
     vipLevel: number;
+    avatar?: string;
+    userId?: string;
   } | null>(null);
   const [isUserModerator, setIsUserModerator] = useState<boolean>(false);
   // Party-specific moderation state. Host is always supreme; moderators inherit guest-management controls.
@@ -4445,7 +4452,12 @@ export default function App() {
             level: user.userLevel || 1,
             fans: user.fans || "12K fans",
             isLive: clientView === "user-live" || clientView === "live-room",
-            inPk: userLivePkConnected || userLivePkActive
+            inPk: userLivePkConnected || userLivePkActive,
+            liveCategory: clientView === "user-live"
+              ? (userLivePkConnected || userLivePkActive ? "pk" : (userLiveGuestModeActive ? "guest" : "solo"))
+              : "viewer",
+            guestModeActive: Boolean(userLiveGuestModeActive),
+            guestSeatCount: activeUserLiveGuestCount
           })
         });
       } catch (e) {
@@ -4456,7 +4468,7 @@ export default function App() {
     sendPresence();
     const interval = setInterval(sendPresence, 3500);
     return () => clearInterval(interval);
-  }, [user.username, user.uid, user.avatar, user.userLevel, user.fans, clientView, userLivePkConnected, userLivePkActive]);
+  }, [user.username, user.uid, user.avatar, user.userLevel, user.fans, clientView, userLivePkConnected, userLivePkActive, userLiveGuestModeActive, activeUserLiveGuestCount]);
 
   // Real-time Available Hosts Polling (runs when invite drawer is open)
   useEffect(() => {
@@ -19087,9 +19099,9 @@ export default function App() {
                                 )}
 
                                 {/* UPPER 60%: GUEST ROOMS GRID AND HOST SEAT */}
-                                <div className="h-[60%] w-full flex p-2 gap-2 bg-black/10 shrink-0 relative">
+                                <div className={`h-[60%] w-full p-2 gap-2 bg-black/10 shrink-0 relative ${activeUserLiveGuestCount > 0 && activeUserLiveGuestCount <= 3 ? "grid" : "flex"}`} style={activeUserLiveGuestCount > 0 && activeUserLiveGuestCount <= 3 ? { gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gridTemplateRows: `repeat(${Math.ceil((activeUserLiveGuestCount + 1) / 2)}, minmax(0, 1fr))` } : undefined}>
                                   {/* LEFT: MAIN HOST OR PINNED GUEST SCREEN (50% Width) */}
-                                  <div className="w-1/2 h-full rounded-2xl overflow-hidden relative border border-pink-500/30 bg-[#0e0c15] shadow-lg flex items-center justify-center">
+                                  <div className={`${activeUserLiveGuestCount > 0 && activeUserLiveGuestCount <= 3 ? "w-full h-full" : "w-1/2 h-full"} rounded-2xl overflow-hidden relative border border-pink-500/30 bg-[#0e0c15] shadow-lg flex items-center justify-center`}>
                                     {(() => {
                                       const pinnedGuest = userLiveGuestSeats.find(s => s.name !== null && s.isBigFrame);
                                       if (pinnedGuest) {
@@ -19253,7 +19265,7 @@ export default function App() {
                                   </div>
 
                                   {/* RIGHT: 8 GUEST SEATS GRID (50% Width) */}
-                                  <div className="w-1/2 h-full grid grid-cols-2 grid-rows-4 gap-1.5">
+                                  <div className={`${activeUserLiveGuestCount > 0 && activeUserLiveGuestCount <= 3 ? "contents" : "w-1/2 h-full grid grid-cols-2 grid-rows-4 gap-1.5"}`}>
                                     {userLiveGuestSeats.map(seat => (
                                       <div
                                         key={seat.id}
@@ -19264,7 +19276,7 @@ export default function App() {
                                             setShowGuestSeatActionModal({ seatId: seat.id, isUserLive: true });
                                           }
                                         }}
-                                        className={`rounded-xl overflow-hidden relative border flex flex-col justify-center items-center transition-all cursor-pointer ${
+                                        className={`${!seat.name && activeUserLiveGuestCount > 0 && activeUserLiveGuestCount <= 3 ? "hidden" : ""} rounded-xl overflow-hidden relative border flex flex-col justify-center items-center transition-all cursor-pointer ${
                                           seat.name 
                                             ? (seat.isBigFrame 
                                                 ? "border-purple-500 ring-2 ring-purple-500/80 shadow-purple-500/20 shadow-lg bg-purple-950/20 animate-pulse" 
@@ -20319,7 +20331,16 @@ export default function App() {
                               <div className="flex items-center space-x-1.5 overflow-x-auto max-w-[120px] no-scrollbar">
                                 {userLiveViewerList.length > 0 ? (
                                   userLiveViewerList.map((viewer, idx) => (
-                                    <div key={(viewer as any).userId || viewer.username || idx} className="flex flex-col items-center bg-transparent shrink-0">
+                                    <button
+                                      type="button"
+                                      key={(viewer as any).userId || viewer.username || idx}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        const lvl = Number((viewer as any).level || 1);
+                                        setViewerMenuUser({ username: String(viewer.username || "Viewer"), userLevel: lvl, vipLevel: Number((viewer as any).vipLevel || getVipLevelFromUserLevel(lvl)), avatar: viewer.avatar, userId: String((viewer as any).userId || viewer.username || "") });
+                                      }}
+                                      className="flex flex-col items-center bg-transparent shrink-0 cursor-pointer active:scale-95"
+                                    >
                                       <img
                                         src={viewer.avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=100&q=80"}
                                         className="w-6.5 h-6.5 rounded-full border border-emerald-400/80 object-cover shadow"
@@ -20328,7 +20349,7 @@ export default function App() {
                                       <span className="text-[6px] text-emerald-300 font-mono font-bold scale-90 mt-0.5 truncate max-w-[35px]">
                                         @{viewer.username}
                                       </span>
-                                    </div>
+                                    </button>
                                   ))
                                 ) : (
                                   liveRoomTopGifters.map((viewer, idx) => (
@@ -21053,8 +21074,8 @@ export default function App() {
                                       }}
                                       className="flex-1 bg-gradient-to-r from-emerald-600 to-green-600 hover:scale-105 active:scale-95 text-white font-black py-2 rounded-xl text-[9px] uppercase tracking-wide transition-all shadow-md flex items-center justify-center space-x-1 cursor-pointer"
                                     >
-                                      <span>⚔️</span>
-                                      <span>Accept PK Request</span>
+                                      <span>✓</span>
+                                      <span>{incoming1v1Invite.isPkBattle || incoming1v1Invite.inviteType === "pk_battle" ? "Accept PK Request" : "Accept Request"}</span>
                                     </button>
                                     <button
                                       onClick={async () => {
@@ -22713,7 +22734,7 @@ export default function App() {
                                     </button>
                                   </div>
                                   <p className="text-[8.5px] text-gray-400 mt-1 leading-normal">
-                                    Send a co-host request. Only available Solo Live hosts are shown. Accepted co-hosts join in 1v1 mode.
+                                    Send a 1v1 invitation. Solo hosts can receive it; Guest and PK hosts stay visible as busy and cannot be invited.
                                   </p>
                                 </div>
 
@@ -22790,7 +22811,9 @@ export default function App() {
                                         fans: String(u.fans || "10K fans"),
                                         level: Number(u.level || 1),
                                         flag: "🇵🇰",
-                                        inPkBattle: false,
+                                        inPkBattle: Boolean(u.inPk || u.mode === "pk"),
+                                        mode: u.mode || (u.status?.includes("Guest") ? "guest" : u.status?.includes("PK") ? "pk" : "solo"),
+                                        canInvite: u.canInvite !== false && u.mode !== "guest" && u.mode !== "pk",
                                         status: u.status || "🔴 Live Solo"
                                       }))
                                       .filter(host => !host.inPkBattle && host.username.toLowerCase() !== user?.username?.toLowerCase() && (
@@ -22821,6 +22844,7 @@ export default function App() {
 
                                     return hostList.map((host) => {
                                       const isInvited = userLiveInvitedHostId === host.username || userLiveInvitedHostId === host.id;
+                                      const isBusy = host.canInvite === false || host.mode === "guest" || host.mode === "pk";
                                       return (
                                         <div 
                                           key={host.id}
@@ -22841,16 +22865,16 @@ export default function App() {
                                           </div>
 
                                           <button
-                                            disabled={userLiveInvitedHostId !== null}
-                                            onClick={() => {
-                                              handleInviteHostTo1v1Match(host);
-                                            }}
+                                            disabled={userLiveInvitedHostId !== null || isBusy}
+                                            onClick={() => { if (!isBusy) handleInviteHostTo1v1Match(host); }}
                                             className={`px-3 py-1.5 rounded-full text-[8.5px] font-black uppercase tracking-wider font-mono transition-all cursor-pointer ${
                                               isInvited
                                                 ? "bg-purple-900/20 text-purple-400 border border-purple-500/20 flex items-center space-x-1"
-                                                : userLiveInvitedHostId !== null
-                                                  ? "bg-gray-800 text-gray-500 border border-white/5 cursor-not-allowed opacity-50"
-                                                  : "bg-gradient-to-r from-[#ff007f] to-[#7b2cbf] text-white hover:scale-105 active:scale-95 shadow-md"
+                                                : isBusy
+                                                  ? "bg-gray-800 text-gray-500 border border-white/5 cursor-not-allowed opacity-60"
+                                                  : userLiveInvitedHostId !== null
+                                                    ? "bg-gray-800 text-gray-500 border border-white/5 cursor-not-allowed opacity-50"
+                                                    : "bg-gradient-to-r from-[#ff007f] to-[#7b2cbf] text-white hover:scale-105 active:scale-95 shadow-md"
                                             }`}
                                           >
                                             {isInvited ? (
@@ -22859,7 +22883,7 @@ export default function App() {
                                                 <span>{userLiveInviteCountdown}s</span>
                                               </>
                                             ) : (
-                                              "Invite"
+                                              isBusy ? (host.status || "Busy") : "Invite"
                                             )}
                                           </button>
                                         </div>
@@ -22882,7 +22906,6 @@ export default function App() {
                                 { id: "mute", label: userLiveMic ? "Mute" : "Unmute", icon: userLiveMic ? "🔇" : "🎙️" },
                                 { id: "cover", label: "Cover", icon: "🖼️" },
                                 { id: "cohost", label: "Invite Host", icon: "👥", primary: true },
-                                { id: "start-guest", label: "Start Guest", icon: "🎙️", primary: true },
                                 { id: "more", label: "More", icon: "•••" }
                               ].map((btn) => (
                                 <button
@@ -22895,8 +22918,6 @@ export default function App() {
                                       setUserLiveShowCoverModal(true);
                                     } else if (btn.id === "cohost") {
                                       setUserLivePkInvitePanelOpen(true);
-                                    } else if (btn.id === "start-guest") {
-                                      handleStartGuestFromSolo();
                                     } else if (btn.id === "more") {
                                       setUserLiveShowMoreModal(true);
                                     }
@@ -31472,6 +31493,26 @@ export default function App() {
                   </p>
                 </div>
               </button>
+
+              {clientView === "user-live" && viewerMenuUser.username !== user.username && (
+                <button
+                  onClick={async () => {
+                    const emptySeat = (userLiveGuestSeats || []).find((seat: any) => !seat?.name);
+                    if (!emptySeat) { alert("All guest seats are full. Remove a guest first."); return; }
+                    const hostId = `h-${user.uniqueId || user.username || "pardais_1001"}`;
+                    try {
+                      const res = await fetch(`/api/v1/hosts/${hostId}/invites`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ targetUsername: viewerMenuUser.username, seatId: emptySeat.id }) });
+                      const data = await res.json().catch(() => ({}));
+                      if (!res.ok) throw new Error(data?.error || "Invite failed");
+                      alert(`🎙️ Guest invitation sent to @${viewerMenuUser.username} for Seat #${emptySeat.id}.`);
+                      setViewerMenuUser(null);
+                    } catch (err: any) { alert(`Unable to send guest invitation: ${err?.message || "Please try again."}`); }
+                  }}
+                  className="w-full flex items-center space-x-3 p-2 bg-gradient-to-r from-pink-600/20 to-purple-600/20 hover:from-pink-600/30 hover:to-purple-600/30 rounded-xl border border-pink-500/30 text-pink-100 text-xs transition-all cursor-pointer text-left"
+                >
+                  <span className="text-base">🎙️</span><div className="flex-1"><p className="font-bold text-white">Invite as Guest</p><p className="text-[8.5px] text-gray-300">Invite this viewer to join your live screen</p></div>
+                </button>
+              )}
 
               <button
                 onClick={() => {
