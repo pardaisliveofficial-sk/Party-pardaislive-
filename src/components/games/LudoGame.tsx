@@ -180,6 +180,10 @@ export const LudoGame: React.FC<LudoGameProps> = ({
     setWinner(winningPlayer);
     const prize = stakeCoins * 2;
     if (winningPlayer.id === "red") {
+      setUser(prev => ({
+        ...prev,
+        diamonds: (prev.diamonds || 0) + prize
+      }));
       playSound(880, "sine", 0.5);
       if (onGameWin) onGameWin(prize, "Ludo King");
     }

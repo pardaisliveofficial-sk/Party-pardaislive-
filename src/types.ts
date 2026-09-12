@@ -62,12 +62,6 @@ export interface UserProfile {
   hostLevel: number;
   wealthLevel: number;
   xp: number;
-  /** Lifetime coins actually spent; authoritative server progression source. */
-  coinSpendTotal?: number;
-  coinSpendHistory?: any[];
-  /** Durable Creator Center earning ledger. */
-  creatorEarningHistory?: any[];
-  progressUpdatedAt?: string;
   familyId: string | null;
   agencyId: string | null;
   isVerified: boolean;
@@ -146,7 +140,6 @@ export interface ChatMessage {
   vipLevel: number;
   userLevel: number;
   badge?: string;
-  displayName?: string;
   isSystem: boolean;
   isFlagged: boolean;
   flagReason?: string;
@@ -159,7 +152,6 @@ export interface HostProfile {
   name: string;
   hostUsername?: string;
   username?: string;
-  displayName?: string;
   uniqueId?: string;
   channelName?: string;
   userLivePkChannelName?: string;

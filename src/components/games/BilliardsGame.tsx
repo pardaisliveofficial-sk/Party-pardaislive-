@@ -359,6 +359,10 @@ export const BilliardsGame: React.FC<BilliardsGameProps> = ({
   const handleEndGameWin = () => {
     setWinner("You");
     const prize = stakeCoins * 2;
+    setUser(prev => ({
+      ...prev,
+      diamonds: (prev.diamonds || 0) + prize
+    }));
     playSound(880, "sine", 0.5);
     if (onGameWin) onGameWin(prize, "8-Ball Billiards");
   };

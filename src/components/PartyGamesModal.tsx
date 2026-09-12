@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from "react";
 import { UserProfile, Transaction } from "../types";
 import { X, Sparkles, Trophy, HelpCircle, History, RotateCw, Volume2, VolumeX, Flame, Zap, ShieldCheck, Gift, Gem, Users, Bot, Gamepad2, ArrowLeft } from "lucide-react";
-import { recordCoinSpend, recordCreatorEarning } from "../lib/coinProgressionService";
+import { getProgressionFromCoins } from "../levelUtils";
 import { DragonTigerGame } from "./games/DragonTigerGame";
 import { AviatorGame } from "./games/AviatorGame";
 import { LudoGame } from "./games/LudoGame";
@@ -211,21 +211,6 @@ export const PartyGamesModal: React.FC<PartyGamesModalProps> = ({
     return { isWin: rand < 0.40, isFirstTime: false, isSafeguard: false };
   };
 
-  const persistSpend = async (amount: number, source: "party_game" | "transfer" | "other", details: string, metadata: Record<string, any> = {}) => {
-    const data = await recordCoinSpend(amount, source, { details, gameName: metadata.gameName || activeGame, ...metadata });
-    if (data?.remainingCoins !== undefined) {
-      setUser(prev => ({ ...prev, coins: data.remainingCoins, xp: data.xp ?? prev.xp, userLevel: data.userLevel ?? prev.userLevel, level: data.level ?? data.userLevel ?? prev.level, vipLevel: data.vipLevel ?? prev.vipLevel }));
-    }
-    return data;
-  };
-
-  const persistEarning = async (amount: number, source: string, gameName: string) => {
-    if (amount <= 0) return null;
-    const data = await recordCreatorEarning(amount, source, { gameName });
-    if (data?.creatorBalance !== undefined) setUser(prev => ({ ...prev, diamonds: data.creatorBalance }));
-    return data;
-  };
-
   // Wheel States
   const [isSpinning, setIsSpinning] = useState<boolean>(false);
   const [wheelRotation, setWheelRotation] = useState<number>(0);
@@ -326,7 +311,7 @@ export const PartyGamesModal: React.FC<PartyGamesModalProps> = ({
     return lossIndices[Math.floor(Math.random() * lossIndices.length)];
   };
 
-  const handleSpinWheel = async () => {
+  const handleSpinWheel = () => {
     if (isSpinning) return;
     if (user.coins < betAmount) {
       alert(`❌ Insufficient Coins! You need at least ${betAmount.toLocaleString()} Coins to spin.`);
@@ -335,12 +320,18 @@ export const PartyGamesModal: React.FC<PartyGamesModalProps> = ({
 
     if (soundEnabled) playSoundEffect("click");
 
-    try {
-      await persistSpend(betAmount, "party_game", `Lucky Wheel: ${betAmount.toLocaleString()} Coins`, { gameName: "Lucky Wheel" });
-    } catch (err: any) {
-      alert(err?.message || "Coin transaction failed. Please try again.");
-      return;
-    }
+    setUser(prev => {
+      const newXp = (prev.xp || 0) + betAmount;
+      const prog = getProgressionFromCoins(newXp);
+      return {
+        ...prev,
+        coins: Math.max(0, (prev.coins || 0) - betAmount),
+        xp: newXp,
+        userLevel: prog.level,
+        level: prog.level,
+        vipLevel: prog.vipLevel
+      };
+    });
 
     setIsSpinning(true);
     setLastWheelResult(null);
@@ -381,7 +372,7 @@ export const PartyGamesModal: React.FC<PartyGamesModalProps> = ({
         const profit = payout - betAmount;
 
         if (payout > 0) {
-          void persistEarning(payout, "party_game_win", "Lucky Wheel").catch((err) => console.error("Lucky Wheel earning persistence failed:", err));
+          setUser(prev => ({ ...prev, diamonds: (prev.diamonds || 0) + payout }));
           playSoundEffect(winningSlice.multiplier >= 4 ? "jackpot" : "win");
         } else {
           playSoundEffect("loss");
@@ -394,24 +385,29 @@ export const PartyGamesModal: React.FC<PartyGamesModalProps> = ({
     requestAnimationFrame(animate);
   };
 
-  const handleOpenChest = async (index: number) => {
+  const handleOpenChest = (index: number) => {
     if (chestOpening || selectedChest !== null) return;
     if (user.coins < betAmount) {
       alert(`❌ Insufficient Coins! You need ${betAmount.toLocaleString()} Coins to open a chest.`);
       return;
     }
 
+    setSelectedChest(index);
     setChestOpening(true);
 
-    try {
-      await persistSpend(betAmount, "party_game", `Chest: ${betAmount.toLocaleString()} Coins`, { gameName: "Chest" });
-    } catch (err: any) {
-      setChestOpening(false);
-      alert(err?.message || "Coin transaction failed. Please try again.");
-      return;
-    }
+    setUser(prev => {
+      const newXp = (prev.xp || 0) + betAmount;
+      const prog = getProgressionFromCoins(newXp);
+      return {
+        ...prev,
+        coins: Math.max(0, (prev.coins || 0) - betAmount),
+        xp: newXp,
+        userLevel: prog.level,
+        level: prog.level,
+        vipLevel: prog.vipLevel
+      };
+    });
 
-    setSelectedChest(index);
     setTimeout(() => {
       const outcome = determineWinOrLoss(betAmount);
       const chosenMult = outcome.isWin ? (outcome.isFirstTime ? 2 : [2, 3, 5, 10][Math.floor(Math.random() * 4)]) : (Math.random() < 0.5 ? 0 : 0.5);
@@ -429,7 +425,7 @@ export const PartyGamesModal: React.FC<PartyGamesModalProps> = ({
       setChestOpening(false);
 
       if (payout > 0) {
-        void persistEarning(payout, "party_game_win", "Treasure Chest").catch((err) => console.error("Chest earning persistence failed:", err));
+        setUser(prev => ({ ...prev, diamonds: (prev.diamonds || 0) + payout }));
         playSoundEffect("win");
       } else {
         playSoundEffect("loss");
@@ -438,19 +434,25 @@ export const PartyGamesModal: React.FC<PartyGamesModalProps> = ({
     }, 1200);
   };
 
-  const handleSpinSlots = async () => {
+  const handleSpinSlots = () => {
     if (isSpinningSlots) return;
     if (user.coins < betAmount) {
       alert(`❌ Insufficient Coins to spin slots!`);
       return;
     }
 
-    try {
-      await persistSpend(betAmount, "party_game", `Slots: ${betAmount.toLocaleString()} Coins`, { gameName: "Slots" });
-    } catch (err: any) {
-      alert(err?.message || "Coin transaction failed. Please try again.");
-      return;
-    }
+    setUser(prev => {
+      const newXp = (prev.xp || 0) + betAmount;
+      const prog = getProgressionFromCoins(newXp);
+      return {
+        ...prev,
+        coins: Math.max(0, (prev.coins || 0) - betAmount),
+        xp: newXp,
+        userLevel: prog.level,
+        level: prog.level,
+        vipLevel: prog.vipLevel
+      };
+    });
 
     setIsSpinningSlots(true);
     setLastSlotWin(null);
@@ -487,7 +489,7 @@ export const PartyGamesModal: React.FC<PartyGamesModalProps> = ({
         setLastSlotWin(win);
 
         if (win > 0) {
-          void persistEarning(win, "party_game_win", "Slots").catch((err) => console.error("Slots earning persistence failed:", err));
+          setUser(prev => ({ ...prev, diamonds: (prev.diamonds || 0) + win }));
           playSoundEffect(winMult >= 5 ? "jackpot" : "win");
         } else {
           playSoundEffect("loss");
@@ -498,18 +500,17 @@ export const PartyGamesModal: React.FC<PartyGamesModalProps> = ({
   };
 
   // Launch Team Game
-  const handleLaunchTeamGame = async (game: "ludo" | "carrom" | "billiards", stake: number, oppName: string) => {
+  const handleLaunchTeamGame = (game: "ludo" | "carrom" | "billiards", stake: number, oppName: string) => {
     if (user.coins < stake) {
       alert(`❌ Insufficient Coins! You need ${stake.toLocaleString()} Coins to enter this table.`);
       return;
     }
 
-    try {
-      await persistSpend(stake, "party_game", `${game}: table stake ${stake.toLocaleString()} Coins`, { gameName: game, recipient: oppName });
-    } catch (err: any) {
-      alert(err?.message || "Coin transaction failed. Please try again.");
-      return;
-    }
+    // Deduct stake
+    setUser(prev => ({
+      ...prev,
+      coins: Math.max(0, (prev.coins || 0) - stake)
+    }));
 
     setActiveGameStake(stake);
     setOpponentName(oppName);
@@ -518,7 +519,6 @@ export const PartyGamesModal: React.FC<PartyGamesModalProps> = ({
   };
 
   const handleGameWin = (coins: number, gameName: string) => {
-    void persistEarning(coins, "party_game_win", gameName).catch((err) => console.error("Game earning persistence failed:", err));
     const message = `🏆 ${user.username || "Player"} won ${coins.toLocaleString()} 💎 in ${gameName}`;
     onSendRoomMessage?.(message);
   };
@@ -535,7 +535,6 @@ export const PartyGamesModal: React.FC<PartyGamesModalProps> = ({
             onBack={() => setActiveGame("lobby")}
             soundEnabled={soundEnabled}
             onGameWin={handleGameWin}
-            onCoinSpend={(amount, gameName) => persistSpend(amount, "party_game", `${gameName}: ${amount.toLocaleString()} Coins`, { gameName })}
           />
         ) : activeGame === "aviator" ? (
           <AviatorGame
@@ -544,7 +543,6 @@ export const PartyGamesModal: React.FC<PartyGamesModalProps> = ({
             onBack={() => setActiveGame("lobby")}
             soundEnabled={soundEnabled}
             onGameWin={handleGameWin}
-            onCoinSpend={(amount, gameName) => persistSpend(amount, "party_game", `${gameName}: ${amount.toLocaleString()} Coins`, { gameName })}
           />
         ) : activeGame === "ludo" ? (
           <LudoGame

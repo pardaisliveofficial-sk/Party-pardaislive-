@@ -11,6 +11,7 @@ import agoraToken from "agora-token";
 import AdmZip from "adm-zip";
 import zlib from "zlib";
 import crypto from "crypto";
+import { Readable } from "stream";
 const { RtcTokenBuilder, RtcRole } = agoraToken;
 import {
   checkAndSeedDatabase,
@@ -25,7 +26,6 @@ import {
   getPersistedUserForSession,
   getPersistedUserForEmail,
   getPersistedUserForIdentifier,
-  listPersistedUsers,
   getPersistedEmailRegistry,
   persistEmailRegistry,
   persistAuthChallenge,
@@ -34,11 +34,6 @@ import {
 } from "./src/db/firebaseDb";
 
 dotenv.config();
-
-const getPersistentDisplayName = (user: any, fallback = "Pardais User") => {
-  const name = String(user?.fullName || user?.displayName || user?.name || fallback).trim();
-  return name || fallback;
-};
 
 const app = express();
 // Railway/Cloudflare terminate TLS before Express. Trust the proxy so generated
@@ -78,14 +73,17 @@ const DB_PATH = path.join(process.cwd(), "pardais_live_db.json");
 const DEFAULT_DEMO_HOSTS: any[] = [];
 const DEFAULT_DEMO_PARTIES: any[] = [];
 
+// Production music library: metadata is durable in Firestore and audio binaries live in Cloudflare R2.
+const DEFAULT_MUSIC_TRACKS: any[] = [];
+
 // Define dbData as a reference pointing directly to the real-time replicated Firestore cache
 let dbData: any = dbDataCache;
+if (!Array.isArray(dbData.musicTracks)) dbData.musicTracks = [...DEFAULT_MUSIC_TRACKS];
 
 async function loadDatabase() {
   try {
-    // 1. Load the local backup before any Firestore seed/read operation.
-    // This avoids the old startup cycle where seeding called /api/v1/db while
-    // /api/v1/db was itself calling loadDatabase(), racing account state.
+    // 1. Check if Firestore contains seeded tables, if not seed it from local database template
+    await checkAndSeedDatabase();
 
     // 2. Clear all stale hosts from Firestore and local cache to ensure fresh active-only live stream directory
     await clearAllHostsInFirestore();
@@ -106,20 +104,10 @@ async function loadDatabase() {
       console.log("[PARDAIS-PARTY FIREBASE] Pre-populated in-memory cache with local database backup (production gifts preserved).");
     }
 
-    // Seed only from the now-loaded local production backup when Firestore has not
-    // been initialized yet. Never fetch /api/v1/db from inside startup (that created
-    // a recursive loadDatabase loop in previous builds).
-    await checkAndSeedDatabase();
-
     // Collapse legacy duplicate user mirrors immediately. This keeps refresh/restart
     // from rotating the visible username/Pardais ID between old documents.
     if (Array.isArray(dbDataCache.users)) {
       dbDataCache.users = canonicalizeUsers(dbDataCache.users);
-      // Public display identity is the persisted full name. Username remains an
-      // internal/account identifier and is never used as the public display name.
-      dbDataCache.users.forEach((u: any) => {
-        if (u) u.displayName = getPersistentDisplayName(u, u.username || "Pardais User");
-      });
     }
 
     if (!Array.isArray(dbDataCache.hosts)) {
@@ -134,9 +122,6 @@ async function loadDatabase() {
     if (!Array.isArray(dbDataCache.posts)) {
       dbDataCache.posts = [];
     }
-
-    // Gift catalog is additive and durable. Missing built-ins are restored without touching admin/custom gifts.
-    await ensurePersistentGiftCatalog();
 
     // Revenue Share collections are isolated and additive.
     for (const key of ["investment_plans", "investments", "investment_transactions", "investment_earnings", "investment_withdrawals", "revenue_pools", "revenue_distributions"]) {
@@ -354,14 +339,6 @@ async function authenticateUser(req: any, res: any, next: any) {
   }
 
   if (user) {
-    // Every authenticated request receives the same canonical, durable progression fields.
-    canonicalizeProgressFields(user);
-    // Persist a one-time legacy level/spending migration immediately so an old
-    // account becomes permanently update-safe even before the next wallet action.
-    if (user.legacyProgressMigratedAt && !user.progressMigrationPersistedAt) {
-      user.progressMigrationPersistedAt = new Date().toISOString();
-      void persistUserDurably(user).catch(() => undefined);
-    }
     req.user = user;
     req.token = token;
     return next();
@@ -1805,9 +1782,8 @@ app.post("/api/v1/auth/create-account", authenticateUser, async (req: any, res) 
     req.user.accountStatus = "registered";
     req.user.profileCompleted = true;
     req.user.profileUpdatedAt = new Date().toISOString();
-    const persisted = await persistUserDurably(req.user);
-    if (!persisted) return res.status(503).json({ success: false, error: "Account could not be permanently saved. Please try again." });
     saveDatabase();
+    void persistUserDurably(req.user).catch((err) => console.warn("[PARDAIS CREATE ACCOUNT] Background persistence delayed:", err));
     const token = await createSession(req.user);
     return res.status(200).json({
       success: true,
@@ -1841,9 +1817,10 @@ app.post("/api/v1/auth/create-account", authenticateUser, async (req: any, res) 
   req.user.uniqueId = stablePardaisId(currentEmail);
   applyAdminAccountState(req.user, { initializeCoins: true });
 
-  const persisted = await persistUserDurably(req.user);
-  if (!persisted) return res.status(503).json({ success: false, error: "Account could not be permanently saved. Please try again." });
   saveDatabase();
+  // Do not hold the signup request open on a slow Firestore mirror. The local
+  // account is complete immediately and the durable mirrors are synced in the background.
+  void persistUserDurably(req.user).catch((err) => console.warn("[PARDAIS CREATE ACCOUNT] Background persistence delayed:", err));
   const token = await createSession(req.user);
   return res.status(201).json({
     success: true,
@@ -1913,12 +1890,6 @@ app.post("/api/v1/auth/password-login", async (req, res) => {
   void persistUserDurably(user).catch(err => console.warn("[PARDAIS LOGIN] Background sync note:", err));
 
   const token = await createSession(user);
-  await writeDurableNotification({
-    type: "Login", category: "system", title: "🔐 New Login",
-    text: "Your Pardais Party account was logged in successfully.",
-    targetUsername: user.username, targetUserId: user.uid, actorUsername: user.username,
-    isSelfEvent: true
-  });
   return res.json({ success: true, message: "Logged in successfully.", token, isNewUser: false, needsPassword: false, user });
 });
 
@@ -2104,9 +2075,8 @@ app.post("/api/v1/auth/complete-google-profile", authenticateUser, async (req: a
   req.user.uniqueId = req.user.uniqueId || stablePardaisId(String(req.user.email));
   ensureStableEmailIdentity(req.user, String(req.user.email).toLowerCase());
 
-  const persisted = await persistUserDurably(req.user);
-  if (!persisted) return res.status(503).json({ success: false, error: "Google account could not be permanently saved. Please try again." });
   saveDatabase();
+  void persistUserDurably(req.user).catch((err) => console.warn("[GOOGLE PROFILE] Background persistence delayed:", err));
   const token = await createSession(req.user);
 
   return res.status(200).json({
@@ -2118,7 +2088,7 @@ app.post("/api/v1/auth/complete-google-profile", authenticateUser, async (req: a
 });
 
 // 4. Update Profile Details After Initial Verification / Setup
-app.post("/api/v1/auth/setup-profile", authenticateUser, async (req: any, res) => {
+app.post("/api/v1/auth/setup-profile", authenticateUser, (req: any, res) => {
   const { fullName, username, avatar, gender } = req.body;
   if (!req.user) {
     return res.status(401).json({ error: "Unauthorized" });
@@ -2141,8 +2111,7 @@ app.post("/api/v1/auth/setup-profile", authenticateUser, async (req: any, res) =
   ensureStableEmailIdentity(req.user, req.user.email || "");
   req.user.profileCompleted = Boolean(req.user.fullName && req.user.username);
   req.user.profileUpdatedAt = new Date().toISOString();
-  const persisted = await persistUserDurably(req.user);
-  if (!persisted) return res.status(503).json({ success: false, error: "Profile could not be permanently saved. Please try again." });
+  persistUser(req.user);
   saveDatabase();
 
   res.json({
@@ -2165,39 +2134,8 @@ app.get("/api/v1/user/me", authenticateUser, (req: any, res) => {
   res.json(req.user);
 });
 
-// Durable per-account notification preferences.
-app.get("/api/v1/user/notification-settings", authenticateUser, (req: any, res: any) => {
-  res.json({ success: true, notificationSettings: req.user?.notificationSettings || {} });
-});
-
-app.post("/api/v1/user/notification-settings", authenticateUser, async (req: any, res: any) => {
-  const incoming = req.body?.notificationSettings;
-  if (!incoming || typeof incoming !== "object" || Array.isArray(incoming)) {
-    return res.status(400).json({ success: false, error: "Invalid notification settings." });
-  }
-  const allowed = ["followers", "followUnfollow", "likes", "comments", "friends", "messages", "gifts", "transactions", "announcements", "security", "push", "sound"];
-  const current = (req.user?.notificationSettings && typeof req.user.notificationSettings === "object") ? req.user.notificationSettings : {};
-  const next: Record<string, boolean> = { ...current };
-  for (const key of allowed) if (incoming[key] !== undefined) next[key] = Boolean(incoming[key]);
-  req.user.notificationSettings = next;
-  req.user.profileUpdatedAt = new Date().toISOString();
-  const idx = (dbData.users || []).findIndex((u: any) => (u?.uid && u.uid === req.user.uid) || (u?.email && String(u.email).toLowerCase() === String(req.user.email || "").toLowerCase()) || String(u?.username || "").toLowerCase() === String(req.user.username || "").toLowerCase());
-  if (idx >= 0) dbData.users[idx] = { ...dbData.users[idx], notificationSettings: next, profileUpdatedAt: req.user.profileUpdatedAt };
-  else dbData.users.push(req.user);
-  saveDatabase();
-  const persisted = await persistUserDurably(req.user);
-  if (!persisted) return res.status(503).json({ success: false, error: "Notification preferences could not be permanently saved." });
-  res.json({ success: true, notificationSettings: next });
-});
-
 // 6. Logout Current User Session
-app.post("/api/v1/auth/logout", authenticateUser, async (req: any, res) => {
-  await writeDurableNotification({
-    type: "Logout", category: "system", title: "👋 Account Logout",
-    text: "Your Pardais Party account was logged out on this device.",
-    targetUsername: req.user?.username, targetUserId: req.user?.uid, actorUsername: req.user?.username,
-    isSelfEvent: true
-  });
+app.post("/api/v1/auth/logout", authenticateUser, (req: any, res) => {
   if (req.token && dbData.sessions[req.token]) {
     delete dbData.sessions[req.token];
     deleteDocument("sessions", req.token);
@@ -2638,51 +2576,13 @@ function getAIClient() {
   return aiClient;
 }
 
-// Canonical registered-user directory. This is intentionally served by the
-// production API rather than a client-side Firestore listener so APK/Web builds,
-// named Firestore databases, and Railway replicas all see the same user set.
-app.get("/api/v1/users/directory", authenticateUser, async (req: any, res: any) => {
-  try {
-    const persisted = await listPersistedUsers();
-    if (persisted.length > 0) {
-      dbData.users = canonicalizeUsers([...(dbData.users || []), ...persisted]);
-      for (const u of dbData.users) {
-        if (u) u.displayName = getPersistentDisplayName(u, u.username || "Pardais User");
-      }
-    }
-    const currentUid = String(req.user?.uid || "");
-    const currentEmail = String(req.user?.email || "").toLowerCase().trim();
-    const users = (dbData.users || [])
-      .filter((u: any) => u && (u.uid || u.uniqueId || u.username))
-      .filter((u: any) => String(u.uid || "") !== currentUid && String(u.email || "").toLowerCase().trim() !== currentEmail)
-      .filter((u: any) => !u.isDeleted && !u.deletionScheduledAt)
-      .map((u: any) => ({
-        uid: u.uid || "",
-        uniqueId: u.uniqueId || "",
-        username: u.username || "",
-        fullName: getPersistentDisplayName(u, u.username || "Pardais User"),
-        displayName: getPersistentDisplayName(u, u.username || "Pardais User"),
-        avatar: u.avatar || u.photoURL || "",
-        userLevel: Number(u.userLevel || u.level || 1),
-        vipLevel: Number(u.vipLevel || 0),
-        followersCount: Number(u.followersCount || 0),
-        followingCount: Number(u.followingCount || 0),
-        totalLikesCount: Number(u.totalLikesCount || 0),
-        isVerified: u.isVerified === true
-      }));
-    res.json({ success: true, users, total: users.length, generatedAt: new Date().toISOString() });
-  } catch (err) {
-    console.warn("[USERS DIRECTORY] Failed to build directory:", err);
-    res.status(503).json({ success: false, error: "User directory temporarily unavailable." });
-  }
-});
-
 // ------------------------------------------------------------------
 // CORE APIS & REST COMPONENT CONNECTIVITY (GET/POST)
 // ------------------------------------------------------------------
 
 // Synchronize entire DB state in one call
 app.get("/api/v1/db", (req, res) => {
+  loadDatabase();
   res.json(dbData);
 });
 
@@ -2840,22 +2740,6 @@ app.post("/api/v1/user/following", authenticateUser, async (req: any, res: any) 
       target.followersCount = Number(target.followersCount || 0) + 1;
       target.profileUpdatedAt = new Date().toISOString();
       await persistUserDurably(target);
-      await writeDurableNotification({
-        type: "Follow", category: "social", title: "👤 New Follower",
-        text: `${req.user.fullName || req.user.name || req.user.username || "Someone"} started following you.`,
-        targetUsername: target.username, targetUserId: target.uid,
-        actorUsername: req.user.username, actorUserId: req.user.uid, actorName: req.user.fullName || req.user.name || req.user.username,
-        userAvatar: req.user.avatar || ""
-      });
-      const targetFollowing = Array.isArray(target.followingUsernames) ? target.followingUsernames : [];
-      if (targetFollowing.some((v: any) => String(v).toLowerCase() === String(req.user.username || "").toLowerCase())) {
-        await writeDurableNotification({
-          type: "Friend", category: "social", title: "🤝 You Are Now Friends",
-          text: `You and ${target.fullName || target.name || target.username} are now friends on Pardais Party.`,
-          targetUsername: req.user.username, targetUserId: req.user.uid, actorUsername: target.username, actorUserId: target.uid,
-          actorName: target.fullName || target.name || target.username, userAvatar: target.avatar || ""
-        });
-      }
     }
   }
   for (const username of removed) {
@@ -2864,12 +2748,6 @@ app.post("/api/v1/user/following", authenticateUser, async (req: any, res: any) 
       target.followersCount = Math.max(0, Number(target.followersCount || 0) - 1);
       target.profileUpdatedAt = new Date().toISOString();
       await persistUserDurably(target);
-      await writeDurableNotification({
-        type: "Unfollow", category: "social", title: "👤 Unfollowed",
-        text: `${req.user.fullName || req.user.name || req.user.username || "Someone"} unfollowed you.`,
-        targetUsername: target.username, targetUserId: target.uid, actorUsername: req.user.username, actorUserId: req.user.uid,
-        actorName: req.user.fullName || req.user.name || req.user.username, userAvatar: req.user.avatar || ""
-      });
     }
   }
 
@@ -3301,64 +3179,18 @@ const sanitizeGiftEventName = (value: any) => {
 };
 
 const DEFAULT_ADVANCED_GIFTS_SERVER = [
-  {id: "g-rose", name: "Red Rose 🌹", cost: 10, type: "2d", icon: "🌹", color: "#ff2d75", animationClass: "animate-pulse", category: "Love", description: "Red Rose virtual gift for Pardais Party.", animationFile: "/gifts/animations/g-rose.svg", animationFormat: "svg", animationDuration: 5, animationDisplayType: "small", comboSupported: true, status: "active", featured: false, priority: 10, minLevel: 1, globalBannerEnabled: true, vipOnly: false, pkOnly: false},
-  {id: "g-heart", name: "Love Heart 💖", cost: 50, type: "2d", icon: "💖", color: "#ff3b81", animationClass: "animate-pulse", category: "Love", description: "Love Heart virtual gift for Pardais Party.", animationFile: "/gifts/animations/g-heart.svg", animationFormat: "svg", animationDuration: 5, animationDisplayType: "small", comboSupported: true, status: "active", featured: false, priority: 20, minLevel: 1, globalBannerEnabled: true, vipOnly: false, pkOnly: false},
-  {id: "g-star", name: "Shining Star ⭐", cost: 100, type: "2d", icon: "⭐", color: "#ffd43b", animationClass: "animate-pulse", category: "Popular", description: "Shining Star virtual gift for Pardais Party.", animationFile: "/gifts/animations/g-star.svg", animationFormat: "svg", animationDuration: 5, animationDisplayType: "small", comboSupported: true, status: "active", featured: false, priority: 30, minLevel: 1, globalBannerEnabled: true, vipOnly: false, pkOnly: false},
-  {id: "g-kiss", name: "Kiss 💋", cost: 250, type: "2d", icon: "💋", color: "#ff4d8d", animationClass: "animate-pulse", category: "Love", description: "Kiss virtual gift for Pardais Party.", animationFile: "/gifts/animations/g-kiss.svg", animationFormat: "svg", animationDuration: 6, animationDisplayType: "small", comboSupported: true, status: "active", featured: false, priority: 40, minLevel: 1, globalBannerEnabled: true, vipOnly: false, pkOnly: false},
-  {id: "g-lucky", name: "Lucky Coin 🪙", cost: 500, type: "2d", icon: "🪙", color: "#f5c542", animationClass: "animate-pulse", category: "Lucky", description: "Lucky Coin virtual gift for Pardais Party.", animationFile: "/gifts/animations/g-lucky.svg", animationFormat: "svg", animationDuration: 6, animationDisplayType: "small", comboSupported: true, status: "active", featured: false, priority: 50, minLevel: 1, globalBannerEnabled: true, vipOnly: false, pkOnly: false},
-  {id: "g-lovebox", name: "Love Box 💝", cost: 999, type: "2d", icon: "💝", color: "#ff5aa5", animationClass: "animate-pulse", category: "Love", description: "Love Box virtual gift for Pardais Party.", animationFile: "/gifts/animations/g-lovebox.svg", animationFormat: "svg", animationDuration: 7, animationDisplayType: "half", comboSupported: true, status: "active", featured: false, priority: 60, minLevel: 1, globalBannerEnabled: true, vipOnly: false, pkOnly: false},
-  {id: "g-crown", name: "VIP Crown 👑", cost: 1500, type: "2d", icon: "👑", color: "#ffd166", animationClass: "animate-pulse", category: "VIP", description: "VIP Crown virtual gift for Pardais Party.", animationFile: "/gifts/animations/g-crown.svg", animationFormat: "svg", animationDuration: 8, animationDisplayType: "half", comboSupported: true, status: "active", featured: true, priority: 70, minLevel: 1, globalBannerEnabled: true, vipOnly: false, pkOnly: false},
-  {id: "g-diamond", name: "Blue Diamond 💎", cost: 3000, type: "2d", icon: "💎", color: "#55c8ff", animationClass: "animate-pulse", category: "VIP", description: "Blue Diamond virtual gift for Pardais Party.", animationFile: "/gifts/animations/g-diamond.svg", animationFormat: "svg", animationDuration: 8, animationDisplayType: "half", comboSupported: true, status: "active", featured: true, priority: 80, minLevel: 1, globalBannerEnabled: true, vipOnly: false, pkOnly: false},
-  {id: "g-fire", name: "Fire Flame 🔥", cost: 5000, type: "3d", icon: "🔥", color: "#ff6b35", animationClass: "animate-pulse", category: "Popular", description: "Fire Flame virtual gift for Pardais Party.", animationFile: "/gifts/animations/g-fire.svg", animationFormat: "svg", animationDuration: 8, animationDisplayType: "full", comboSupported: true, status: "active", featured: true, priority: 90, minLevel: 1, globalBannerEnabled: true, vipOnly: false, pkOnly: false},
-  {id: "g-party", name: "Party Popper 🎉", cost: 7500, type: "3d", icon: "🎉", color: "#b65cff", animationClass: "animate-pulse", category: "Festival", description: "Party Popper virtual gift for Pardais Party.", animationFile: "/gifts/animations/g-party.svg", animationFormat: "svg", animationDuration: 8, animationDisplayType: "full", comboSupported: true, status: "active", featured: true, priority: 85, minLevel: 1, globalBannerEnabled: true, vipOnly: false, pkOnly: false},
-  {id: "g-rocket", name: "Space Rocket 🚀", cost: 10000, type: "3d", icon: "🚀", color: "#6c63ff", animationClass: "animate-pulse", category: "Premium", description: "Space Rocket virtual gift for Pardais Party.", animationFile: "/gifts/animations/g-rocket.svg", animationFormat: "svg", animationDuration: 9, animationDisplayType: "full", comboSupported: true, status: "active", featured: true, priority: 75, minLevel: 1, globalBannerEnabled: true, vipOnly: false, pkOnly: false},
-  {id: "g-rainbow", name: "Rainbow 🌈", cost: 15000, type: "3d", icon: "🌈", color: "#ff5ca8", animationClass: "animate-pulse", category: "Festival", description: "Rainbow virtual gift for Pardais Party.", animationFile: "/gifts/animations/g-rainbow.svg", animationFormat: "svg", animationDuration: 9, animationDisplayType: "full", comboSupported: true, status: "active", featured: false, priority: 65, minLevel: 1, globalBannerEnabled: true, vipOnly: false, pkOnly: false},
-  {id: "g-thunder", name: "Thunder Bolt ⚡", cost: 20000, type: "3d", icon: "⚡", color: "#6ee7ff", animationClass: "animate-pulse", category: "PK", description: "Thunder Bolt virtual gift for Pardais Party.", animationFile: "/gifts/animations/g-thunder.svg", animationFormat: "svg", animationDuration: 9, animationDisplayType: "full", comboSupported: true, status: "active", featured: false, priority: 55, minLevel: 1, globalBannerEnabled: true, vipOnly: false, pkOnly: false},
-  {id: "g-trophy", name: "Golden Trophy 🏆", cost: 30000, type: "3d", icon: "🏆", color: "#ffca3a", animationClass: "animate-pulse", category: "VIP", description: "Golden Trophy virtual gift for Pardais Party.", animationFile: "/gifts/animations/g-trophy.svg", animationFormat: "svg", animationDuration: 10, animationDisplayType: "full", comboSupported: true, status: "active", featured: false, priority: 50, minLevel: 1, globalBannerEnabled: true, vipOnly: false, pkOnly: false},
-  {id: "g-supercar", name: "Super Car 🏎️", cost: 40000, type: "3d", icon: "🏎️", color: "#4aa3ff", animationClass: "animate-pulse", category: "Luxury", description: "Super Car virtual gift for Pardais Party.", animationFile: "/gifts/animations/g-supercar.svg", animationFormat: "svg", animationDuration: 10, animationDisplayType: "full", comboSupported: true, status: "active", featured: false, priority: 45, minLevel: 1, globalBannerEnabled: true, vipOnly: false, pkOnly: false},
-  {id: "g-fireworks", name: "Grand Fireworks 🎆", cost: 50000, type: "3d", icon: "🎆", color: "#ff5cf0", animationClass: "animate-pulse", category: "Festival", description: "Grand Fireworks virtual gift for Pardais Party.", animationFile: "/gifts/animations/g-fireworks.svg", animationFormat: "svg", animationDuration: 12, animationDisplayType: "ultra", comboSupported: true, status: "active", featured: false, priority: 40, minLevel: 1, globalBannerEnabled: true, vipOnly: false, pkOnly: false},
-  {id: "g-lion", name: "Golden Lion 🦁", cost: 65000, type: "3d", icon: "🦁", color: "#ffb703", animationClass: "animate-pulse", category: "Luxury", description: "Golden Lion virtual gift for Pardais Party.", animationFile: "/gifts/animations/g-lion.svg", animationFormat: "svg", animationDuration: 12, animationDisplayType: "ultra", comboSupported: true, status: "active", featured: false, priority: 35, minLevel: 1, globalBannerEnabled: true, vipOnly: false, pkOnly: false},
-  {id: "g-dragon", name: "Golden Dragon 🐉", cost: 75000, type: "3d", icon: "🐉", color: "#ff5a36", animationClass: "animate-pulse", category: "Luxury", description: "Golden Dragon virtual gift for Pardais Party.", animationFile: "/gifts/animations/g-dragon.svg", animationFormat: "svg", animationDuration: 14, animationDisplayType: "ultra", comboSupported: true, status: "active", featured: false, priority: 30, minLevel: 1, globalBannerEnabled: true, vipOnly: false, pkOnly: false},
-  {id: "g-castle", name: "Royal Castle 🏰", cost: 90000, type: "3d", icon: "🏰", color: "#b388ff", animationClass: "animate-pulse", category: "Luxury", description: "Royal Castle virtual gift for Pardais Party.", animationFile: "/gifts/animations/g-castle.svg", animationFormat: "svg", animationDuration: 15, animationDisplayType: "ultra", comboSupported: true, status: "active", featured: false, priority: 25, minLevel: 1, globalBannerEnabled: true, vipOnly: false, pkOnly: false},
-  {id: "g-universe", name: "Pardais Universe 🌌", cost: 100000, type: "3d", icon: "🌌", color: "#8b5cf6", animationClass: "animate-pulse", category: "Premium", description: "Pardais Universe virtual gift for Pardais Party.", animationFile: "/gifts/animations/g-universe.svg", animationFormat: "svg", animationDuration: 16, animationDisplayType: "ultra", comboSupported: true, status: "active", featured: false, priority: 20, minLevel: 1, globalBannerEnabled: true, vipOnly: false, pkOnly: false},
- ];
-
-/** Additive production gift catalog bootstrap. Existing admin/custom gifts are preserved. */
-async function ensurePersistentGiftCatalog() {
-  if (!Array.isArray(dbData.gifts)) dbData.gifts = [];
-  const existing = new Map<string, any>();
-  for (const gift of dbData.gifts) if (gift?.id) existing.set(String(gift.id), gift);
-  let changed = false;
-  for (const builtIn of DEFAULT_ADVANCED_GIFTS_SERVER) {
-    const id = String(builtIn.id);
-    const bundledImage = `${PUBLIC_API_BASE}/gifts/images/${id}.svg`;
-    const bundledAnimation = `${PUBLIC_API_BASE}/gifts/animations/${id}.svg`;
-    const current = existing.get(id);
-    if (!current) {
-      const gift = { ...builtIn, imageUrl: bundledImage, animationFile: bundledAnimation, animationUrl: bundledAnimation, isSystemGift: true };
-      dbData.gifts.push(gift);
-      existing.set(id, gift);
-      changed = true;
-      void syncDocument("gifts", id, gift).catch((err) => console.warn(`[GIFTS] Failed to persist built-in ${id}:`, err?.message || err));
-      continue;
-    }
-    // Upgrade legacy bundled/demo media only when it is still a known sample/emoji/empty value.
-    // Custom admin media is left untouched.
-    const currentAnimation = String(current.animationUrl || current.animationFile || current.videoUrl || "");
-    const looksLegacy = !currentAnimation || currentAnimation === String(current.icon || "") || /commondatastorage\.googleapis\.com\/gtv-videos-bucket\/sample/i.test(currentAnimation);
-    const next = { ...current, isSystemGift: true };
-    let updated = false;
-    if (!current.imageUrl || current.imageUrl === current.icon) { next.imageUrl = bundledImage; updated = true; }
-    if (looksLegacy) { next.animationFile = bundledAnimation; next.animationUrl = bundledAnimation; next.videoUrl = ""; next.animationFormat = "svg"; updated = true; }
-    if (updated) {
-      Object.assign(current, next);
-      changed = true;
-      void syncDocument("gifts", id, current).catch((err) => console.warn(`[GIFTS] Failed to upgrade built-in ${id}:`, err?.message || err));
-    }
-  }
-  if (changed) saveDatabase();
-  return dbData.gifts;
-}
+  { id: "g-lion", name: "Golden Lion 🦁", cost: 10000, type: "3d", icon: "🦁", color: "from-amber-500 via-yellow-500 to-amber-700", animationClass: "animate-bounce", category: "Popular", description: "Roaring Golden Lion of supreme royalty & majesty!", animationFile: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4", animationFormat: "mp4", animationDuration: 10, animationDisplayType: "full", comboSupported: true, status: "active", featured: true, priority: 100 },
+  { id: "g-spice", name: "Indian Spice 🌶️", cost: 3000, type: "3d", icon: "🌶️", color: "from-red-600 via-amber-500 to-yellow-500", animationClass: "animate-bounce", category: "Popular", description: "Sizzling Indian Spice explosion video overlay!", animationFile: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4", animationFormat: "mp4", animationDuration: 10, animationDisplayType: "full", comboSupported: true, status: "active", featured: true, priority: 95 },
+  { id: "g-fireworks", name: "Fireworks 🎆", cost: 5000, type: "3d", icon: "🎆", color: "from-purple-500 via-pink-500 to-amber-400", animationClass: "animate-pulse", category: "Popular", description: "Grand sparkling celebration fireworks video overlay!", animationFile: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4", animationFormat: "mp4", animationDuration: 12, animationDisplayType: "full", comboSupported: true, status: "active", featured: true, priority: 90 },
+  { id: "g-rose", name: "Red Rose", cost: 10, type: "2d", icon: "🌹", color: "from-pink-500 to-rose-600", animationClass: "animate-bounce", category: "Popular", description: "A fresh beautiful red rose of deep admiration.", animationFile: "🌹", animationFormat: "svg", animationDuration: 5, animationDisplayType: "small", comboSupported: true, status: "active", featured: true, priority: 10 },
+  { id: "g-heart", name: "Love Heart", cost: 99, type: "2d", icon: "💖", color: "from-red-500 to-pink-500", animationClass: "animate-pulse", category: "Popular", description: "Express your warm affection.", animationFile: "💖", animationFormat: "svg", animationDuration: 5, animationDisplayType: "small", comboSupported: true, status: "active", featured: true, priority: 9 },
+  { id: "g-lucky-coin", name: "Lucky Coin", cost: 50, type: "2d", icon: "🪙", color: "from-yellow-400 to-amber-600", animationClass: "animate-bounce", category: "Lucky", description: "Send fortune!", animationFile: "🪙", animationFormat: "svg", animationDuration: 5, animationDisplayType: "small", comboSupported: true, status: "active", featured: false, priority: 8 },
+  { id: "g-crown", name: "VIP Crown", cost: 999, type: "3d", icon: "👑", color: "from-yellow-400 to-amber-600", animationClass: "animate-spin", category: "VIP", description: "Royal crown for the star.", animationFile: "👑", animationFormat: "svga", animationDuration: 10, animationDisplayType: "half", comboSupported: true, status: "active", featured: true, priority: 7 },
+  { id: "g-star-trophy", name: "Star Trophy", cost: 500, type: "3d", icon: "🏆", color: "from-yellow-300 to-amber-500", animationClass: "animate-pulse", category: "New", description: "Awarded to energetic hosts.", animationFile: "🏆", animationFormat: "svg", animationDuration: 8, animationDisplayType: "half", comboSupported: true, status: "active", featured: false, priority: 6 },
+  { id: "g-car", name: "Sports Car", cost: 4999, type: "luxury", icon: "🏎️", color: "from-blue-500 to-indigo-600", animationClass: "animate-bounce", category: "Luxury", description: "Rev your engine!", animationFile: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4", animationFormat: "mp4", animationDuration: 10, animationDisplayType: "full", comboSupported: false, status: "active", featured: true, priority: 4 },
+  { id: "g-rocket", name: "Space Rocket", cost: 9999, type: "luxury", icon: "🚀", color: "from-purple-600 to-pink-600", animationClass: "animate-pulse", category: "Premium", description: "Blast off into the cosmos!", animationFile: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4", animationFormat: "mp4", animationDuration: 15, animationDisplayType: "full", comboSupported: false, status: "active", featured: true, priority: 3 },
+  { id: "g-dragon", name: "Golden Dragon", cost: 29999, type: "luxury", icon: "🐉", color: "from-amber-500 to-red-600", animationClass: "animate-bounce", category: "Luxury", description: "Screaming golden fire storm!", animationFile: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4", animationFormat: "mp4", animationDuration: 30, animationDisplayType: "ultra", comboSupported: false, status: "active", featured: true, priority: 2 }
+];
 
 const PARDAIS_LEVEL_THRESHOLDS_SERVER = [500, 2000, 5000, 10000, 20000, 35000, 55000, 80000, 120000, 175000, 250000, 350000, 500000, 700000, 1000000, 1250000, 1550000, 1900000, 2300000, 2800000, 3300000, 3900000, 4500000, 5200000, 6000000, 7000000, 8200000, 9600000, 11200000, 13000000, 15000000, 17200000, 19600000, 22200000, 25000000, 28000000, 31500000, 35000000, 39000000, 43000000, 47000000, 51000000, 55000000, 58000000, 61000000, 63000000, 65000000, 67000000, 69000000, 70000000, 75000000, 90000000, 110000000, 135000000, 165000000, 200000000, 245000000, 300000000, 370000000, 450000000, 550000000, 670000000, 820000000, 1000000000, 1200000000, 1450000000, 1750000000, 2100000000, 2500000000, 3000000000, 3600000000, 4300000000, 5100000000, 6000000000, 7000000000, 8200000000, 9500000000, 11000000000, 12700000000, 15000000000, 17500000000, 20000000000, 23000000000, 26000000000, 30000000000, 34000000000, 38500000000, 43000000000, 48000000000, 54000000000, 59000000000, 64000000000, 69000000000, 74000000000, 80000000000, 84000000000, 88000000000, 92000000000, 96000000000, 100000000000];
 function getProgressionFromServerCoins(xp: number) {
@@ -3373,118 +3205,12 @@ function getProgressionFromServerCoins(xp: number) {
   return { level, vipLevel };
 }
 
-function canonicalizeProgressFields(user: any) {
-  if (!user) return user;
-
-  // Lifetime spending is the ONLY source of Pardais Party user level.
-  // Migrate legacy accounts safely: if an older build stored spending only in
-  // history/giftSpentCoins/xp, recover the largest durable value instead of
-  // interpreting a missing field as zero. This prevents an app/backend update
-  // from dropping an existing user's level back to Level 1.
-  const history = Array.isArray(user.coinSpendHistory) ? user.coinSpendHistory : [];
-  const historyTotal = history.reduce((sum: number, entry: any) => {
-    const amount = Math.max(0, Number(entry?.amount) || 0);
-    return sum + amount;
-  }, 0);
-
-  const legacyLevel = Math.max(1, Math.min(100, Math.floor(Number(user.userLevel ?? user.level) || 1)));
-  const explicitLifetimeSpent = Math.max(
-    0,
-    Number(user.coinSpendTotal) || 0,
-    Number(user.giftSpentCoins) || 0,
-    historyTotal
-  );
-
-  // xp was the legacy progression field. It is now a compatibility mirror of
-  // lifetime spending. If a very old account has a persisted level but no
-  // spending ledger, the level itself is the stronger signal: preserve it by
-  // migrating to that level's minimum cumulative threshold instead of dropping
-  // the account to Level 1 because xp happened to be missing/smaller.
-  const legacyLevelFloor = legacyLevel > 1
-    ? (PARDAIS_LEVEL_THRESHOLDS_SERVER[legacyLevel - 1] || 0)
-    : 0;
-  let lifetimeSpent = Math.max(
-    explicitLifetimeSpent,
-    Number(user.xp) || 0,
-    legacyLevelFloor
-  );
-
-  if (legacyLevelFloor > 0 && explicitLifetimeSpent <= 0) {
-    user.legacyProgressMigratedAt = user.legacyProgressMigratedAt || new Date().toISOString();
-  }
-
-  user.coinSpendTotal = lifetimeSpent;
-  // xp is retained as the compatibility field, but it now means lifetime coins actually spent.
-  user.xp = lifetimeSpent;
-  const progression = getProgressionFromServerCoins(lifetimeSpent);
-  user.userLevel = progression.level;
-  user.level = progression.level;
-  user.vipLevel = progression.vipLevel;
-  user.progressUpdatedAt = user.progressUpdatedAt || new Date().toISOString();
-  user.coinSpendHistory = history;
-  return user;
-}
-
-async function recordCoinSpendServer(user: any, amount: number, source: string, metadata: Record<string, any> = {}) {
-  const spend = Math.floor(Number(amount) || 0);
-  if (!user || spend <= 0) return null;
-  canonicalizeProgressFields(user);
-  const now = new Date().toISOString();
-  user.coinSpendTotal = (Number(user.coinSpendTotal) || 0) + spend;
-  user.xp = user.coinSpendTotal;
-  const progression = getProgressionFromServerCoins(user.coinSpendTotal);
-  user.userLevel = progression.level;
-  user.level = progression.level;
-  user.vipLevel = progression.vipLevel;
-  user.progressUpdatedAt = now;
-  const entry = {
-    id: metadata.transactionId || `SPEND-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    userId: user.uid || user.uniqueId || user.username,
-    username: user.username || "",
-    amount: spend,
-    source: String(source || "other"),
-    timestamp: now,
-    ...metadata
-  };
-  if (!Array.isArray(user.coinSpendHistory)) user.coinSpendHistory = [];
-  user.coinSpendHistory.unshift(entry);
-  // Keep a durable, bounded per-user history; the aggregate total is never truncated.
-  if (user.coinSpendHistory.length > 5000) user.coinSpendHistory = user.coinSpendHistory.slice(0, 5000);
-  if (!Array.isArray(dbData.coinSpendLedger)) dbData.coinSpendLedger = [];
-  dbData.coinSpendLedger.unshift(entry);
-  if (dbData.coinSpendLedger.length > 50000) dbData.coinSpendLedger = dbData.coinSpendLedger.slice(0, 50000);
-  return { entry, progression };
-}
-
-async function creditCreatorEarningServer(user: any, amount: number, source: string, metadata: Record<string, any> = {}) {
-  const earning = Math.floor(Number(amount) || 0);
-  if (!user || earning <= 0) return null;
-  const now = new Date().toISOString();
-  user.diamonds = (Number(user.diamonds) || 0) + earning;
-  const entry = {
-    id: metadata.transactionId || `EARN-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    userId: user.uid || user.uniqueId || user.username,
-    username: user.username || "",
-    amount: earning,
-    currency: "diamonds",
-    source: String(source || "other"),
-    timestamp: now,
-    ...metadata
-  };
-  if (!Array.isArray(user.creatorEarningHistory)) user.creatorEarningHistory = [];
-  user.creatorEarningHistory.unshift(entry);
-  if (user.creatorEarningHistory.length > 5000) user.creatorEarningHistory = user.creatorEarningHistory.slice(0, 5000);
-  if (!Array.isArray(dbData.creatorEarningLedger)) dbData.creatorEarningLedger = [];
-  dbData.creatorEarningLedger.unshift(entry);
-  if (dbData.creatorEarningLedger.length > 50000) dbData.creatorEarningLedger = dbData.creatorEarningLedger.slice(0, 50000);
-  return entry;
-}
-
-
-app.get("/api/v1/gifts", async (req, res) => {
-  await ensurePersistentGiftCatalog();
-  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
-  res.json((dbData.gifts || []).filter((g: any) => g && g.id && g.status !== "deleted"));
+app.get("/api/v1/gifts", (req, res) => {
+  // The database is the single source of truth for the production gift catalog.
+  // Do not merge demo/default gifts into the catalog on every request.
+  if (!Array.isArray(dbData.gifts)) dbData.gifts = [];
+  res.setHeader("Cache-Control", "no-store");
+  res.json(dbData.gifts.filter((g: any) => g && g.id && g.status !== "deleted"));
 });
 
 const isGiftVideoMediaUrl = (value: any) => {
@@ -3509,7 +3235,7 @@ const resolveGiftAnimationMedia = (gift: any) => {
   return candidates.find(isGiftAnimationMediaUrl) || "";
 };
 
-app.post("/api/v1/gifts/send", authenticateUser, async (req, res) => {
+app.post("/api/v1/gifts/send", authenticateUser, (req, res) => {
   const { requestId, giftId, count = 1, recipient = "Host", targetHostSide } = req.body;
   if (!giftId) {
     return res.status(400).json({ error: "giftId is required" });
@@ -3548,16 +3274,10 @@ app.post("/api/v1/gifts/send", authenticateUser, async (req, res) => {
   }
 
   user.coins = userCoins - totalCost;
-  const spendRecord = await recordCoinSpendServer(user, totalCost, req.body.source || (req.body.reelId ? "reels_gift" : "gift"), {
-    transactionId: requestId || undefined,
-    giftId,
-    giftName: gift.name,
-    recipient,
-    partyId: req.body.partyId || req.body.roomId || null,
-    hostId: req.body.hostId || null,
-    targetHostSide: targetHostSide || "hostA"
-  });
-  const giftProgress = spendRecord?.progression || getProgressionFromServerCoins(user.coinSpendTotal || user.xp);
+  user.xp = (user.xp || 0) + Math.floor(totalCost * 0.2);
+  const giftProgress = getProgressionFromServerCoins(user.xp);
+  user.userLevel = giftProgress.level;
+  user.vipLevel = giftProgress.vipLevel;
   user.wealthLevel = Math.max(Number(user.wealthLevel) || 1, (Number(user.wealthLevel) || 1) + 1);
 
   // Gift display value is always the full amount, while the recipient
@@ -3569,7 +3289,6 @@ app.post("/api/v1/gifts/send", authenticateUser, async (req, res) => {
   // Credit the actual recipient's earning wallet when the recipient can be
   // resolved from the authenticated user database. This is separate from
   // the 100% gift value shown on the seat/room UI.
-  const txId = requestId || `TX-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
   const normalizedRecipient = String(recipient || '').trim().toLowerCase();
   const recipientUser = (dbData.users || []).find((u: any) => {
     const username = String(u?.username || '').trim().toLowerCase();
@@ -3577,14 +3296,7 @@ app.post("/api/v1/gifts/send", authenticateUser, async (req, res) => {
     return normalizedRecipient && (username === normalizedRecipient || fullName === normalizedRecipient);
   });
   if (recipientUser) {
-    await creditCreatorEarningServer(recipientUser, recipientEarnings, req.body.source || (req.body.reelId ? "reels_gift" : "gift_received"), {
-      transactionId: txId,
-      giftId,
-      giftName: gift.name,
-      sender: user.username,
-      giftCoins: totalCost,
-      companyShare
-    });
+    recipientUser.diamonds = (Number(recipientUser.diamonds) || 0) + recipientEarnings;
     recipientUser.updatedAt = new Date().toISOString();
     const recipientIndex = dbData.users.findIndex((u: any) => u?.uid === recipientUser.uid || u?.username === recipientUser.username);
     if (recipientIndex >= 0) dbData.users[recipientIndex] = { ...recipientUser };
@@ -3598,6 +3310,7 @@ app.post("/api/v1/gifts/send", authenticateUser, async (req, res) => {
   dbData.platformMetrics.companyRevenue = (dbData.platformMetrics.companyRevenue || 0) + companyShare;
   dbData.platformMetrics.hostDiamondsDistributed = (dbData.platformMetrics.hostDiamondsDistributed || 0) + hostEarnings;
 
+  const txId = requestId || `TX-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
   const txLog = {
     id: txId,
     type: "gift_sent",
@@ -3668,18 +3381,13 @@ app.post("/api/v1/gifts/send", authenticateUser, async (req, res) => {
 
   saveDatabase();
 
-  const responseData: any = {
+  const responseData = {
     success: true,
     transactionId: txId,
     gift,
     count: giftCount,
     totalCoinsSpent: totalCost,
     remainingCoins: user.coins,
-    userLevel: user.userLevel,
-    level: user.level || user.userLevel,
-    vipLevel: user.vipLevel,
-    xp: user.xp,
-    coinSpendTotal: user.coinSpendTotal,
     hostEarnings,
     recipientEarnings,
     companyShare,
@@ -4215,41 +3923,11 @@ function syncHostPkScores(host: any) {
     }
   });
 
-  // Canonical live mode: every client (host, guest and viewer) reads the same
-  // authoritative mode from this host record. A PK/1v1 session owns the mode;
-  // when no session exists we fall back to the host's current guest/solo state.
-  if (!activePkMatch) {
+  if (!activePkMatch && host.inPk) {
     host.inPk = false;
     host.pkActive = false;
-    host.pkState = "idle";
-    host.pkTimer = 0;
-    host.pkScoreHost = 0;
-    host.pkScoreOpponent = 0;
-    host.pkHostASupporters = [];
-    host.pkHostBSupporters = [];
-    host.coHostUsername = undefined;
-    host.coHostAvatar = undefined;
-    host.coHostVipLevel = 0;
     if (host.originalChannelName) {
       host.channelName = host.originalChannelName;
-    }
-
-    const hasGuest = Boolean(
-      host.guestModeActive ||
-      host.category === "guest" ||
-      host.subCategory === "Guest" ||
-      host.subCategory === "Multi-guest" ||
-      (Array.isArray(host.guestSeats) && host.guestSeats.some((seat: any) => seat && seat.name))
-    );
-    const previousLiveMode = host.liveMode;
-    host.liveMode = hasGuest ? "guest" : "solo";
-    host.category = hasGuest ? "guest" : "video";
-    host.subCategory = hasGuest ? "Guest" : "Solo";
-    if (previousLiveMode !== host.liveMode) {
-      host.liveStateVersion = Number(host.liveStateVersion || 0) + 1;
-      host.liveStateUpdatedAt = new Date().toISOString();
-    } else {
-      host.liveStateVersion = Number(host.liveStateVersion || 1);
     }
   }
 }
@@ -4314,22 +3992,7 @@ const getActiveLiveSessions = () => {
   });
 
   dbData.hosts = Array.from(uniqueMap.values());
-  dbData.hosts.forEach(h => {
-    const account = (dbData.users || []).find((u: any) => String(u?.username || "").trim().toLowerCase() === String(h.hostUsername || h.name || "").trim().toLowerCase());
-    if (account) {
-      canonicalizeProgressFields(account);
-      h.level = account.userLevel;
-      h.userLevel = account.userLevel;
-      h.hostLevel = account.userLevel;
-      h.vipLevel = account.vipLevel;
-      h.avatar = account.avatar || h.avatar || "";
-      h.hostAvatar = account.avatar || h.hostAvatar || "";
-      h.displayName = getPersistentDisplayName(account, h.hostName || h.name || h.hostUsername || "Pardais User");
-      h.hostName = h.displayName;
-      h.name = h.displayName;
-    }
-    syncHostPkScores(h);
-  });
+  dbData.hosts.forEach(h => syncHostPkScores(h));
   saveDatabase();
 
   return dbData.hosts;
@@ -4346,9 +4009,7 @@ app.get("/api/v1/live/active", (req, res) => {
 app.post("/api/v1/live/session", (req, res) => {
   const sessionData = req.body || {};
   const hostUsername = sessionData.hostUsername || sessionData.hostName || sessionData.name || "live_host";
-  const canonicalHostUser = (dbData.users || []).find((u: any) => String(u?.username || "").trim().toLowerCase() === String(hostUsername).trim().toLowerCase());
-  if (canonicalHostUser) canonicalizeProgressFields(canonicalHostUser);
-  const hostUserId = sessionData.hostUserId || sessionData.hostUid || canonicalHostUser?.uniqueId || canonicalHostUser?.uid || sessionData.uniqueId || hostUsername;
+  const hostUserId = sessionData.hostUserId || sessionData.hostUid || sessionData.uniqueId || hostUsername;
   const hostId = sessionData.id || `h-${hostUserId}`;
 
   terminateHostLiveSession(hostUserId);
@@ -4359,26 +4020,18 @@ app.post("/api/v1/live/session", (req, res) => {
   const newHost = {
     id: hostId,
     hostUserId,
-    hostName: getPersistentDisplayName(canonicalHostUser, sessionData.hostName || sessionData.name || hostUsername),
-    hostAvatar: canonicalHostUser?.avatar || sessionData.hostAvatar || sessionData.avatar || "",
+    hostName: sessionData.hostName || sessionData.name || hostUsername,
+    hostAvatar: sessionData.hostAvatar || sessionData.avatar || "",
     hostUsername,
     hostUid: hostUserId,
-    displayName: getPersistentDisplayName(canonicalHostUser, sessionData.hostName || sessionData.name || hostUsername),
-    name: getPersistentDisplayName(canonicalHostUser, sessionData.hostName || sessionData.name || hostUsername),
-    avatar: canonicalHostUser?.avatar || sessionData.hostAvatar || sessionData.avatar || "",
-    level: canonicalHostUser?.userLevel || sessionData.level || 1,
-    userLevel: canonicalHostUser?.userLevel || sessionData.userLevel || sessionData.level || 1,
-    hostLevel: canonicalHostUser?.userLevel || sessionData.hostLevel || sessionData.level || 1,
-    vipLevel: canonicalHostUser?.vipLevel ?? Number(sessionData.vipLevel || 0),
+    name: sessionData.hostName || sessionData.name || hostUsername,
+    avatar: sessionData.hostAvatar || sessionData.avatar || "",
     sessionId: newSessionId,
     liveSessionId: newSessionId,
     channelName: sessionData.channelName || `room_${hostUserId}`,
     status: "LIVE",
     isLive: true,
     streamType: "SOLO",
-    liveMode: "solo",
-    liveStateVersion: 1,
-    liveStateUpdatedAt: new Date().toISOString(),
     inPk: false,
     category: sessionData.category || "video",
     viewers: sessionData.viewers || 0,
@@ -4414,9 +4067,6 @@ app.post("/api/v1/hosts", (req, res) => {
     hostAvatar: hostData.hostAvatar || hostData.avatar || "",
     isLive: true,
     status: "LIVE",
-    liveMode: "solo",
-    liveStateVersion: 1,
-    liveStateUpdatedAt: new Date().toISOString(),
     category: hostData.category || "video",
     viewers: hostData.viewers || 0,
     realViewerCount: hostData.realViewerCount || 0,
@@ -4490,47 +4140,7 @@ app.put("/api/v1/hosts/:id", (req, res) => {
       updateData.lastJoinEvent = existing.lastJoinEvent;
     }
 
-    const mergedHost = { ...existing, ...updateData, lastSeen: Date.now(), updatedAt: new Date().toISOString() };
-    // The host heartbeat is the authoritative live-mode update for viewers.
-    // Prefer explicit liveMode when supplied; otherwise derive it from the
-    // mutually-exclusive PK/1v1/guest/solo flags.
-    if (mergedHost.liveMode !== "pk" && mergedHost.liveMode !== "1v1" && mergedHost.liveMode !== "guest" && mergedHost.liveMode !== "solo") {
-      mergedHost.liveMode = mergedHost.pkActive || mergedHost.inPk
-        ? "pk"
-        : (mergedHost.guestModeActive || (Array.isArray(mergedHost.guestSeats) && mergedHost.guestSeats.some((seat: any) => seat && seat.name)) ? "guest" : "solo");
-    }
-    if (mergedHost.liveMode === "solo") {
-      mergedHost.category = "video";
-      mergedHost.subCategory = "Solo";
-      mergedHost.inPk = false;
-      mergedHost.pkActive = false;
-      mergedHost.pkState = "idle";
-    } else if (mergedHost.liveMode === "guest") {
-      mergedHost.category = "guest";
-      mergedHost.subCategory = "Guest";
-      mergedHost.inPk = false;
-      mergedHost.pkActive = false;
-      mergedHost.pkState = "idle";
-    } else if (mergedHost.liveMode === "1v1") {
-      mergedHost.category = "1v1";
-      mergedHost.subCategory = "1v1";
-      mergedHost.inPk = false;
-      mergedHost.pkActive = false;
-      mergedHost.pkState = "1v1_connected";
-    } else if (mergedHost.liveMode === "pk") {
-      mergedHost.category = "pk";
-      mergedHost.subCategory = "PK";
-      mergedHost.inPk = true;
-    }
-    const previousMode = existing.liveMode || existing.category || "solo";
-    if (previousMode !== mergedHost.liveMode) {
-      mergedHost.liveStateVersion = Number(existing.liveStateVersion || 0) + 1;
-      mergedHost.liveStateUpdatedAt = new Date().toISOString();
-    } else {
-      mergedHost.liveStateVersion = Number(existing.liveStateVersion || 1);
-      mergedHost.liveStateUpdatedAt = existing.liveStateUpdatedAt || new Date().toISOString();
-    }
-    dbData.hosts[index] = mergedHost;
+    dbData.hosts[index] = { ...existing, ...updateData, lastSeen: Date.now(), updatedAt: new Date().toISOString() };
     syncHostPkScores(dbData.hosts[index]);
     saveDatabase();
     syncDocument("hosts", dbData.hosts[index].id, dbData.hosts[index]);
@@ -4598,7 +4208,7 @@ app.post("/api/v1/live/end", (req, res) => {
   res.json({ success: true, message: "Live session ended successfully" });
 });
 
-app.post("/api/v1/hosts/:id/like", async (req, res) => {
+app.post("/api/v1/hosts/:id/like", (req, res) => {
   const { id } = req.params;
   const { count = 1, senderUsername, xPercent, yPercent } = req.body || {};
   const index = findHostIndex(id);
@@ -4614,18 +4224,6 @@ app.post("/api/v1/hosts/:id/like", async (req, res) => {
     };
     saveDatabase();
     syncDocument("hosts", host.id, host);
-    const hostOwner = (dbData.users || []).find((u: any) =>
-      String(u?.username || "").toLowerCase() === String(host.username || host.hostUsername || "").toLowerCase() ||
-      String(u?.uid || "") === String(host.userId || "")
-    );
-    const sender = String(senderUsername || "").trim();
-    if (hostOwner && sender && sender.toLowerCase() !== String(hostOwner.username || "").toLowerCase()) {
-      await writeDurableNotification({
-        type: "Like", category: "social", title: "❤️ Your Live Got a Like",
-        text: `${sender} liked your live stream.`, targetUsername: hostOwner.username, targetUserId: hostOwner.uid,
-        actorUsername: sender, userAvatar: ""
-      });
-    }
     res.json({ success: true, likes: host.likes, lastLikeEvent: host.lastLikeEvent });
   } else {
     res.status(404).json({ error: "Host not found" });
@@ -4660,17 +4258,15 @@ app.post("/api/v1/hosts/:id/join", (req, res) => {
       host.connectedViewers = [];
     }
     // Avoid duplicate entries in list
-    const canonicalViewer = (dbData.users || []).find((u: any) => String(u?.username || "").toLowerCase() === String(username).toLowerCase());
     if (!host.connectedViewers.some((v: any) => v.username === username)) {
-      host.connectedViewers.push({ userId: userId || canonicalViewer?.uid || canonicalViewer?.uniqueId || username, username, displayName: getPersistentDisplayName(canonicalViewer, username), avatar: canonicalViewer?.avatar || avatar || "", level: canonicalViewer?.userLevel || level || 1, vipLevel: canonicalViewer?.vipLevel ?? Number(vipLevel || 0) });
+      host.connectedViewers.push({ userId: userId || username, username, avatar: avatar || "", level: level || 1, vipLevel: vipLevel || 0 });
     }
     host.viewers = host.connectedViewers.length;
     host.realViewerCount = host.connectedViewers.length;
     host.lastJoinEvent = {
       id: `join-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
       username,
-      displayName: getPersistentDisplayName(canonicalViewer, username),
-      userLevel: canonicalViewer?.userLevel || level || 1,
+      userLevel: level || 1,
       vipLevel: vipLevel || 0,
       timestamp: Date.now()
     };
@@ -4710,7 +4306,7 @@ app.post("/api/v1/hosts/:id/leave", (req, res) => {
   }
 });
 
-app.post("/api/v1/hosts/:id/comments", async (req, res) => {
+app.post("/api/v1/hosts/:id/comments", (req, res) => {
   const { id } = req.params;
   const { message, username, vipLevel, userLevel, isSystem, avatar } = req.body;
   if (!message || !username) {
@@ -4735,17 +4331,6 @@ app.post("/api/v1/hosts/:id/comments", async (req, res) => {
     host.comments.push(newComment);
     saveDatabase();
     syncDocument("hosts", host.id, host);
-    const hostOwner = (dbData.users || []).find((u: any) =>
-      String(u?.username || "").toLowerCase() === String(host.username || host.hostUsername || "").toLowerCase() ||
-      String(u?.uid || "") === String(host.userId || "")
-    );
-    if (hostOwner && String(username).toLowerCase() !== String(hostOwner.username || "").toLowerCase()) {
-      await writeDurableNotification({
-        type: "Comment", category: "social", title: "💬 New Comment",
-        text: `${username} commented on your live stream.`, targetUsername: hostOwner.username, targetUserId: hostOwner.uid,
-        actorUsername: username, userAvatar: avatar || ""
-      });
-    }
     res.status(201).json(host.comments);
   } else {
     res.status(404).json({ error: "Host not found" });
@@ -4806,11 +4391,7 @@ app.post("/api/v1/hosts/:id/guest-requests/:reqId/respond", (req, res) => {
     if (Array.isArray(host.guestRequests)) {
       const match = host.guestRequests.find((r: any) => r.id === reqId || r.username === reqId);
       if (match && action === "accept") {
-        const targetSeatId = Number(seatId || match.seatId || 1);
-        const occupiedByOther = (host.guestSeats || []).some((s: any) => Number(s?.id) === targetSeatId && s?.name && String(s.name).toLowerCase() !== String(match.username).toLowerCase());
-        if (occupiedByOther) {
-          return res.status(409).json({ error: "SEAT_OCCUPIED", message: "Selected guest seat is already occupied." });
-        }
+        const targetSeatId = seatId || match.seatId || 1;
         if (!Array.isArray(host.guestSeats)) {
           host.guestSeats = [1, 2, 3, 4, 5, 6, 7, 8].map(sId => ({
             id: sId, name: null, avatar: null, diamonds: null, isMuted: false, isCamMuted: false, isBigFrame: false
@@ -4832,20 +4413,6 @@ app.post("/api/v1/hosts/:id/guest-requests/:reqId/respond", (req, res) => {
         });
       }
       host.guestRequests = host.guestRequests.filter((r: any) => r.id !== reqId && r.username !== reqId);
-      if (action === "accept") {
-        host.guestModeActive = true;
-        host.liveMode = "guest";
-        host.category = "guest";
-        host.subCategory = "Guest";
-        host.inPk = false;
-        host.pkActive = false;
-        host.pkState = "idle";
-        host.liveStateVersion = Number(host.liveStateVersion || 0) + 1;
-        host.liveStateUpdatedAt = new Date().toISOString();
-        host.lastGuestSeatEvent = { type: "accepted", username: match?.username || reqId, seatId: Number(seatId || match?.seatId || 1), timestamp: Date.now() };
-      } else if (action === "reject" || action === "decline") {
-        host.lastGuestSeatEvent = { type: "rejected", username: match?.username || reqId, timestamp: Date.now() };
-      }
     }
     saveDatabase();
     syncDocument("hosts", host.id, host);
@@ -4883,13 +4450,6 @@ app.post("/api/v1/hosts/:id/invites", (req, res) => {
   const index = findHostIndex(id);
   if (index !== -1) {
     const host = dbData.hosts[index];
-    const safeSeatId = Math.min(8, Math.max(1, Number(seatId) || 1));
-    if (!Array.isArray(host.guestSeats)) {
-      host.guestSeats = [1,2,3,4,5,6,7,8].map((sId: number) => ({ id: sId, name: null, avatar: null, diamonds: null, isMuted: false, isCamMuted: false, isBigFrame: false }));
-    }
-    if (!host.guestSeats.some((s: any) => Number(s?.id) === safeSeatId && !s?.name)) {
-      return res.status(409).json({ error: "NO_EMPTY_GUEST_SEAT", message: "No empty guest seat is available." });
-    }
     if (!Array.isArray(host.pendingInvites)) {
       host.pendingInvites = [];
     }
@@ -4897,7 +4457,7 @@ app.post("/api/v1/hosts/:id/invites", (req, res) => {
     const newInvite = {
       id: `inv-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
       targetUsername,
-      seatId: safeSeatId,
+      seatId: Number(seatId) || 1,
       hostName: host.name || host.hostUsername || "Host",
       timestamp: Date.now()
     };
@@ -4985,7 +4545,7 @@ const onlineUserPresence: Record<string, any> = {};
 
 // Heartbeat / Presence Registration
 app.post("/api/v1/presence", (req, res) => {
-  const { username, userId, avatar, level, fans, isLive, inPk, liveCategory, guestModeActive, guestSeatCount } = req.body || {};
+  const { username, userId, avatar, level, fans, isLive, inPk } = req.body || {};
   if (!username) {
     return res.status(400).json({ error: "Username required for presence" });
   }
@@ -4999,9 +4559,6 @@ app.post("/api/v1/presence", (req, res) => {
     fans: fans || "10K fans",
     isLive: !!isLive,
     inPk: !!inPk,
-    liveCategory: String(liveCategory || (inPk ? "pk" : "solo")),
-    guestModeActive: !!guestModeActive,
-    guestSeatCount: Number(guestSeatCount || 0),
     lastSeen: Date.now()
   };
 
@@ -5019,30 +4576,52 @@ app.post("/api/v1/presence", (req, res) => {
 // Get Available Hosts for 1v1 Invites
 app.get("/api/v1/pk/available-hosts", (req, res) => {
   const currentUsername = String(req.query.username || "").toLowerCase();
+  const currentUserId = String(req.query.userId || req.query.username || "").toLowerCase();
   const now = Date.now();
-  const fallbackAvatar = "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=100&q=80";
-  const rows = new Map<string, any>();
 
-  (dbData.hosts || []).forEach((h: any) => {
-    const username = String(h.hostUsername || h.name || "").trim();
-    if (!username || username.toLowerCase() === currentUsername || h.isDemoHost || h.isLive === false) return;
-    const inPk = Boolean(h.inPk || h.inPkBattle || h.pkActive || h.category === "pk" || h.subCategory === "PK");
-    const inGuest = Boolean(h.guestModeActive || h.category === "guest" || h.subCategory === "Guest" || h.subCategory === "Multi-guest" || (Array.isArray(h.guestSeats) && h.guestSeats.some((g: any) => g?.name)));
-    const mode = inPk ? "pk" : (inGuest ? "guest" : "solo");
-    rows.set(username.toLowerCase(), { id: String(h.id || h.hostUid || username), userId: String(h.hostUid || h.id || username), username, avatar: String(h.hostAvatar || h.avatar || fallbackAvatar), level: Number(h.hostLevel || h.level || 1), fans: `${h.followersCount || h.fans || 0} fans`, isLive: true, mode, canInvite: mode === "solo", status: mode === "pk" ? "⚔️ PK" : mode === "guest" ? "👥 Guest" : "🔴 Live Solo" });
+  // 1. Gather live real hosts from dbData.hosts
+  const liveHostsList = (dbData.hosts || [])
+    .filter((h: any) => h.isLive !== false && !h.inPk && !h.inPkBattle && !h.isDemoHost)
+    .map((h: any) => ({
+      id: String(h.id || h.hostUid || h.hostUsername),
+      userId: String(h.hostUid || h.id || h.hostUsername),
+      username: String(h.hostUsername || h.name || "Live Host"),
+      avatar: String(h.hostAvatar || h.avatar || "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=100&q=80"),
+      level: Number(h.hostLevel || h.level || 1),
+      fans: `${h.followersCount || h.fans || 0} fans`,
+      isLive: true,
+      inPk: false,
+      status: "🔴 Live Solo"
+    }));
+
+  // 2. Gather online presence users
+  const onlinePresenceList = Object.values(onlineUserPresence)
+    .filter((u: any) => (now - u.lastSeen <= 15000) && !u.inPk)
+    .map((u: any) => ({
+      id: String(u.userId || u.username),
+      userId: String(u.userId || u.username),
+      username: String(u.username),
+      avatar: String(u.avatar || "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=100&q=80"),
+      level: Number(u.level || 1),
+      fans: String(u.fans || "0 fans"),
+      isLive: !!u.isLive,
+      inPk: false,
+      status: u.isLive ? "🔴 Live Solo" : "🟢 Online"
+    }));
+
+  // Combine liveHostsList and onlinePresenceList, deduplicating by username and filtering out self
+  const combinedMap = new Map<string, any>();
+
+  [...liveHostsList, ...onlinePresenceList].forEach(item => {
+    const key = item.username.toLowerCase();
+    const itemUserId = String(item.userId).toLowerCase();
+    if (key !== currentUsername && itemUserId !== currentUserId && !combinedMap.has(key)) {
+      combinedMap.set(key, item);
+    }
   });
 
-  Object.values(onlineUserPresence).forEach((u: any) => {
-    if (!u?.isLive || now - Number(u.lastSeen || 0) > 15000) return;
-    const username = String(u.username || "").trim();
-    if (!username || username.toLowerCase() === currentUsername) return;
-    const inPk = Boolean(u.inPk || u.liveCategory === "pk");
-    const inGuest = Boolean(u.guestModeActive || u.liveCategory === "guest");
-    const mode = inPk ? "pk" : (inGuest ? "guest" : "solo");
-    rows.set(username.toLowerCase(), { id: String(u.userId || username), userId: String(u.userId || username), username, avatar: String(u.avatar || fallbackAvatar), level: Number(u.level || 1), fans: String(u.fans || "0 fans"), isLive: true, mode, canInvite: mode === "solo", status: mode === "pk" ? "⚔️ PK" : mode === "guest" ? "👥 Guest" : "🔴 Live Solo" });
-  });
-
-  res.json(Array.from(rows.values()));
+  const result = Array.from(combinedMap.values());
+  res.json(result);
 });
 
 // Send PK / 1v1 Co-Host Invite (Strict Real Host-to-Host, NO Auto-Accept Timeout)
@@ -5069,13 +4648,6 @@ app.post("/api/v1/pk/invite", (req, res) => {
   const finalToLevel = Number(toLevel) || Number(presenceTo?.level) || Number(hostTo?.level) || Number(hostTo?.hostLevel) || 1;
   const finalToFans = toFans || presenceTo?.fans || `${hostTo?.followersCount || 0} fans` || "15K fans";
 
-  const targetInPk = Boolean(presenceTo?.inPk || presenceTo?.liveCategory === "pk" || hostTo?.inPk || hostTo?.inPkBattle || hostTo?.pkActive || hostTo?.category === "pk");
-  const targetInGuest = Boolean(presenceTo?.guestModeActive || presenceTo?.liveCategory === "guest" || hostTo?.guestModeActive || hostTo?.category === "guest" || hostTo?.subCategory === "Guest" || hostTo?.subCategory === "Multi-guest");
-  const targetIsLive = Boolean(presenceTo?.isLive || hostTo?.isLive);
-  if (!targetIsLive || targetInPk || targetInGuest) {
-    return res.status(409).json({ error: targetInPk ? "HOST_BUSY_PK" : targetInGuest ? "HOST_BUSY_GUEST" : "HOST_NOT_SOLO_LIVE", message: targetInPk ? "This host is currently in PK." : targetInGuest ? "This host is currently in Guest mode." : "This host is not currently in Solo Live." });
-  }
-
   // Expire or cancel any previous pending invite from same sender
   Object.keys(activePkInvites).forEach(id => {
     const inv = activePkInvites[id];
@@ -5096,7 +4668,7 @@ app.post("/api/v1/pk/invite", (req, res) => {
     liveSessionId: liveSessionId || `session_${channelName}`,
     channelName,
     inviterUserId: fromUserId || fromUsername,
-    inviterName: getPersistentDisplayName((dbData.users || []).find((u: any) => String(u?.username || "").toLowerCase() === String(fromUsername).toLowerCase()), fromUsername),
+    inviterName: fromUsername,
     inviterAvatar: finalFromAvatar,
     fromUsername,
     fromUserId: fromUserId || fromUsername,
@@ -5105,7 +4677,6 @@ app.post("/api/v1/pk/invite", (req, res) => {
     fromFans: finalFromFans,
     inviteeUserId: finalToUserId,
     toUsername: toUsername,
-    inviteeName: getPersistentDisplayName((dbData.users || []).find((u: any) => String(u?.username || "").toLowerCase() === String(toUsername).toLowerCase()), toUsername),
     toUserId: finalToUserId,
     toAvatar: finalToAvatar,
     toLevel: finalToLevel,
@@ -5130,32 +4701,10 @@ app.get("/api/v1/pk/active-sessions", (req, res) => {
 });
 
 // Helper to synchronize active PK session time, states, fever multipliers, and host status
-function updatePkSupporter(session: any, side: "hostA" | "hostB", meta: any, points: number) {
-  if (!session) return;
-  if (!session.pkSupporters) session.pkSupporters = { hostA: {}, hostB: {} };
-  const bucket = session.pkSupporters[side] || (session.pkSupporters[side] = {});
-  const key = String(meta?.userId || meta?.username || "unknown").toLowerCase();
-  if (!key || key === "unknown") return;
-  const current = bucket[key] || {
-    id: String(meta?.userId || meta?.username || key),
-    username: String(meta?.username || "Supporter"),
-    avatar: String(meta?.avatar || ""),
-    coinsContributed: 0,
-    tapCount: 0
-  };
-  current.username = String(meta?.username || current.username);
-  current.avatar = String(meta?.avatar || current.avatar || "");
-  current.coinsContributed = Number(current.coinsContributed || 0) + Math.max(0, Number(points) || 0);
-  current.tapCount = Number(current.tapCount || 0) + (meta?.isTap ? 1 : 0);
-  bucket[key] = current;
-  session.pkHostASupporters = Object.values(session.pkSupporters.hostA).sort((a: any, b: any) => Number(b.coinsContributed || 0) - Number(a.coinsContributed || 0)).slice(0, 3);
-  session.pkHostBSupporters = Object.values(session.pkSupporters.hostB).sort((a: any, b: any) => Number(b.coinsContributed || 0) - Number(a.coinsContributed || 0)).slice(0, 3);
-}
-
 function getSynchronizedPkSession(activeSession: any, now: number = Date.now()) {
   if (!activeSession || activeSession.status === "ended") return null;
 
-  const duration = activeSession.duration || 300;
+  const duration = activeSession.duration || 180;
   let startedAtMs = typeof activeSession.startedAt === "number"
     ? activeSession.startedAt
     : (activeSession.startedAt ? new Date(activeSession.startedAt).getTime() : now);
@@ -5165,14 +4714,7 @@ function getSynchronizedPkSession(activeSession: any, now: number = Date.now()) 
     activeSession.startedAt = now;
   }
 
-  if (activeSession.pkState === "1v1_connected") {
-    // Free 1v1 mode has no battle timer. It remains connected until one host exits or starts PK.
-    activeSession.pkActive = false;
-    activeSession.timer = 0;
-    activeSession.countdown = 0;
-  } else if (activeSession.pkState === "pk_countdown" && now < startedAtMs) {
-    // Keep the countdown only while the 3-second pre-match window is actually running.
-    // Once startedAt is reached, the next poll MUST transition to pk_active.
+  if (activeSession.pkState === "pk_countdown" || (startedAtMs && now < startedAtMs)) {
     activeSession.pkState = "pk_countdown";
     activeSession.countdown = Math.max(0, Math.ceil((startedAtMs - now) / 1000));
     activeSession.pkActive = false;
@@ -5183,31 +4725,19 @@ function getSynchronizedPkSession(activeSession: any, now: number = Date.now()) 
     const elapsed = Math.max(0, Math.floor((now - startedAtMs) / 1000));
     activeSession.timer = Math.max(0, duration - elapsed);
   } else if (now >= startedAtMs + duration * 1000) {
+    activeSession.pkState = "pk_finished";
+    activeSession.pkActive = false;
+    activeSession.timer = 0;
     const scoreA = activeSession.hostA?.score || 0;
     const scoreB = activeSession.hostB?.score || 0;
-    if (!activeSession.lastPkResultAt) {
-      activeSession.lastPkResultAt = now;
-      if (scoreA > scoreB) {
-        activeSession.winner = activeSession.hostA?.username;
-        activeSession.loser = activeSession.hostB?.username;
-      } else if (scoreB > scoreA) {
-        activeSession.winner = activeSession.hostB?.username;
-        activeSession.loser = activeSession.hostA?.username;
-      } else {
-        activeSession.winner = "draw";
-      }
-    }
-    // Show the result briefly, then return both hosts to the same free 1v1 room.
-    if (now - activeSession.lastPkResultAt < 6000) {
-      activeSession.pkState = "pk_finished";
-      activeSession.pkActive = false;
-      activeSession.timer = 0;
+    if (scoreA > scoreB) {
+      activeSession.winner = activeSession.hostA?.username;
+      activeSession.loser = activeSession.hostB?.username;
+    } else if (scoreB > scoreA) {
+      activeSession.winner = activeSession.hostB?.username;
+      activeSession.loser = activeSession.hostA?.username;
     } else {
-      activeSession.pkState = "1v1_connected";
-      activeSession.pkActive = false;
-      activeSession.timer = 0;
-      activeSession.pkRequested = false;
-      activeSession.pkRequestStatus = "finished";
+      activeSession.winner = "draw";
     }
   }
 
@@ -5256,23 +4786,9 @@ function getSynchronizedPkSession(activeSession: any, now: number = Date.now()) 
     dbData.hosts.forEach((h: any) => {
       const hNorm = h.hostUsername?.toLowerCase() || h.name?.toLowerCase();
       if (hNorm === normA || hNorm === normB) {
-        const sessionMode = activeSession.pkState === "1v1_connected" ? "1v1" : "pk";
-        h.liveMode = sessionMode;
-        h.inPk = sessionMode === "pk";
-        h.category = sessionMode === "pk" ? "pk" : "1v1";
-        h.subCategory = sessionMode === "pk" ? "PK" : "1v1";
-        h.coHostUsername = (hNorm === normA ? activeSession.hostB?.username : activeSession.hostA?.username) || undefined;
-        h.coHostAvatar = (hNorm === normA ? activeSession.hostB?.avatar : activeSession.hostA?.avatar) || undefined;
-        h.coHostVipLevel = Number((hNorm === normA ? activeSession.hostB?.vipLevel : activeSession.hostA?.vipLevel) || 0);
-        const previousLiveMode = h.liveMode;
-        h.pkState = activeSession.pkState;
-        h.pkStateUpdatedAt = new Date().toISOString();
-        if (previousLiveMode !== sessionMode) {
-          h.liveStateVersion = Number(h.liveStateVersion || 0) + 1;
-          h.liveStateUpdatedAt = new Date().toISOString();
-        } else {
-          h.liveStateVersion = Number(h.liveStateVersion || 1);
-        }
+        h.inPk = true;
+        h.category = "pk";
+        h.subCategory = activeSession.pkState === "pk_active" ? "pk" : "1v1";
         h.pkScoreHost = activeSession.hostA?.score || 0;
         h.pkScoreOpponent = activeSession.hostB?.score || 0;
         h.multiplierA = multiplierA;
@@ -5401,12 +4917,8 @@ app.post("/api/v1/pk/invite/:id/respond", (req, res) => {
     const hostAObj = (dbData.hosts || []).find((h: any) => h.hostUsername?.toLowerCase() === normA || h.name?.toLowerCase() === normA);
     const hostBObj = (dbData.hosts || []).find((h: any) => h.hostUsername?.toLowerCase() === normB || h.name?.toLowerCase() === normB);
 
-    const canonicalHostAUser = (dbData.users || []).find((u: any) => String(u?.username || "").toLowerCase() === normA);
-    const canonicalHostBUser = (dbData.users || []).find((u: any) => String(u?.username || "").toLowerCase() === normB);
     const hostAUser = {
       username: invite.fromUsername,
-      name: getPersistentDisplayName(canonicalHostAUser, invite.fromUsername),
-      displayName: getPersistentDisplayName(canonicalHostAUser, invite.fromUsername),
       userId: invite.inviterUserId || invite.fromUserId || presenceA?.userId || hostAObj?.hostUid || invite.fromUsername,
       avatar: invite.fromAvatar || presenceA?.avatar || hostAObj?.hostAvatar || hostAObj?.avatar || "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=100&q=80",
       level: Number(invite.fromLevel) || Number(presenceA?.level) || Number(hostAObj?.hostLevel) || 1,
@@ -5416,8 +4928,6 @@ app.post("/api/v1/pk/invite/:id/respond", (req, res) => {
 
     const hostBUser = {
       username: username || invite.toUsername,
-      name: getPersistentDisplayName(canonicalHostBUser, username || invite.toUsername),
-      displayName: getPersistentDisplayName(canonicalHostBUser, username || invite.toUsername),
       userId: userId || invite.inviteeUserId || invite.toUserId || presenceB?.userId || hostBObj?.hostUid || (username || invite.toUsername),
       avatar: avatar || invite.toAvatar || presenceB?.avatar || hostBObj?.hostAvatar || hostBObj?.avatar || "https://images.unsplash.com/photo-1570295999919-56ceb5ecca61?auto=format&fit=crop&w=100&q=80",
       level: Number(level) || Number(invite.toLevel) || Number(presenceB?.level) || Number(hostBObj?.hostLevel) || 1,
@@ -5438,21 +4948,17 @@ app.post("/api/v1/pk/invite/:id/respond", (req, res) => {
       session.hostAQualifyingScore = 0;
       session.hostBQualifyingScore = 0;
       session.userTapContributions = {};
-      session.pkSupporters = { hostA: {}, hostB: {} };
-      session.pkHostASupporters = [];
-      session.pkHostBSupporters = [];
       session.winner = null;
-      session.lastPkResultAt = null;
       if (isPk) {
         session.pkState = "pk_countdown";
         session.countdownStartTime = currentNow;
         session.startedAt = currentNow + 3000;
-        session.duration = 300;
-        session.timer = 300;
+        session.duration = 180;
+        session.timer = 180;
       } else {
         session.pkState = "1v1_connected";
-        session.duration = 300;
-        session.timer = 300;
+        session.duration = 180;
+        session.timer = 180;
       }
     } else {
       session = {
@@ -5465,18 +4971,14 @@ app.post("/api/v1/pk/invite/:id/respond", (req, res) => {
         hostAQualifyingScore: 0,
         hostBQualifyingScore: 0,
         userTapContributions: {},
-        pkSupporters: { hostA: {}, hostB: {} },
-        pkHostASupporters: [],
-        pkHostBSupporters: [],
         status: "connected",
         pkState: isPk ? "pk_countdown" : "1v1_connected",
         pkActive: false,
         countdownStartTime: currentNow,
-        duration: 300,
-        timer: 300,
+        duration: 180,
+        timer: 180,
         startedAt: isPk ? currentNow + 3000 : currentNow,
-        winner: null,
-        lastPkResultAt: null
+        winner: null
       };
       activePkSessions[sessionId] = session;
     }
@@ -5529,18 +5031,14 @@ app.post("/api/v1/pk/start-battle", (req, res) => {
         s.hostAQualifyingScore = 0;
         s.hostBQualifyingScore = 0;
         s.userTapContributions = {};
-        s.pkSupporters = { hostA: {}, hostB: {} };
-        s.pkHostASupporters = [];
-        s.pkHostBSupporters = [];
         s.winner = null;
-        s.lastPkResultAt = null;
         s.pkRequested = false;
         s.pkRequestStatus = "accepted";
         s.pkState = "pk_countdown";
         s.countdownStartTime = currentNow;
         s.startedAt = currentNow + 3000; // 3-second countdown
-        s.duration = 300; // 5 minutes match
-        s.timer = 300;
+        s.duration = 180; // 3 minutes match
+        s.timer = 180;
         s.pkActive = false;
         updatedSession = getSynchronizedPkSession(s, currentNow);
       } else if (action === "reject" || action === "decline") {
@@ -5595,16 +5093,14 @@ app.post("/api/v1/pk/tap", (req, res) => {
   const sHostAId = String(targetSession.hostA?.userId || "").toLowerCase();
   const sHostBId = String(targetSession.hostB?.userId || "").toLowerCase();
 
-  // The room's host identity is authoritative. A viewer/guest inherits the
-  // side of the host stream they are watching; a host inherits their own side.
-  // Never trust a client-supplied side when it conflicts with the room host.
-  let side: "hostA" | "hostB" = "hostA";
-  if (normHost === sHostB || normHost === sHostBId) {
+  let side = "hostA";
+  if (normHost === sHostB || normHost === sHostBId || normUser === sHostB || normUserId === sHostBId) {
     side = "hostB";
-  } else if (normHost === sHostA || normHost === sHostAId) {
+  }
+  if (targetHostSide === "hostB") {
+    side = "hostB";
+  } else if (targetHostSide === "hostA") {
     side = "hostA";
-  } else if (normUser === sHostB || normUserId === sHostBId) {
-    side = "hostB";
   }
 
   const matchId = targetSession.pkMatchId || targetSession.id || "match_1";
@@ -5619,7 +5115,7 @@ app.post("/api/v1/pk/tap", (req, res) => {
   let quotaReached = false;
 
   // Real-time Double-Tap PK Score Addition: Every double tap adds +1 point directly to target host score
-  if (targetSession.status !== "ended" && (targetSession.pkActive || targetSession.pkState === "pk_active")) {
+  if (targetSession.status !== "ended" && (targetSession.pkActive || targetSession.pkState === "pk_active" || targetSession.pkState === "1v1_connected")) {
     targetSession.userTapContributions[userKey] = currentTaps + 1;
     pkScoreAdded = 1;
 
@@ -5628,7 +5124,6 @@ app.post("/api/v1/pk/tap", (req, res) => {
     } else {
       targetSession.hostA.score = (targetSession.hostA.score || 0) + 1;
     }
-    updatePkSupporter(targetSession, side, { userId: normUserId, username, avatar: req.body?.avatar || "", isTap: true }, 1);
     getSynchronizedPkSession(targetSession, currentNow);
   }
 
@@ -5644,8 +5139,6 @@ app.post("/api/v1/pk/tap", (req, res) => {
         h.multiplierA = targetSession.multiplierA || 1;
         h.multiplierB = targetSession.multiplierB || 1;
         h.feverPhase = targetSession.feverPhase;
-        h.pkHostASupporters = targetSession.pkHostASupporters || [];
-        h.pkHostBSupporters = targetSession.pkHostBSupporters || [];
       }
     });
   }
@@ -5684,27 +5177,18 @@ app.post("/api/v1/pk/gift", (req, res) => {
 
   if (targetSession && points > 0) {
     getSynchronizedPkSession(targetSession, currentNow);
-    if (!(targetSession.pkActive || targetSession.pkState === "pk_active")) {
-      return res.json({ success: true, session: targetSession, pkScoreAdded: 0 });
-    }
-    const sHostA = String(targetSession.hostA?.username || "").toLowerCase();
     const sHostB = String(targetSession.hostB?.username || "").toLowerCase();
 
-    // Prefer the actual gift recipient/host identity. The client hint is only
-    // a fallback and can never override a known host recipient.
     let isHostB = false;
-    const targetNorm = String(targetHost || "").toLowerCase();
-    if (targetNorm === sHostB || targetNorm === "hostb" || targetNorm === "other") {
-      isHostB = true;
-    } else if (targetNorm === sHostA || targetNorm === "hosta" || targetNorm === "me") {
-      isHostB = false;
-    } else if (targetHostSide === "hostB") {
-      isHostB = true;
-    } else if (normUser === sHostB) {
+    if (normUser === sHostB) {
       isHostB = true;
     }
+    if (targetHostSide === "hostB" || targetHost === "other" || targetHost === "hostB") {
+      isHostB = true;
+    } else if (targetHostSide === "hostA" || targetHost === "me" || targetHost === "hostA") {
+      isHostB = false;
+    }
 
-    const side: "hostA" | "hostB" = isHostB ? "hostB" : "hostA";
     if (isHostB) {
       const mult = targetSession.multiplierB || 1;
       targetSession.hostB.score = (targetSession.hostB.score || 0) + (points * mult);
@@ -5712,7 +5196,6 @@ app.post("/api/v1/pk/gift", (req, res) => {
       const mult = targetSession.multiplierA || 1;
       targetSession.hostA.score = (targetSession.hostA.score || 0) + (points * mult);
     }
-    updatePkSupporter(targetSession, side, { userId: normUser, username, avatar: req.body?.avatar || "", isTap: false }, points);
     getSynchronizedPkSession(targetSession, currentNow);
 
     // Sync to dbData.hosts
@@ -5727,8 +5210,6 @@ app.post("/api/v1/pk/gift", (req, res) => {
           h.multiplierA = targetSession.multiplierA || 1;
           h.multiplierB = targetSession.multiplierB || 1;
           h.feverPhase = targetSession.feverPhase;
-          h.pkHostASupporters = targetSession.pkHostASupporters || [];
-          h.pkHostBSupporters = targetSession.pkHostBSupporters || [];
         }
       });
     }
@@ -5811,13 +5292,7 @@ app.post("/api/v1/pk/end", (req, res) => {
       dbData.hosts.forEach((h: any) => {
         if (h.hostUsername?.toLowerCase() === normA || h.hostUsername?.toLowerCase() === normB) {
           h.inPk = false;
-          h.pkActive = false;
-          h.pkState = "idle";
-          h.liveMode = h.guestModeActive ? "guest" : "solo";
-          h.category = h.guestModeActive ? "guest" : "video";
-          h.subCategory = h.guestModeActive ? "Guest" : "Solo";
-          h.liveStateVersion = Number(h.liveStateVersion || 0) + 1;
-          h.liveStateUpdatedAt = new Date().toISOString();
+          h.category = "video";
           h.streamType = "SOLO";
         }
       });
@@ -5869,37 +5344,7 @@ const sanitizePartyGiftComment = (comment: any, party: any) => {
 const sanitizePartyForClient = (party: any) => {
   if (!party) return party;
   prunePartyPresence(party);
-  const safe: any = { ...party, connectedViewers: Array.isArray(party.connectedViewers) ? party.connectedViewers.map((v: any) => ({ ...v })) : [], comments: Array.isArray(party.comments) ? party.comments.map((c: any) => sanitizePartyGiftComment(c, party)) : [] };
-  const resolveCanonicalPartyUser = (username: any) => {
-    const name = String(username || "").trim().toLowerCase();
-    if (!name) return null;
-    return (dbData.users || []).find((u: any) => String(u?.username || "").trim().toLowerCase() === name) || null;
-  };
-  const hostUser = resolveCanonicalPartyUser(safe.hostUsername);
-  if (hostUser) {
-    canonicalizeProgressFields(hostUser);
-    safe.hostLevel = hostUser.userLevel;
-    safe.level = hostUser.userLevel;
-    safe.vipLevel = hostUser.vipLevel;
-    safe.hostAvatar = hostUser.avatar || safe.hostAvatar || "";
-  }
-  if (Array.isArray(safe.seats)) {
-    safe.seats = safe.seats.map((seat: any) => {
-      if (!seat?.name) return seat;
-      const account = resolveCanonicalPartyUser(seat.name);
-      if (!account) return seat;
-      canonicalizeProgressFields(account);
-      return { ...seat, displayName: getPersistentDisplayName(account, seat.displayName || seat.name), userLevel: account.userLevel, level: account.userLevel, vipLevel: account.vipLevel, avatar: account.avatar || seat.avatar || "" };
-    });
-  }
-  if (Array.isArray(safe.connectedViewers)) {
-    safe.connectedViewers = safe.connectedViewers.map((viewer: any) => {
-      const account = resolveCanonicalPartyUser(viewer.username);
-      if (!account) return viewer;
-      canonicalizeProgressFields(account);
-      return { ...viewer, displayName: getPersistentDisplayName(account, viewer.displayName || viewer.username), userLevel: account.userLevel, level: account.userLevel, vipLevel: account.vipLevel, avatar: account.avatar || viewer.avatar || "" };
-    });
-  }
+  const safe = { ...party, connectedViewers: Array.isArray(party.connectedViewers) ? party.connectedViewers.map((v: any) => ({ ...v })) : [], comments: Array.isArray(party.comments) ? party.comments.map((c: any) => sanitizePartyGiftComment(c, party)) : [] };
   delete safe.password;
   return safe;
 };
@@ -5932,8 +5377,6 @@ app.post("/api/v1/parties", (req, res) => {
   }
 
   const validHost = hostUsername || "Host";
-  const canonicalPartyHost = (dbData.users || []).find((u: any) => String(u?.username || "").toLowerCase() === String(validHost).toLowerCase());
-  const partyHostDisplayName = getPersistentDisplayName(canonicalPartyHost, validHost);
   const resolvedSeatCount = Number(seatCount) === 25 ? 25 : 12;
   if (isPublic === false && !String(password || "").trim()) {
     return res.status(400).json({ error: "Private rooms require a password." });
@@ -5945,10 +5388,8 @@ app.post("/api/v1/parties", (req, res) => {
   const id = existingIdx !== -1 ? dbData.parties[existingIdx].id : `party-${Date.now()}`;
   const newParty = {
     id,
-    title: title || `${partyHostDisplayName}'s Audio Lounge 🎙️`,
+    title: title || `${validHost}'s Audio Lounge 🎙️`,
     hostUsername: validHost,
-    hostName: partyHostDisplayName,
-    displayName: partyHostDisplayName,
     hostAvatar: hostAvatar || "",
     vipLevel: Number(hostVipLevel || 0),
     category: category || "Music",
@@ -5963,12 +5404,11 @@ app.post("/api/v1/parties", (req, res) => {
     allGuestsMuted: existingIdx !== -1 ? Boolean(dbData.parties[existingIdx].allGuestsMuted) : false,
     moderators: existingIdx !== -1 && Array.isArray(dbData.parties[existingIdx].moderators) ? dbData.parties[existingIdx].moderators : [],
     createdAt: existingIdx !== -1 ? (dbData.parties[existingIdx].createdAt || Date.now()) : Date.now(),
-    connectedViewers: [{ userId: canonicalPartyHost?.uid || canonicalPartyHost?.uniqueId || validHost, username: validHost, displayName: partyHostDisplayName, avatar: canonicalPartyHost?.avatar || hostAvatar || "", level: canonicalPartyHost?.userLevel || 1, vipLevel: canonicalPartyHost?.vipLevel ?? Number(hostVipLevel || 0), joinedAt: Date.now() }],
+    connectedViewers: [{ userId: validHost, username: validHost, avatar: hostAvatar || "", level: 1, vipLevel: Number(hostVipLevel || 0), joinedAt: Date.now() }],
     lastSeen: { [validHost]: Date.now() },
     seats: Array.from({ length: resolvedSeatCount }, (_, index) => ({
       id: index + 1,
       name: index === 0 ? validHost : null,
-      displayName: index === 0 ? partyHostDisplayName : null,
       avatar: index === 0 ? (hostAvatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80") : null,
       vipLevel: index === 0 ? Number(hostVipLevel || 0) : 0,
       isMuted: false,
@@ -5978,7 +5418,7 @@ app.post("/api/v1/parties", (req, res) => {
       {
         id: `sys-${Date.now()}`,
         username: "System",
-        message: `🎙️ Room created successfully by ${partyHostDisplayName}. Welcome everyone!`,
+        message: `🎙️ Room created successfully by ${validHost}. Welcome everyone!`,
         isSystem: true,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       }
@@ -6033,19 +5473,16 @@ app.post("/api/v1/parties/:id/join", (req, res) => {
       party.connectedViewers = [];
     }
     prunePartyPresence(party);
-    const canonicalViewerUser = (dbData.users || []).find((u: any) => String(u?.username || "").trim().toLowerCase() === String(username || "").trim().toLowerCase());
-    if (canonicalViewerUser) canonicalizeProgressFields(canonicalViewerUser);
     if (!party.lastSeen) party.lastSeen = {};
     party.lastSeen[username] = Date.now();
     if (!party.connectedViewers.some((v: any) => v.username === username)) {
-      party.connectedViewers.push({ userId: canonicalViewerUser?.uid || canonicalViewerUser?.uniqueId || username, username, displayName: getPersistentDisplayName(canonicalViewerUser, username), avatar: canonicalViewerUser?.avatar || avatar || "", level: canonicalViewerUser?.userLevel || userLevel || 1, userLevel: canonicalViewerUser?.userLevel || userLevel || 1, vipLevel: canonicalViewerUser?.vipLevel ?? Number(vipLevel || 0), joinedAt: Date.now() });
+      party.connectedViewers.push({ userId: username, username, avatar: avatar || "", level: userLevel || 1, vipLevel: vipLevel || 0, joinedAt: Date.now() });
     }
     party.participantCount = party.connectedViewers.length;
     party.lastJoinEvent = {
       username,
-      userLevel: canonicalViewerUser?.userLevel || userLevel || 1,
-      level: canonicalViewerUser?.userLevel || userLevel || 1,
-      vipLevel: canonicalViewerUser?.vipLevel ?? Number(vipLevel || 0),
+      userLevel: userLevel || 1,
+      vipLevel: vipLevel || 0,
       timestamp: Date.now()
     };
     saveDatabase();
@@ -6112,7 +5549,7 @@ app.post("/api/v1/parties/:id/heartbeat", (req, res) => {
     party.lastSeen[username] = now;
     const viewer = (party.connectedViewers || []).find((v: any) => v.username === username);
     if (viewer) viewer.lastSeen = now;
-    else { const account = (dbData.users || []).find((u: any) => String(u?.username || "").toLowerCase() === String(username).toLowerCase()); party.connectedViewers.push({ userId: account?.uid || account?.uniqueId || username, username, displayName: getPersistentDisplayName(account, username), avatar: account?.avatar || "", level: account?.userLevel || 1, vipLevel: account?.vipLevel || 0, joinedAt: now }); }
+    else party.connectedViewers.push({ userId: username, username, avatar: "", level: 1, vipLevel: 0, joinedAt: now });
     party.participantCount = party.connectedViewers.length;
     res.json({ status: "ok" });
   } else {
@@ -6126,23 +5563,20 @@ app.post("/api/v1/parties/:id/seats/join", (req, res) => {
   const index = dbData.parties?.findIndex((p: any) => p.id === id);
   if (index !== -1 && index !== undefined) {
     const party = dbData.parties[index];
-    const canonicalSeatUser = (dbData.users || []).find((u: any) => String(u?.username || "").trim().toLowerCase() === String(username || "").trim().toLowerCase());
-    if (canonicalSeatUser) canonicalizeProgressFields(canonicalSeatUser);
     const targetSeat = party.seats?.find((seat: any) => seat.id === Number(seatId));
     if (!targetSeat) return res.status(404).json({ error: "Seat not found" });
     if (targetSeat.name && targetSeat.name !== username) return res.status(409).json({ error: "Seat is already occupied" });
     if (targetSeat.isLocked && party.hostUsername !== username) return res.status(403).json({ error: "This seat is locked by the host" });
     party.seats = party.seats.map((seat: any) => {
       if (seat.id === Number(seatId)) {
-        return { ...seat, name: username, displayName: getPersistentDisplayName(canonicalSeatUser, username), avatar: canonicalSeatUser?.avatar || avatar || "", userLevel: canonicalSeatUser?.userLevel || 1, level: canonicalSeatUser?.userLevel || 1, vipLevel: canonicalSeatUser?.vipLevel ?? Number(vipLevel || 0), isMuted: party.allGuestsMuted ? true : Boolean(seat.isMuted) };
+        return { ...seat, name: username, avatar: avatar || "", vipLevel: Number(vipLevel || 0), isMuted: party.allGuestsMuted ? true : Boolean(seat.isMuted) };
       }
       return seat;
     });
     party.lastJoinEvent = {
       username,
-      userLevel: canonicalSeatUser?.userLevel || 1,
-      level: canonicalSeatUser?.userLevel || 1,
-      vipLevel: canonicalSeatUser?.vipLevel ?? Number(vipLevel || 0),
+      userLevel: userLevel || 1,
+      vipLevel: vipLevel || 0,
       timestamp: Date.now()
     };
     saveDatabase();
@@ -6902,10 +6336,7 @@ app.get("/api/v1/agency-coin-transactions", (req, res) => {
   res.json(dbData.agencyCoinTransactions);
 });
 
-app.post("/api/v1/agency-coin-transactions", authenticateUser, (req: any, res: any) => {
-  if (!isAdminAccount(req.user)) {
-    return res.status(403).json({ error: "Authorized admin account is required." });
-  }
+app.post("/api/v1/agency-coin-transactions", (req, res) => {
   const { agencyId, agencyType, type, amount, reason, adminUsername } = req.body;
   
   if (!agencyId || !amount || amount <= 0) {
@@ -6985,78 +6416,6 @@ app.post("/api/v1/agency-coin-transactions", authenticateUser, (req: any, res: a
     transaction,
     updatedAgency: targetAgency
   });
-});
-
-// ------------------------------------------------------------------
-// COIN SELLER WALLET — wholesale inventory -> user Gifting Wallet
-// ------------------------------------------------------------------
-app.get("/api/v1/coin-seller/me", authenticateUser, (req: any, res: any) => {
-  const username = String(req.user?.username || "").trim().toLowerCase();
-  const seller = (dbData.coinSellers || []).find((s: any) =>
-    String(s?.ownerUsername || s?.username || "").trim().toLowerCase() === username
-  );
-  if (!seller || req.user?.isCoinSeller !== true) return res.status(403).json({ error: "Coin Seller Agency is not active for this account." });
-  const history = (dbData.coinSellerTransactions || []).filter((t: any) => t.sellerId === seller.id);
-  res.json({ success: true, seller, history });
-});
-
-app.get("/api/v1/coin-seller/transactions", authenticateUser, (req: any, res: any) => {
-  const username = String(req.user?.username || "").trim().toLowerCase();
-  const seller = (dbData.coinSellers || []).find((s: any) => String(s?.ownerUsername || s?.username || "").trim().toLowerCase() === username);
-  if (!seller || req.user?.isCoinSeller !== true) return res.status(403).json({ error: "Coin Seller Agency is not active for this account." });
-  res.json((dbData.coinSellerTransactions || []).filter((t: any) => t.sellerId === seller.id));
-});
-
-app.post("/api/v1/coin-seller/transfer", authenticateUser, async (req: any, res: any) => {
-  const sellerUsername = String(req.user?.username || "").trim().toLowerCase();
-  const sellerIndex = (dbData.coinSellers || []).findIndex((s: any) => String(s?.ownerUsername || s?.username || "").trim().toLowerCase() === sellerUsername);
-  if (sellerIndex < 0 || req.user?.isCoinSeller !== true) return res.status(403).json({ error: "Coin Seller Agency is not active for this account." });
-  const seller = dbData.coinSellers[sellerIndex];
-  if (["Suspended", "Frozen", "Inactive"].includes(String(seller.status || ""))) return res.status(403).json({ error: `Agency is ${seller.status}. Coin transfer is disabled.` });
-  const amount = Math.floor(Number(req.body?.amount) || 0);
-  const requestId = String(req.body?.requestId || `SELL-${Date.now()}-${crypto.randomBytes(3).toString("hex")}`);
-  if (amount <= 0) return res.status(400).json({ error: "Enter a valid coin amount." });
-  if (!dbData.processedCoinSellerTransfers) dbData.processedCoinSellerTransfers = {};
-  if (dbData.processedCoinSellerTransfers[requestId]) return res.json(dbData.processedCoinSellerTransfers[requestId]);
-  const beforeSeller = Number(seller.coinBalance) || 0;
-  if (beforeSeller < amount) return res.status(400).json({ error: `Insufficient seller inventory. Available: ${beforeSeller.toLocaleString()} coins.` });
-  const identifier = String(req.body?.recipient || req.body?.username || req.body?.userId || "").trim().replace(/^@/, "").toLowerCase();
-  if (!identifier) return res.status(400).json({ error: "Recipient Pardais ID / username is required." });
-  const buyerIndex = (dbData.users || []).findIndex((u: any) => [u?.username, u?.uniqueId, u?.uid, u?.email].some((v: any) => String(v || "").trim().toLowerCase() === identifier));
-  if (buyerIndex < 0) return res.status(404).json({ error: "User account not found." });
-  const buyer = dbData.users[buyerIndex];
-  const beforeBuyer = Number(buyer.coins) || 0;
-  seller.coinBalance = beforeSeller - amount;
-  seller.coinsAvailable = `${seller.coinBalance.toLocaleString()} Coins`;
-  seller.totalCoinsIssued = (Number(seller.totalCoinsIssued) || 0) + amount;
-  buyer.coins = beforeBuyer + amount;
-  buyer.updatedAt = new Date().toISOString();
-  const now = new Date().toISOString();
-  const tx = {
-    id: requestId, sellerId: seller.id, sellerName: seller.name, sellerUsername: seller.ownerUsername || seller.username,
-    type: "SELLER_TO_USER", amount, recipientUsername: buyer.username, recipientUserId: buyer.uniqueId || buyer.uid || "",
-    wallet: "gifting_wallet", sellerBalanceBefore: beforeSeller, sellerBalanceAfter: seller.coinBalance,
-    recipientBalanceBefore: beforeBuyer, recipientBalanceAfter: buyer.coins, status: "Completed", timestamp: now,
-    note: String(req.body?.note || "Coin Seller transfer")
-  };
-  if (!Array.isArray(dbData.coinSellerTransactions)) dbData.coinSellerTransactions = [];
-  dbData.coinSellerTransactions.unshift(tx);
-  if (!Array.isArray(dbData.coinTransactions)) dbData.coinTransactions = [];
-  dbData.coinTransactions.unshift({ ...tx, type: "coin_seller_sale", currency: "coins" });
-  if (!Array.isArray(dbData.transactions)) dbData.transactions = [];
-  dbData.transactions.unshift({ ...tx, type: "coin_seller_sale", currency: "coins" });
-  dbData.coinSellers[sellerIndex] = seller;
-  const canonicalIndex = dbData.users.findIndex((u: any) => u?.uid === buyer?.uid || (u?.email && buyer?.email && String(u.email).toLowerCase() === String(buyer.email).toLowerCase()));
-  if (canonicalIndex >= 0) dbData.users[canonicalIndex] = { ...dbData.users[canonicalIndex], ...buyer };
-  saveDatabase();
-  const persisted = await persistUserDurably(buyer);
-  if (!persisted) return res.status(503).json({ error: "Buyer wallet could not be permanently saved." });
-  void syncDocument("coinSellers", seller.id, seller).catch(() => undefined);
-  void syncDocument("coinSellerTransactions", tx.id, tx).catch(() => undefined);
-  void syncDocument("coinTransactions", tx.id, { ...tx, type: "coin_seller_sale", currency: "coins" }).catch(() => undefined);
-  const response = { success: true, transaction: tx, seller: { id: seller.id, name: seller.name, coinBalance: seller.coinBalance }, buyer: { username: buyer.username, uniqueId: buyer.uniqueId, coins: buyer.coins } };
-  dbData.processedCoinSellerTransfers[requestId] = response;
-  res.status(201).json(response);
 });
 
 // Agency Requests Endpoints
@@ -7146,14 +6505,10 @@ app.put("/api/v1/agency-requests/:id", (req, res) => {
           name: r.agencyName || r.applicantName,
           applicantName: r.applicantName,
           username: r.applicantUsername,
-          ownerUsername: r.applicantUsername,
           whatsapp: r.contact,
           city: r.country || r.city || "Pakistan",
           rate: r.rate || "1000 Coins = $1.50 USD",
-          status: "Active",
-          coinBalance: 0,
-          coinsAvailable: "0 Coins",
-          totalCoinsIssued: 0,
+          status: "Verified Seller",
           description: r.description || "Official Coin Reseller licensed by Pardais Admin."
         };
         if (!dbData.coinSellers) dbData.coinSellers = [];
@@ -7303,27 +6658,37 @@ app.post("/api/v1/transactions", (req, res) => {
   res.status(201).json(newTxn);
 });
 
-// Durable notification writer. Notifications are event history: never overwrite or
-// expire them during app updates. Each event is synced to Firestore immediately.
-async function writeDurableNotification(input: any) {
-  if (!dbData.notifications) dbData.notifications = [];
-  const newNotif = {
-    id: `N-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    isNew: true,
-    time: "Just Now",
-    timestamp: new Date().toISOString(),
-    ...input
-  };
-  dbData.notifications.unshift(newNotif);
-  saveDatabase();
-  await syncDocument("notifications", String(newNotif.id), newNotif);
-  return newNotif;
-}
-
 // Notifications inbox dispatcher with auto-cleanup (24 hours expiry)
 async function cleanupExpiredNotifications() {
-  // Notifications are permanent history. Do not delete them based on age.
-  return;
+  try {
+    const now = Date.now();
+    const expiryLimit = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
+    const activeNotifs: any[] = [];
+    const expiredNotifs: any[] = [];
+
+    const notifsList = dbData.notifications || [];
+    for (const item of notifsList) {
+      const ts = item.timestamp ? new Date(item.timestamp).getTime() : (item.id && typeof item.id === 'number' ? item.id : now);
+      if (now - ts > expiryLimit) {
+        expiredNotifs.push(item);
+      } else {
+        activeNotifs.push(item);
+      }
+    }
+
+    if (expiredNotifs.length > 0) {
+      console.log(`[PARDAIS-PARTY NOTIFICATION CLEANER] Automatically cleaning up ${expiredNotifs.length} expired notifications.`);
+      dbData.notifications = activeNotifs;
+      saveDatabase();
+      for (const expired of expiredNotifs) {
+        if (expired.id) {
+          await deleteDocument("notifications", String(expired.id));
+        }
+      }
+    }
+  } catch (err) {
+    console.error("[PARDAIS-PARTY NOTIFICATION CLEANER] Error during clean-up:", err);
+  }
 }
 
 // Periodically run cleanup every 10 minutes
@@ -7361,7 +6726,20 @@ app.get("/api/v1/notifications", async (req, res) => {
 });
 
 app.post("/api/v1/notifications", async (req, res) => {
-  const newNotif = await writeDurableNotification(req.body || {});
+  const notifId = Date.now();
+  const newNotif = {
+    id: notifId,
+    isNew: true,
+    time: "Just Now",
+    timestamp: new Date().toISOString(),
+    ...req.body
+  };
+  if (!dbData.notifications) {
+    dbData.notifications = [];
+  }
+  dbData.notifications.unshift(newNotif);
+  saveDatabase();
+  await syncDocument("notifications", String(newNotif.id), newNotif);
   res.status(201).json(newNotif);
 });
 
@@ -7573,13 +6951,12 @@ app.post("/api/v1/daily-tasks/claim", authenticateUser, async (req: any, res) =>
   }
 
   const beforeCoins = Number(user.coins) || 0;
-  // Daily reward coins are spendable wallet balance only. They are NOT lifetime
-  // spending and therefore must never increase the user's level. Keep a separate
-  // legacy-compatible reward XP counter for the UI instead of mutating xp, which
-  // is now reserved for permanent coins actually spent.
+  const beforeXp = Number(user.xp) || 0;
   user.coins = beforeCoins + DAILY_COIN_REWARD;
-  user.dailyRewardXp = (Number(user.dailyRewardXp) || 0) + DAILY_XP_REWARD;
-  canonicalizeProgressFields(user);
+  user.xp = beforeXp + DAILY_XP_REWARD;
+  const progression = getProgressionFromServerCoins(user.xp);
+  user.userLevel = progression.level;
+  user.vipLevel = progression.vipLevel;
   user.dailyCoinClaimAt = Date.now();
   user.dailyCoinClaimCount = (Number(user.dailyCoinClaimCount) || 0) + 1;
   user.updatedAt = new Date().toISOString();
@@ -7607,74 +6984,12 @@ app.post("/api/v1/daily-tasks/claim", authenticateUser, async (req: any, res) =>
   const persisted = await persistUserDurably(user);
   if (!persisted) return res.status(503).json({ success: false, error: "Daily reward could not be permanently saved. Please try again." });
   void syncDocument("coinTransactions", tx.id, tx).catch(() => undefined);
-  res.json({ success: true, rewardCoins: DAILY_COIN_REWARD, rewardXp: DAILY_XP_REWARD, remainingCoins: user.coins, xp: user.xp, coinSpendTotal: user.coinSpendTotal, userLevel: user.userLevel, vipLevel: user.vipLevel, nextClaimAt: Date.now() + 24 * 60 * 60 * 1000 });
+  res.json({ success: true, rewardCoins: DAILY_COIN_REWARD, rewardXp: DAILY_XP_REWARD, remainingCoins: user.coins, xp: user.xp, userLevel: user.userLevel, vipLevel: user.vipLevel, nextClaimAt: Date.now() + 24 * 60 * 60 * 1000 });
 });
 
 // ------------------------------------------------------------------
 // CREATOR CENTER WALLET — 50% gift earnings / exchange / withdrawal
 // ------------------------------------------------------------------
-app.post("/api/v1/wallet/coin-spend", authenticateUser, async (req: any, res: any) => {
-  const amount = Math.floor(Number(req.body?.amount) || 0);
-  if (amount <= 0) return res.status(400).json({ error: "Enter a valid coin spend amount." });
-  const user = req.user;
-  const balance = Number(user.coins) || 0;
-  if (balance < amount) return res.status(400).json({ error: `Insufficient Gifting Coins. Available: ${balance}.` });
-  const requestId = String(req.body?.requestId || `SPEND-${Date.now()}-${Math.random().toString(36).slice(2,8)}`);
-  if (!dbData.processedCoinSpendRequests) dbData.processedCoinSpendRequests = {};
-  if (dbData.processedCoinSpendRequests[requestId]) return res.json(dbData.processedCoinSpendRequests[requestId]);
-  user.coins = balance - amount;
-  const record = await recordCoinSpendServer(user, amount, String(req.body?.source || "other"), {
-    transactionId: requestId,
-    gameName: req.body?.gameName,
-    partyId: req.body?.partyId,
-    reelId: req.body?.reelId,
-    matchId: req.body?.matchId,
-    recipient: req.body?.recipient
-  });
-  const tx = { id: requestId, type: "coin_spend", amount, currency: "coins", source: req.body?.source || "other", username: user.username, timestamp: new Date().toISOString(), status: "Completed", details: req.body?.details || `Spent ${amount.toLocaleString()} Coins` };
-  if (!Array.isArray(dbData.transactions)) dbData.transactions = [];
-  dbData.transactions.unshift(tx);
-  const idx = dbData.users.findIndex((u: any) => u?.uid === user.uid || (u?.email && user.email && String(u.email).toLowerCase() === String(user.email).toLowerCase()));
-  if (idx >= 0) dbData.users[idx] = { ...dbData.users[idx], ...user };
-  saveDatabase();
-  const persisted = await persistUserDurably(user);
-  if (!persisted) return res.status(503).json({ error: "Coin spend could not be permanently saved. Please try again." });
-  void syncDocument("transactions", tx.id, tx).catch(() => undefined);
-  const response = { success: true, remainingCoins: user.coins, userLevel: user.userLevel, level: user.level, vipLevel: user.vipLevel, xp: user.xp, coinSpendTotal: user.coinSpendTotal, spend: record?.entry || null };
-  dbData.processedCoinSpendRequests[requestId] = response;
-  res.json(response);
-});
-
-app.get("/api/v1/wallet/coin-history", authenticateUser, (req: any, res: any) => {
-  const user = req.user;
-  res.json({
-    success: true,
-    coinSpendTotal: Number(user.coinSpendTotal) || 0,
-    level: user.userLevel || user.level || 1,
-    vipLevel: user.vipLevel || 0,
-    spends: Array.isArray(user.coinSpendHistory) ? user.coinSpendHistory : [],
-    earnings: Array.isArray(user.creatorEarningHistory) ? user.creatorEarningHistory : []
-  });
-});
-
-app.post("/api/v1/wallet/creator-earning", authenticateUser, async (req: any, res: any) => {
-  const amount = Math.floor(Number(req.body?.amount) || 0);
-  if (amount <= 0) return res.status(400).json({ error: "Enter a valid earning amount." });
-  const user = req.user;
-  const requestId = String(req.body?.requestId || `EARN-${Date.now()}-${Math.random().toString(36).slice(2,8)}`);
-  if (!dbData.processedCreatorEarningRequests) dbData.processedCreatorEarningRequests = {};
-  if (dbData.processedCreatorEarningRequests[requestId]) return res.json(dbData.processedCreatorEarningRequests[requestId]);
-  const entry = await creditCreatorEarningServer(user, amount, String(req.body?.source || "game"), { transactionId: requestId, gameName: req.body?.gameName, partyId: req.body?.partyId });
-  const idx = dbData.users.findIndex((u: any) => u?.uid === user.uid || (u?.email && user.email && String(u.email).toLowerCase() === String(user.email).toLowerCase()));
-  if (idx >= 0) dbData.users[idx] = { ...dbData.users[idx], ...user };
-  saveDatabase();
-  const persisted = await persistUserDurably(user);
-  if (!persisted) return res.status(503).json({ error: "Creator earning could not be permanently saved. Please try again." });
-  const response = { success: true, creatorBalance: user.diamonds, userLevel: user.userLevel, level: user.level, vipLevel: user.vipLevel, earning: entry };
-  dbData.processedCreatorEarningRequests[requestId] = response;
-  res.json(response);
-});
-
 app.post("/api/v1/wallet/exchange", authenticateUser, async (req: any, res) => {
   const amount = Math.floor(Number(req.body?.amount) || 0);
   if (amount <= 0) return res.status(400).json({ error: "Enter a valid Creator Center coin amount." });
@@ -7741,6 +7056,325 @@ app.post("/api/v1/admin/revenue-share/pools",async(req,res)=>{if(!requireRevenue
 app.post("/api/v1/admin/revenue-share/pools/:id/status",async(req,res)=>{if(!requireRevenueAdmin(req,res))return;const pool=dbData.revenue_pools.find((p:any)=>p.id===req.params.id);if(!pool)return res.status(404).json({error:"Revenue pool not found."});const status=String(req.body?.status||"");if(!['Draft','Pending Approval','Approved'].includes(status))return res.status(400).json({error:"Unsupported pool status."});pool.status=status;await persistRevenueRecord("revenue_pools",pool);res.json(pool);});
 app.post("/api/v1/admin/revenue-share/pools/:id/distribute",async(req,res)=>{if(!requireRevenueAdmin(req,res))return;const pool=dbData.revenue_pools.find((p:any)=>p.id===req.params.id);if(!pool)return res.status(404).json({error:"Revenue pool not found."});if(pool.status!=="Approved")return res.status(400).json({error:"Pool must be Approved before distribution."});if(pool.distributedAt)return res.status(409).json({error:"This pool has already been distributed."});const eligible=dbData.investments.filter((i:any)=>i.status==="Active"&&(!pool.eligiblePlans?.length||pool.eligiblePlans.includes(i.planId)));const totalPrincipal=eligible.reduce((n:number,i:any)=>n+Number(i.principal||0),0);if(totalPrincipal<=0)return res.status(400).json({error:"No eligible active investments."});const distributions=[];for(const inv of eligible){const percent=Number(inv.planSnapshot?.revenueSharePercent||0);const gross=Number(pool.amount)*(Number(inv.principal||0)/totalPrincipal);const earning=Math.max(0,Math.round(gross*(percent/100)*100)/100);if(!earning)continue;inv.totalEarnings=Number(inv.totalEarnings||0)+earning;inv.availableEarnings=Number(inv.availableEarnings||0)+earning;inv.monthlyEarnings=earning;const createdAt=new Date().toISOString();const earningRecord={id:`EARN-${pool.month}-${inv.id}`,investmentId:inv.id,userId:inv.userId,username:inv.username,period:pool.month,amount:earning,currency:"USD",createdAt,status:"Completed",source:`Revenue Pool ${pool.id}`};dbData.investment_earnings.push(earningRecord);const tx={id:`ITX-EARN-${pool.month}-${inv.id}`,type:"monthly_revenue",investmentId:inv.id,userId:inv.userId,username:inv.username,amount:earning,currency:"USD",timestamp:createdAt,status:"Completed",source:pool.id,destination:"available_earnings"};dbData.investment_transactions.unshift(tx);const dist={id:`DIST-${pool.month}-${inv.id}`,poolId:pool.id,investmentId:inv.id,userId:inv.userId,amount:earning,currency:"USD",createdAt,status:"Completed"};dbData.revenue_distributions.push(dist);distributions.push(dist);await persistRevenueRecord("investment_earnings",earningRecord);await persistRevenueRecord("investment_transactions",tx);await persistRevenueRecord("investments",inv);await persistRevenueRecord("revenue_distributions",dist);}pool.status="Distributed";pool.distributedAt=new Date().toISOString();await persistRevenueRecord("revenue_pools",pool);res.json({success:true,pool,distributions});});
 app.post("/api/v1/admin/revenue-share/withdrawals/:id/status",async(req,res)=>{if(!requireRevenueAdmin(req,res))return;const w=dbData.investment_withdrawals.find((x:any)=>x.id===req.params.id);if(!w)return res.status(404).json({error:"Withdrawal not found."});const next=String(req.body?.status||"");if(!['Approved','Processing','Completed','Rejected','Cancelled'].includes(next))return res.status(400).json({error:"Unsupported withdrawal status."});const prev=w.status;w.status=next;w.adminAction={by:revenueShareAdminEmail(req),at:new Date().toISOString()};if(next==='Completed')w.completionDate=new Date().toISOString();if((next==='Rejected'||next==='Cancelled')&&w.reserved&&prev!=='Rejected'&&prev!=='Cancelled'){const own=dbData.investments.filter((i:any)=>String(i.userId)===String(w.userId)&&i.status==='Active');let rem=Number(w.amount||0);for(const inv of own){if(rem<=0)break;const field=w.type==='earnings'?'availableEarnings':'principal';inv[field]=Number(inv[field]||0)+rem;if(w.type==='principal')inv.activeBalance=Number(inv.activeBalance||0)+rem;rem=0;await persistRevenueRecord('investments',inv);}w.reserved=false;}if(next==='Completed'&&w.payoutFormat==='coins'){const ownInv=dbData.investments.find((i:any)=>i.id===w.investmentId);const rate=Number(ownInv?.planSnapshot?.coinConversionRate||100);const user=dbData.users?.find((u:any)=>String(u.uid)===String(w.userId)||String(u.uniqueId)===String(w.userId)||String(u.username).toLowerCase()===String(w.username).toLowerCase());if(user){user.coins=Number(user.coins||0)+Math.round(Number(w.amount)*rate);await persistUserDurably(user);}}await persistRevenueRecord('investment_withdrawals',w);res.json(w);});
+
+// ------------------------------------------------------------------
+// PRODUCTION MUSIC LIBRARY — durable admin-managed audio for Live/Party
+// ------------------------------------------------------------------
+const musicUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 25 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    const mime = String(file.mimetype || '').toLowerCase();
+    const name = String(file.originalname || '').toLowerCase();
+    const allowed = [
+      'audio/mpeg', 'audio/mp3', 'audio/aac', 'audio/mp4', 'audio/x-m4a',
+      'audio/wav', 'audio/x-wav', 'audio/ogg', 'audio/webm', 'audio/flac'
+    ].includes(mime) || /\.(mp3|aac|m4a|wav|ogg|webm|flac)$/i.test(name);
+    cb(null, allowed);
+  }
+});
+
+function ensureMusicLibrarySchema() {
+  if (!Array.isArray(dbData.musicTracks)) dbData.musicTracks = [];
+}
+ensureMusicLibrarySchema();
+
+app.get('/api/v1/music', async (_req, res) => {
+  ensureMusicLibrarySchema();
+  const tracks = dbData.musicTracks
+    .filter((t: any) => t && t.id && t.url && t.status !== 'Inactive')
+    .sort((a: any, b: any) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+  res.json(tracks);
+});
+
+// ------------------------------------------------------------------
+// AUDIUS MUSIC SEARCH / STREAM / PER-USER SAVED SONGS
+// ------------------------------------------------------------------
+function getAudiusAuthHeaders(): Record<string, string> {
+  const headers: Record<string, string> = { Accept: 'application/json' };
+  const bearer = String(process.env.AUDIUS_BEARER_TOKEN || '').trim();
+  const apiKey = String(process.env.AUDIUS_API_KEY || '').trim();
+  if (bearer) headers.Authorization = `Bearer ${bearer}`;
+  if (apiKey) headers['X-API-Key'] = apiKey;
+  return headers;
+}
+
+function audiusConfigured(): boolean {
+  return Boolean(String(process.env.AUDIUS_BEARER_TOKEN || '').trim() || String(process.env.AUDIUS_API_KEY || '').trim());
+}
+
+function formatMusicDuration(seconds: any): string {
+  const total = Math.max(0, Math.round(Number(seconds) || 0));
+  const mins = Math.floor(total / 60);
+  const secs = total % 60;
+  return `${mins}:${String(secs).padStart(2, '0')}`;
+}
+
+function normalizeAudiusTrack(track: any) {
+  const id = String(track?.id || '').trim();
+  const artwork = track?.artwork || {};
+  const artist = String(track?.user?.name || track?.user?.handle || track?.user?.handleL2 || 'Audius Artist').trim();
+  return {
+    id: `audius_${id}`,
+    provider: 'audius',
+    providerTrackId: id,
+    title: String(track?.title || 'Untitled').trim(),
+    artist,
+    category: String(track?.genre || 'Music').trim(),
+    duration: formatMusicDuration(track?.duration),
+    cover: String(artwork?._150x150 || artwork?._480x480 || artwork?._1000x1000 || '').trim(),
+    url: `${PUBLIC_API_BASE}/api/v1/music/audius/stream/${encodeURIComponent(id)}`,
+    permalink: String(track?.permalink || '').trim(),
+    isStreamable: Boolean(track?.isStreamable !== false),
+    playCount: Number(track?.playCount || 0),
+    favoriteCount: Number(track?.favoriteCount || 0),
+    source: 'Audius'
+  };
+}
+
+app.get('/api/v1/music/audius/search', async (req: any, res: any) => {
+  try {
+    if (!audiusConfigured()) return res.status(503).json({ error: 'Audius API is not configured on Railway.' });
+    const query = String(req.query?.q || '').trim();
+    if (!query) return res.json([]);
+    const limit = Math.min(30, Math.max(1, Number(req.query?.limit || 20)));
+    const offset = Math.max(0, Number(req.query?.offset || 0));
+    const url = `https://api.audius.co/v1/tracks/search?query=${encodeURIComponent(query)}&limit=${limit}&offset=${offset}&sort_method=relevant`;
+    const upstream = await fetch(url, { headers: getAudiusAuthHeaders() });
+    const bodyText = await upstream.text();
+    if (!upstream.ok) {
+      console.warn('[PARDAIS AUDIUS] Search failed:', upstream.status, bodyText.slice(0, 500));
+      return res.status(upstream.status).json({ error: 'Audius search failed.', details: bodyText.slice(0, 500) });
+    }
+    const parsed = JSON.parse(bodyText);
+    const tracks = Array.isArray(parsed?.data) ? parsed.data.map(normalizeAudiusTrack).filter((t: any) => t.providerTrackId && t.isStreamable) : [];
+    return res.json(tracks);
+  } catch (err: any) {
+    console.error('[PARDAIS AUDIUS] Search error:', err?.message || err);
+    return res.status(500).json({ error: 'Unable to search Audius right now.' });
+  }
+});
+
+app.get('/api/v1/music/audius/stream/:trackId', async (req: any, res: any) => {
+  try {
+    if (!audiusConfigured()) return res.status(503).json({ error: 'Audius API is not configured on Railway.' });
+    const trackId = decodeURIComponent(String(req.params?.trackId || '')).trim();
+    if (!trackId || !/^[A-Za-z0-9_-]+$/.test(trackId)) return res.status(400).json({ error: 'Invalid Audius track ID.' });
+    const url = `https://api.audius.co/v1/tracks/${encodeURIComponent(trackId)}/stream`;
+    const upstream = await fetch(url, { headers: getAudiusAuthHeaders(), redirect: 'follow' });
+    if (!upstream.ok || !upstream.body) {
+      return res.status(upstream.status || 404).json({ error: 'Audius stream is unavailable.' });
+    }
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Headers', 'Range, Content-Type, Accept, Origin');
+    res.setHeader('Accept-Ranges', 'bytes');
+    const contentType = upstream.headers.get('content-type');
+    const contentLength = upstream.headers.get('content-length');
+    const contentRange = upstream.headers.get('content-range');
+    if (contentType) res.setHeader('Content-Type', contentType);
+    if (contentLength) res.setHeader('Content-Length', contentLength);
+    if (contentRange) res.setHeader('Content-Range', contentRange);
+    if (upstream.status === 206) res.status(206);
+    Readable.fromWeb(upstream.body as any).pipe(res);
+  } catch (err: any) {
+    console.error('[PARDAIS AUDIUS] Stream error:', err?.message || err);
+    if (!res.headersSent) res.status(502).json({ error: 'Unable to start Audius stream.' });
+  }
+});
+
+function ensureMusicFavoritesSchema() {
+  if (!Array.isArray(dbData.musicFavorites)) dbData.musicFavorites = [];
+}
+ensureMusicFavoritesSchema();
+
+function getMusicFavoriteIdentity(user: any): string {
+  return String(user?.uid || user?.uniqueId || user?.email || user?.username || '').trim().toLowerCase();
+}
+
+function musicFavoriteId(identity: string, provider: string, trackId: string): string {
+  return `musicfav_${crypto.createHash('sha256').update(`${identity}|${provider}|${trackId}`).digest('hex')}`;
+}
+
+app.get('/api/v1/music/saved', authenticateUser, async (req: any, res: any) => {
+  ensureMusicFavoritesSchema();
+  const identity = getMusicFavoriteIdentity(req.user);
+  if (!identity) return res.status(401).json({ error: 'Authenticated user identity is required.' });
+  const saved = dbData.musicFavorites
+    .filter((item: any) => String(item?.userIdentity || '') === identity)
+    .sort((a: any, b: any) => String(b.savedAt || '').localeCompare(String(a.savedAt || '')));
+  return res.json(saved);
+});
+
+app.post('/api/v1/music/saved', authenticateUser, async (req: any, res: any) => {
+  try {
+    ensureMusicFavoritesSchema();
+    const identity = getMusicFavoriteIdentity(req.user);
+    const provider = String(req.body?.provider || 'audius').trim().toLowerCase();
+    const providerTrackId = String(req.body?.providerTrackId || req.body?.trackId || '').trim();
+    if (!identity || !providerTrackId) return res.status(400).json({ error: 'Music track identity is required.' });
+    if (provider !== 'audius') return res.status(400).json({ error: 'Unsupported music provider.' });
+
+    const id = musicFavoriteId(identity, provider, providerTrackId);
+    const existing = dbData.musicFavorites.find((item: any) => String(item?.id) === id);
+    const saved = {
+      ...(existing || {}),
+      id,
+      userIdentity: identity,
+      userUid: String(req.user?.uid || ''),
+      username: String(req.user?.username || ''),
+      provider,
+      providerTrackId,
+      title: String(req.body?.title || '').trim().slice(0, 160),
+      artist: String(req.body?.artist || '').trim().slice(0, 160),
+      category: String(req.body?.category || 'Music').trim().slice(0, 80),
+      duration: String(req.body?.duration || '').trim().slice(0, 20),
+      cover: String(req.body?.cover || '').trim().slice(0, 1000),
+      url: String(req.body?.url || `${PUBLIC_API_BASE}/api/v1/music/audius/stream/${encodeURIComponent(providerTrackId)}`).trim().slice(0, 1500),
+      permalink: String(req.body?.permalink || '').trim().slice(0, 1500),
+      savedAt: existing?.savedAt || new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    const index = dbData.musicFavorites.findIndex((item: any) => String(item?.id) === id);
+    if (index >= 0) dbData.musicFavorites[index] = saved;
+    else dbData.musicFavorites.unshift(saved);
+    saveDatabase();
+    await syncDocument('musicFavorites', id, saved);
+    return res.status(201).json({ success: true, track: saved });
+  } catch (err: any) {
+    console.error('[PARDAIS MUSIC] Save favorite failed:', err?.message || err);
+    return res.status(500).json({ error: 'Unable to save song.' });
+  }
+});
+
+app.delete('/api/v1/music/saved/:provider/:trackId', authenticateUser, async (req: any, res: any) => {
+  try {
+    ensureMusicFavoritesSchema();
+    const identity = getMusicFavoriteIdentity(req.user);
+    const provider = String(req.params?.provider || 'audius').trim().toLowerCase();
+    const trackId = decodeURIComponent(String(req.params?.trackId || '')).trim();
+    if (!identity || !trackId) return res.status(400).json({ error: 'Music track identity is required.' });
+    const id = musicFavoriteId(identity, provider, trackId);
+    const index = dbData.musicFavorites.findIndex((item: any) => String(item?.id) === id && String(item?.userIdentity || '') === identity);
+    if (index >= 0) dbData.musicFavorites.splice(index, 1);
+    saveDatabase();
+    await deleteDocument('musicFavorites', id);
+    return res.json({ success: true });
+  } catch (err: any) {
+    console.error('[PARDAIS MUSIC] Remove favorite failed:', err?.message || err);
+    return res.status(500).json({ error: 'Unable to remove saved song.' });
+  }
+});
+
+app.post('/api/v1/admin/music/upload', authenticateUser, musicUpload.single('file'), async (req: any, res: any) => {
+  try {
+    if (!isAdminAccount(req.user)) return res.status(403).json({ success: false, error: 'Authorized admin account is required.' });
+    const file = req.file;
+    if (!file?.buffer?.length) return res.status(400).json({ success: false, error: 'No audio file uploaded.' });
+    if (!process.env.R2_ACCESS_KEY_ID || !process.env.R2_SECRET_ACCESS_KEY || !process.env.R2_ENDPOINT) {
+      return res.status(503).json({ success: false, error: 'Music storage is not configured on the server.' });
+    }
+
+    const title = String(req.body?.title || file.originalname || 'Pardais Music').trim().slice(0, 120);
+    const artist = String(req.body?.artist || 'Pardais Party').trim().slice(0, 120);
+    const category = String(req.body?.category || 'Music').trim().slice(0, 60);
+    if (!title) return res.status(400).json({ success: false, error: 'Song title is required.' });
+
+    const id = `music_${Date.now()}_${crypto.randomBytes(5).toString('hex')}`;
+    const original = String(file.originalname || 'music');
+    const ext = (original.match(/\.([a-z0-9]+)$/i)?.[1] || 'mp3').toLowerCase();
+    const mime = String(file.mimetype || 'audio/mpeg').toLowerCase();
+    const objectKey = `music/library/${id}.${ext}`;
+    const bucketName = process.env.R2_BUCKET_NAME || 'pardaisparty-reels';
+    const client = getS3Client();
+
+    await client.send(new PutObjectCommand({
+      Bucket: bucketName,
+      Key: objectKey,
+      Body: file.buffer,
+      ContentType: mime,
+      CacheControl: 'public, max-age=31536000, immutable'
+    }));
+
+    const track = {
+      id,
+      title,
+      artist,
+      category,
+      url: `${PUBLIC_API_BASE}/api/v1/music/file?key=${encodeURIComponent(objectKey)}`,
+      duration: String(req.body?.duration || ''),
+      cover: String(req.body?.cover || ''),
+      objectKey,
+      mimeType: mime,
+      size: Number(file.size || file.buffer.length),
+      status: 'Active',
+      createdAt: new Date().toISOString(),
+      createdBy: String(req.user?.email || req.user?.username || 'admin')
+    };
+
+    ensureMusicLibrarySchema();
+    dbData.musicTracks.unshift(track);
+    saveDatabase();
+    const persisted = await syncDocument('musicTracks', track.id, track);
+    if (!persisted) console.warn('[PARDAIS MUSIC] Firestore metadata sync deferred; local/R2 copy remains available.');
+
+    return res.status(201).json({ success: true, track });
+  } catch (err: any) {
+    console.error('[PARDAIS MUSIC] Upload failed:', err?.message || err);
+    return res.status(500).json({ success: false, error: err?.message || 'Music upload failed.' });
+  }
+});
+
+app.delete('/api/v1/admin/music/:id', authenticateUser, async (req: any, res: any) => {
+  try {
+    if (!isAdminAccount(req.user)) return res.status(403).json({ success: false, error: 'Authorized admin account is required.' });
+    ensureMusicLibrarySchema();
+    const id = String(req.params.id || '');
+    const index = dbData.musicTracks.findIndex((t: any) => String(t?.id) === id);
+    if (index < 0) return res.status(404).json({ success: false, error: 'Music track not found.' });
+    const track = dbData.musicTracks[index];
+    if (track?.objectKey && process.env.R2_ACCESS_KEY_ID && process.env.R2_SECRET_ACCESS_KEY && process.env.R2_ENDPOINT) {
+      try {
+        const client = getS3Client();
+        const bucketName = process.env.R2_BUCKET_NAME || 'pardaisparty-reels';
+        await client.send(new DeleteObjectCommand({ Bucket: bucketName, Key: String(track.objectKey) }));
+      } catch (storageErr: any) {
+        console.warn('[PARDAIS MUSIC] R2 delete warning:', storageErr?.message || storageErr);
+      }
+    }
+    dbData.musicTracks.splice(index, 1);
+    saveDatabase();
+    await deleteDocument('musicTracks', id);
+    return res.json({ success: true });
+  } catch (err: any) {
+    console.error('[PARDAIS MUSIC] Delete failed:', err?.message || err);
+    return res.status(500).json({ success: false, error: 'Music delete failed.' });
+  }
+});
+
+app.get('/api/v1/music/file', async (req: any, res: any) => {
+  try {
+    const key = typeof req.query?.key === 'string' ? req.query.key : '';
+    if (!key || !key.startsWith('music/library/') || key.includes('..')) return res.status(400).json({ error: 'Invalid music key.' });
+    if (!process.env.R2_ACCESS_KEY_ID || !process.env.R2_SECRET_ACCESS_KEY || !process.env.R2_ENDPOINT) return res.status(503).json({ error: 'Music storage is unavailable.' });
+    const client = getS3Client();
+    const bucketName = process.env.R2_BUCKET_NAME || 'pardaisparty-reels';
+    const range = typeof req.headers.range === 'string' ? req.headers.range : undefined;
+    const result: any = await client.send(new GetObjectCommand({ Bucket: bucketName, Key: key, ...(range ? { Range: range } : {}) }));
+    const ext = key.split('.').pop()?.toLowerCase() || '';
+    const fallback = ext === 'mp3' ? 'audio/mpeg' : ext === 'm4a' ? 'audio/mp4' : ext === 'wav' ? 'audio/wav' : ext === 'ogg' ? 'audio/ogg' : ext === 'webm' ? 'audio/webm' : ext === 'flac' ? 'audio/flac' : 'application/octet-stream';
+    res.setHeader('Content-Type', String(result.ContentType || fallback));
+    res.setHeader('Accept-Ranges', 'bytes');
+    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    if (result.ContentLength != null) res.setHeader('Content-Length', String(result.ContentLength));
+    if (result.ContentRange) { res.status(206); res.setHeader('Content-Range', String(result.ContentRange)); }
+    if (result.Body && typeof result.Body.pipe === 'function') result.Body.pipe(res);
+    else if (result.Body) res.end(Buffer.from(await result.Body.transformToByteArray()));
+    else res.status(404).json({ error: 'Music file not found.' });
+  } catch (err: any) {
+    console.error('[PARDAIS MUSIC] Playback failed:', err?.message || err);
+    return res.status(404).json({ error: 'Music file not found.' });
+  }
+});
 
 // Reels endpoints
 app.get("/api/v1/reels", async (req, res) => {
@@ -7936,23 +7570,11 @@ app.post('/api/v1/posts/:id/like', async (req: any, res: any) => {
   if (!post) return res.status(404).json({ error: 'Post not found.' });
   const likedBy = Array.isArray(post.likedBy) ? post.likedBy : [];
   const idx = likedBy.indexOf(username);
-  const wasLiked = idx >= 0;
-  if (wasLiked) likedBy.splice(idx, 1); else likedBy.push(username);
+  if (idx >= 0) likedBy.splice(idx, 1); else likedBy.push(username);
   post.likedBy = likedBy;
   post.likes = likedBy.length;
   saveDatabase();
   await syncDocument('posts', id, post);
-  if (!wasLiked) {
-    const ownerName = String(post.username || post.userName || post.authorUsername || '').trim();
-    if (ownerName && ownerName.toLowerCase() !== username.toLowerCase()) {
-      const owner = (dbData.users || []).find((u: any) => String(u?.username || '').toLowerCase() === ownerName.toLowerCase());
-      if (owner) await writeDurableNotification({
-        type: "Like", category: "social", title: "❤️ Your Video Got a Like", text: `${username} liked your video.`,
-        targetUsername: owner.username, targetUserId: owner.uid, actorUsername: username, actorName: username,
-        actionType: "post", actionId: id, userAvatar: ""
-      });
-    }
-  }
   res.json({ success: true, post });
 });
 
@@ -8045,7 +7667,7 @@ app.get("/api/v1/chats", (req, res) => {
   res.json(dbData.chats || []);
 });
 
-app.post("/api/v1/chats", async (req, res) => {
+app.post("/api/v1/chats", (req, res) => {
   const newMsg = {
     id: `msg-${Date.now()}`,
     timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
@@ -8055,16 +7677,6 @@ app.post("/api/v1/chats", async (req, res) => {
   dbData.chats.push(newMsg);
   saveDatabase();
   syncDocument("chats", newMsg.id, newMsg);
-  const chatTarget = newMsg.recipientUsername || newMsg.toUsername || newMsg.targetUsername;
-  if (chatTarget && String(chatTarget).toLowerCase() !== String(newMsg.username || newMsg.senderUsername || "").toLowerCase()) {
-    const recipient = (dbData.users || []).find((u: any) => String(u?.username || "").toLowerCase() === String(chatTarget).toLowerCase());
-    if (recipient) await writeDurableNotification({
-      type: "Message", category: "social", title: "💬 New Message",
-      text: `${newMsg.username || newMsg.senderUsername || "Someone"} sent you a message.`,
-      targetUsername: recipient.username, targetUserId: recipient.uid, actorUsername: newMsg.username || newMsg.senderUsername,
-      userAvatar: newMsg.avatar || ""
-    });
-  }
   res.status(201).json(newMsg);
 });
 
@@ -8211,14 +7823,8 @@ app.put("/api/v1/kyc-requests/:id", (req, res) => {
 });
 
 // Admin Users grid management (ban/unban, edit stats, toggle permissions)
-app.get("/api/v1/admin-users", async (req, res) => {
+app.get("/api/v1/admin-users", (req, res) => {
   if (!Array.isArray(dbData.users)) dbData.users = [];
-  try {
-    const persisted = await listPersistedUsers();
-    if (persisted.length > 0) dbData.users = canonicalizeUsers([...(dbData.users || []), ...persisted]);
-  } catch (err) {
-    console.warn("[ADMIN USERS] Firestore hydration delayed:", err);
-  }
   if (!Array.isArray(dbData.adminUsersList)) dbData.adminUsersList = [];
 
   const userMap = new Map();
@@ -8716,7 +8322,7 @@ app.post('/api/v1/gifts/upload-animation', giftAnimationUpload.single('file'), a
       (mime === 'video/webm' ? 'webm' : mime === 'video/mp4' ? 'mp4' : mime === 'image/svg+xml' ? 'svg' :
       mime === 'image/png' ? 'png' : mime === 'image/jpeg' ? 'jpg' : 'gif');
     const safeGiftId = String(req.body?.giftId || 'new').replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 80);
-    const objectKey = `gifts/animations/${safeGiftId}/current.${ext}`;
+    const objectKey = `gifts/animations/${safeGiftId}/${Date.now()}-${crypto.randomBytes(6).toString('hex')}.${ext}`;
     const client = getS3Client();
     const bucketName = process.env.R2_BUCKET_NAME || 'pardaisparty-reels';
 
@@ -9161,15 +8767,6 @@ app.get("/uploads/:filename", (req, res) => {
 // ------------------------------------------------------------------
 // FIREBASE STORAGE & CLOUD MESSAGING ENDPOINTS (LOCAL & MOCK FALLBACKS)
 // ------------------------------------------------------------------
-// Permanent bundled gift artwork/animations. The same URL is served to every device/room.
-const giftAssetRoots = [path.join(process.cwd(), "public", "gifts"), path.join(process.cwd(), "dist", "gifts")];
-app.use("/gifts", (req, res, next) => {
-  express.static(giftAssetRoots[0], { maxAge: "365d", immutable: true })(req, res, (err) => {
-    if (err || res.headersSent) return next(err);
-    express.static(giftAssetRoots[1], { maxAge: "365d", immutable: true })(req, res, next);
-  });
-});
-
 app.use("/uploads", express.static(path.join(process.cwd(), "public", "uploads")));
 
 app.post("/api/v1/storage/upload", async (req, res) => {

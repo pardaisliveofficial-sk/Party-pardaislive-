@@ -211,7 +211,7 @@ import {
   saveCategoriesToStorage,
   preloadGiftAnimations 
 } from "./components/GiftSystem";
-import { MOCK_TRACKS, MusicTrack } from "./musicData";
+import { MusicTrack } from "./musicData";
 import { LevelBadgeSvg, getLevelTier, LEVEL_TIERS, getProgressionFromCoins, getCoinsForLevel, getHostLevelFromName, getVipLevelFromUserLevel, formatCoinShort } from "./levelUtils";
 
 // Custom local fetch wrapper to securely append the active session token to all backend API calls
@@ -655,11 +655,6 @@ const ReelVideoPlayer: React.FC<ReelVideoPlayerProps> = ({
       </button>
     </div>
   );
-};
-
-const getDisplayName = (entity: any, fallback = "Pardais User") => {
-  const value = entity?.fullName || entity?.displayName || entity?.name || fallback;
-  return String(value || fallback).trim() || fallback;
 };
 
 export default function App() {
@@ -1475,52 +1470,25 @@ export default function App() {
   const [showNotifSettingsDrawer, setShowNotifSettingsDrawer] = useState<boolean>(false);
   const [notifSettings, setNotifSettings] = useState(() => {
     const saved = localStorage.getItem("pardais_notif_settings");
-    if (saved) { try { return JSON.parse(saved); } catch (e) {} }
-    return { followers: true, followUnfollow: true, likes: true, comments: true, friends: true, messages: true, gifts: true, transactions: true, announcements: true, security: true, push: true, sound: true };
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch (e) {}
+    }
+    return {
+      followers: true,
+      likes: true,
+      comments: true,
+      gifts: true,
+      transactions: true,
+      announcements: true,
+    };
   });
-  const notifSettingsRef = useRef<any>(notifSettings);
-  useEffect(() => { notifSettingsRef.current = notifSettings; }, [notifSettings]);
 
   const saveNotifSettings = (newSettings: any) => {
     setNotifSettings(newSettings);
-    notifSettingsRef.current = newSettings;
     localStorage.setItem("pardais_notif_settings", JSON.stringify(newSettings));
-    const authToken = localStorage.getItem("pardais_auth_token") || localStorage.getItem("pardais_user_token");
-    if (authToken) fetch("/api/v1/user/notification-settings", { method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${authToken}` }, body: JSON.stringify({ notificationSettings: newSettings }) }).catch(() => {});
   };
-
-  const notificationSettingKey = (notif: any): string => {
-    const type = String(notif?.type || notif?.actionType || "").toLowerCase();
-    const title = String(notif?.title || "").toLowerCase();
-    if (type === "follow") return "followers";
-    if (type === "unfollow") return "followUnfollow";
-    if (type === "friend" || title.includes("friend")) return "friends";
-    if (type === "message" || type === "chat" || title.includes("message")) return "messages";
-    if (type === "like" || title.includes("like") || title.includes("reaction")) return "likes";
-    if (type === "comment" || title.includes("comment")) return "comments";
-    if (type === "gift" || title.includes("gift")) return "gifts";
-    if (type.includes("transaction") || type === "recharge" || title.includes("coin") || title.includes("wallet")) return "transactions";
-    if (type.includes("announcement") || title.includes("announcement")) return "announcements";
-    if (type === "login" || type === "logout" || title.includes("login") || title.includes("logout")) return "security";
-    return "announcements";
-  };
-  const isNotificationEnabled = (notif: any) => notifSettingsRef.current[notificationSettingKey(notif)] !== false;
-
-  // Restore account-scoped preferences after login/reinstall. localStorage is only the fast cache.
-  useEffect(() => {
-    const authToken = localStorage.getItem("pardais_auth_token") || localStorage.getItem("pardais_user_token");
-    if (!authToken) return;
-    fetch("/api/v1/user/notification-settings", { headers: { "Authorization": `Bearer ${authToken}` } })
-      .then(res => res.ok ? res.json() : null)
-      .then(data => {
-        if (data?.notificationSettings && typeof data.notificationSettings === "object") {
-          const merged = { ...notifSettingsRef.current, ...data.notificationSettings };
-          setNotifSettings(merged);
-          notifSettingsRef.current = merged;
-          localStorage.setItem("pardais_notif_settings", JSON.stringify(merged));
-        }
-      }).catch(() => {});
-  }, []);
 
   const [appCaches, setAppCaches] = useState(() => {
     const saved = localStorage.getItem("pardais_app_caches");
@@ -2720,19 +2688,11 @@ export default function App() {
     { id: 8, name: null, avatar: null, diamonds: null, isMuted: false, isCamMuted: false, isBigFrame: false }
   ]);
 
-  const activeUserLiveGuestCount = useMemo(
-    () => (userLiveGuestSeats || []).filter((seat: any) => Boolean(seat?.name)).length,
-    [userLiveGuestSeats]
-  );
-
   const [userLiveGuestRequests, setUserLiveGuestRequests] = useState<Array<{
     id: string;
     username: string;
     avatar: string;
     level: number;
-    vipLevel?: number;
-    coins?: number;
-    seatId?: number;
   }>>([]);
 
   const [showGuestRequestsModal, setShowGuestRequestsModal] = useState<boolean>(false);
@@ -2745,8 +2705,6 @@ export default function App() {
   const followingHydratedRef = useRef(false);
   const followingSyncTimerRef = useRef<number | null>(null);
   const [followedUsers, setFollowedUsers] = useState<string[]>([]);
-  const [showFindFriendsModal, setShowFindFriendsModal] = useState<boolean>(false);
-  const [findFriendsSearch, setFindFriendsSearch] = useState<string>("");
   const [blockedUsers, setBlockedUsers] = useState<string[]>([]);
   const [reportedUsers, setReportedUsers] = useState<Array<{ name: string; reason: string; timestamp: string }>>([]);
   const [contextActionsUser, setContextActionsUser] = useState<string | null>(null);
@@ -2799,8 +2757,6 @@ export default function App() {
     username: string;
     userLevel: number;
     vipLevel: number;
-    avatar?: string;
-    userId?: string;
   } | null>(null);
   const [isUserModerator, setIsUserModerator] = useState<boolean>(false);
   // Party-specific moderation state. Host is always supreme; moderators inherit guest-management controls.
@@ -3021,24 +2977,6 @@ export default function App() {
   const [adminAgencyCoinType, setAdminAgencyCoinType] = useState<"ADD" | "DEDUCT">("ADD");
   const [adminAgencyCoinSubmitting, setAdminAgencyCoinSubmitting] = useState<boolean>(false);
 
-  // Coin Seller live wallet / user sale states
-  const [coinSellerWallet, setCoinSellerWallet] = useState<any>(null);
-  const [coinSellerRecipient, setCoinSellerRecipient] = useState("");
-  const [coinSellerTransferAmount, setCoinSellerTransferAmount] = useState("");
-  const [coinSellerTransferNote, setCoinSellerTransferNote] = useState("");
-  const [coinSellerTransferSubmitting, setCoinSellerTransferSubmitting] = useState(false);
-  const [coinSellerTransferHistory, setCoinSellerTransferHistory] = useState<any[]>([]);
-
-  useEffect(() => {
-    if (!user?.username || !user?.isCoinSeller) return;
-    const token = localStorage.getItem("pardais_auth_token");
-    fetch("/api/v1/coin-seller/me", { headers: token ? { Authorization: `Bearer ${token}` } : {} })
-      .then(r => r.ok ? r.json() : null)
-      .then(data => {
-        if (data?.success) { setCoinSellerWallet(data); setCoinSellerTransferHistory(data.history || []); }
-      }).catch(() => {});
-  }, [user?.username, user?.isCoinSeller]);
-
   // Super Admin Agency Edit Modal States (Ta'adulat)
   const [selectedAgencyForEdit, setSelectedAgencyForEdit] = useState<any>(null);
   const [editAgencyForm, setEditAgencyForm] = useState<any>({
@@ -3141,7 +3079,6 @@ export default function App() {
   // Viewer live guest states
   const [viewerLiveGuestModeActive, setViewerLiveGuestModeActive] = useState<boolean>(false);
   const [viewerRequestStatus, setViewerRequestStatus] = useState<"none" | "pending" | "accepted">("none");
-  const [viewerGuestCamEnabled, setViewerGuestCamEnabled] = useState<boolean>(true);
   const [viewerGiftDrawerOpen, setViewerGiftDrawerOpen] = useState<boolean>(false);
   const [viewerLiveGiftRecipient, setViewerLiveGiftRecipient] = useState<string>("Host");
   const [viewerLiveGuestSeats, setViewerLiveGuestSeats] = useState<Array<{
@@ -3164,13 +3101,6 @@ export default function App() {
     { id: 7, name: null, avatar: null, diamonds: null, isMuted: false, isCamMuted: false, isBigFrame: false, isModerator: false },
     { id: 8, name: null, avatar: null, diamonds: null, isMuted: false, isCamMuted: false, isBigFrame: false, isModerator: false }
   ]);
-
-  const viewerIsCurrentlyGuest = viewerLiveGuestSeats.some(s => Boolean(s.name) && (
-    s.name === user?.username ||
-    s.name === "You (Guest)" ||
-    (user?.username && s.name.toLowerCase() === user.username.toLowerCase()) ||
-    (user?.name && s.name.toLowerCase() === user.name.toLowerCase())
-  ));
 
   // Live Chat Messages
   const [chatInput, setChatInput] = useState<string>("");
@@ -3279,56 +3209,34 @@ export default function App() {
   const [searchedUsers, setSearchedUsers] = useState<any[]>([]);
   const [searchLoading, setSearchLoading] = useState<boolean>(false);
 
-  // Find Friends uses the same real-time registered-user collection already used by Chat.
-  // This keeps the directory live without introducing a second user-data source.
-  const findFriendsUsers = useMemo(() => {
-    const term = findFriendsSearch.trim().toLowerCase();
-    return (allRegisteredUsers || [])
-      .filter((candidate: any) => candidate && candidate.username)
-      .filter((candidate: any) => {
-        const candidateKey = String(candidate.username || "").toLowerCase();
-        const candidateId = String(candidate.uniqueId || "").toLowerCase();
-        const candidateName = String(candidate.fullName || "").toLowerCase();
-        const myKey = String(user?.username || "").toLowerCase();
-        if (candidateKey === myKey) return false;
-        if (!term) return true;
-        return candidateKey.includes(term) || candidateId.includes(term) || candidateName.includes(term);
-      })
-      .sort((a: any, b: any) => String(a.username).localeCompare(String(b.username)));
-  }, [allRegisteredUsers, findFriendsSearch, user?.username]);
-
-  const isFollowingUser = useCallback((username: string) => {
-    const key = String(username || "").trim().toLowerCase();
-    return followedUsers.some((v) => String(v || "").trim().toLowerCase() === key);
-  }, [followedUsers]);
-
-  // 1. Sync the canonical registered-user directory from the production API.
-  // The server reads the same persistent Firestore users collection used by
-  // authentication/admin, so Find Friends cannot be empty just because the
-  // browser/Capacitor Firestore listener is pointed at a different database.
+  // 1. Sync all registered users from Firestore to resolve profiles in real time
   useEffect(() => {
-    if (!isLoggedIn || !user?.username) {
-      setAllRegisteredUsers([]);
-      return;
+    if (!isLoggedIn || !user?.username || !db) return;
+    let unsubscribe = () => {};
+    try {
+      const q = collection(db, "users");
+      unsubscribe = onSnapshot(q, (snapshot) => {
+      const list: any[] = [];
+      const seenUsernames = new Set();
+      snapshot.forEach(docSnap => {
+        const u = docSnap.data();
+        if (u && u.username) {
+          const lowerUsername = u.username.toLowerCase();
+          if (!seenUsernames.has(lowerUsername)) {
+            seenUsernames.add(lowerUsername);
+            list.push(u);
+          }
+        }
+      });
+      setAllRegisteredUsers(list);
+    }, err => {
+      console.warn("Error syncing users list from Firestore:", err);
+    });
+    } catch (err) {
+      console.warn("Error initializing users list from Firestore:", err);
     }
-    let cancelled = false;
-    let timer: any = null;
-    const syncUsers = async () => {
-      try {
-        const res = await authenticatedFetch(resolveApiUrl("/api/v1/users/directory"), { method: "GET" });
-        if (!res.ok) return;
-        const data = await res.json().catch(() => ({}));
-        if (!cancelled && Array.isArray(data?.users)) setAllRegisteredUsers(data.users);
-      } catch (err) {
-        console.warn("Error syncing canonical users directory:", err);
-      } finally {
-        if (!cancelled) timer = setTimeout(syncUsers, 5000);
-      }
-    };
-    void syncUsers();
     return () => {
-      cancelled = true;
-      if (timer) clearTimeout(timer);
+      try { unsubscribe(); } catch (e) {}
     };
   }, [isLoggedIn, user?.username]);
 
@@ -3866,9 +3774,9 @@ export default function App() {
       if (response.ok) {
         const newNotif = await response.json();
         setAppNotifications(prev => [newNotif, ...prev.filter(n => n.id !== newNotif.id)]);
-        // Only enabled notification categories interrupt the user with a toast/sound.
-        if ((!targetUsername || targetUsername === "all" || targetUsername === user?.username) && isNotificationEnabled(newNotif)) {
-          if (notifSettingsRef.current.sound !== false) playNotificationChime();
+        // Play chime and trigger toast for current user
+        if (!targetUsername || targetUsername === "all" || targetUsername === user?.username) {
+          playNotificationChime();
           setActiveToastNotif(newNotif);
           setHasUnreadNotifications(true);
         }
@@ -4066,7 +3974,7 @@ export default function App() {
     const candidates = [giftEvt?.videoUrl, giftEvt?.animationUrl, giftEvt?.animationFile];
     for (const candidate of candidates) {
       const value = String(candidate || "").trim();
-      if (/\.(webm|mp4|svg)(?:$|[?#])/i.test(value) || value.startsWith("data:video/") || value.startsWith("data:image/svg+xml") || value.startsWith("blob:")) return value;
+      if (/\.(webm|mp4)(?:$|[?#])/i.test(value) || value.startsWith("data:video/") || value.startsWith("blob:")) return value;
     }
     return "";
   }, []);
@@ -4119,7 +4027,7 @@ export default function App() {
         imageUrl: giftEvt.imageUrl || giftIcon,
         animationFile: resolveIncomingGiftAnimationVideo(giftEvt),
         videoUrl: /\.(webm|mp4)(?:$|[?#])/i.test(String(giftEvt.videoUrl || "")) ? String(giftEvt.videoUrl) : "",
-        animationUrl: /\.(webm|mp4|svg)(?:$|[?#])/i.test(String(giftEvt.animationUrl || "")) ? String(giftEvt.animationUrl) : ( /\.svg(?:$|[?#])/i.test(String(giftEvt.animationFile || "")) ? String(giftEvt.animationFile) : ""),
+        animationUrl: /\.(webm|mp4)(?:$|[?#])/i.test(String(giftEvt.animationUrl || "")) ? String(giftEvt.animationUrl) : "",
         animationFormat: giftEvt.animationFormat || "webm",
         animationDuration: giftEvt.animationDuration || 8,
         animationDisplayType: giftEvt.animationDisplayType || "full",
@@ -4217,7 +4125,6 @@ export default function App() {
   const [userLiveBgIndex, setUserLiveBgIndex] = useState<number>(0);
   const [userLiveFollowed, setUserLiveFollowed] = useState<boolean>(false);
   const [userLiveShowBeautyModal, setUserLiveShowBeautyModal] = useState<boolean>(false);
-  const [userLiveFaceFilter, setUserLiveFaceFilter] = useState<string>("Original");
   const [userLiveShowSettingsModal, setUserLiveShowSettingsModal] = useState<boolean>(false);
   const [userLiveShowMoreModal, setUserLiveShowMoreModal] = useState<boolean>(false);
   const [userLiveShowShareModal, setUserLiveShowShareModal] = useState<boolean>(false);
@@ -4245,6 +4152,17 @@ export default function App() {
   const [userLiveMusicVolume, setUserLiveMusicVolume] = useState<number>(0.6);
   const [userLiveMusicProgress, setUserLiveMusicProgress] = useState<number>(0);
   const [userLiveShowMusicModal, setUserLiveShowMusicModal] = useState<boolean>(false);
+  // 🎵 Production music catalog — loaded from durable server/R2 library (never demo/mock data).
+  const [musicLibraryTracks, setMusicLibraryTracks] = useState<MusicTrack[]>([]);
+  const [musicLibraryLoading, setMusicLibraryLoading] = useState<boolean>(false);
+  const [musicUploadBusy, setMusicUploadBusy] = useState<boolean>(false);
+  const [musicSource, setMusicSource] = useState<"library" | "audius" | "saved">("library");
+  const [audiusSearchResults, setAudiusSearchResults] = useState<MusicTrack[]>([]);
+  const [audiusSearchLoading, setAudiusSearchLoading] = useState<boolean>(false);
+  const [savedMusicTracks, setSavedMusicTracks] = useState<MusicTrack[]>([]);
+  const [savedMusicLoading, setSavedMusicLoading] = useState<boolean>(false);
+  const [savingMusicIds, setSavingMusicIds] = useState<Set<string>>(new Set());
+  const musicUploadInputRef = useRef<HTMLInputElement | null>(null);
   
   // Viewer Live Room Background Music states
   const [liveRoomActiveTrack, setLiveRoomActiveTrack] = useState<MusicTrack | null>(null);
@@ -4253,6 +4171,155 @@ export default function App() {
   const [liveRoomShowMusicToast, setLiveRoomShowMusicToast] = useState<boolean>(false);
   
   const audioPlayerRef = useRef<HTMLAudioElement | null>(null);
+
+  const loadProductionMusicLibrary = async () => {
+    setMusicLibraryLoading(true);
+    try {
+      const response = await fetch(resolveApiUrl("/api/v1/music"), { cache: "no-store" });
+      if (!response.ok) throw new Error(`Music library request failed: ${response.status}`);
+      const tracks = await response.json();
+      setMusicLibraryTracks(Array.isArray(tracks) ? tracks : []);
+    } catch (error) {
+      console.warn("[PARDAIS MUSIC] Failed to load durable music library:", error);
+      setMusicLibraryTracks([]);
+    } finally {
+      setMusicLibraryLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadProductionMusicLibrary();
+  }, []);
+
+  const loadSavedMusic = async () => {
+    if (!user?.uid && !user?.username && !user?.uniqueId) {
+      setSavedMusicTracks([]);
+      return;
+    }
+    setSavedMusicLoading(true);
+    try {
+      const response = await authenticatedFetch("/api/v1/music/saved");
+      if (!response.ok) throw new Error(`Saved music request failed: ${response.status}`);
+      const tracks = await response.json();
+      setSavedMusicTracks(Array.isArray(tracks) ? tracks : []);
+    } catch (error) {
+      console.warn("[PARDAIS MUSIC] Failed to load saved songs:", error);
+      setSavedMusicTracks([]);
+    } finally {
+      setSavedMusicLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadSavedMusic();
+  }, [user?.uid, user?.username, user?.uniqueId]);
+
+  const searchAudiusMusic = async (query: string) => {
+    const q = query.trim();
+    if (q.length < 2) {
+      setAudiusSearchResults([]);
+      return;
+    }
+    setAudiusSearchLoading(true);
+    try {
+      const response = await authenticatedFetch(`/api/v1/music/audius/search?q=${encodeURIComponent(q)}&limit=25`);
+      if (!response.ok) throw new Error(`Audius search failed: ${response.status}`);
+      const tracks = await response.json();
+      setAudiusSearchResults(Array.isArray(tracks) ? tracks : []);
+    } catch (error) {
+      console.warn("[PARDAIS MUSIC] Audius search failed:", error);
+      setAudiusSearchResults([]);
+    } finally {
+      setAudiusSearchLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!showPartyMusicLibrary || musicSource !== "audius") return;
+    const q = partyMusicSearch.trim();
+    const timer = window.setTimeout(() => {
+      searchAudiusMusic(q);
+    }, 450);
+    return () => window.clearTimeout(timer);
+  }, [partyMusicSearch, musicSource, showPartyMusicLibrary]);
+
+  const isMusicSaved = (track: MusicTrack) => {
+    const providerId = String(track.providerTrackId || track.id);
+    return savedMusicTracks.some((saved) => String(saved.providerTrackId || saved.id) === providerId);
+  };
+
+  const toggleMusicSaved = async (track: MusicTrack) => {
+    const provider = String(track.provider || "pardais").toLowerCase();
+    const providerTrackId = String(track.providerTrackId || track.id);
+    if (!providerTrackId || savingMusicIds.has(providerTrackId)) return;
+    if (provider !== "audius") {
+      alert("Only Audius songs can be saved from Search right now.");
+      return;
+    }
+    const alreadySaved = isMusicSaved(track);
+    setSavingMusicIds(prev => new Set(prev).add(providerTrackId));
+    try {
+      if (alreadySaved) {
+        const response = await authenticatedFetch(`/api/v1/music/saved/audius/${encodeURIComponent(providerTrackId)}`, { method: "DELETE" });
+        if (!response.ok) throw new Error(`Remove failed: ${response.status}`);
+        setSavedMusicTracks(prev => prev.filter(saved => String(saved.providerTrackId || saved.id) !== providerTrackId));
+      } else {
+        const response = await authenticatedFetch("/api/v1/music/saved", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(track)
+        });
+        if (!response.ok) throw new Error(`Save failed: ${response.status}`);
+        const data = await response.json();
+        if (data?.track) setSavedMusicTracks(prev => [data.track, ...prev.filter(saved => String(saved.providerTrackId || saved.id) !== providerTrackId)]);
+      }
+    } catch (error: any) {
+      console.warn("[PARDAIS MUSIC] Save toggle failed:", error);
+      alert(error?.message || "Unable to update saved song.");
+    } finally {
+      setSavingMusicIds(prev => { const next = new Set(prev); next.delete(providerTrackId); return next; });
+    }
+  };
+
+  const handleAdminMusicUpload = async (file: File | null) => {
+    if (!file || musicUploadBusy) return;
+    if (user?.isAdmin !== true) {
+      alert("Only an authorized Pardais admin can add music.");
+      return;
+    }
+    const allowed = /\.(mp3|aac|m4a|wav|ogg|webm|flac)$/i.test(file.name) || String(file.type || "").startsWith("audio/");
+    if (!allowed) {
+      alert("Please select an audio file (MP3, AAC, M4A, WAV, OGG, WebM or FLAC).");
+      return;
+    }
+    if (file.size > 25 * 1024 * 1024) {
+      alert("Music file must be 25 MB or smaller.");
+      return;
+    }
+    const title = window.prompt("Song title:", file.name.replace(/\.[^.]+$/, ""))?.trim();
+    if (!title) return;
+    const artist = window.prompt("Artist / Singer:", "Pardais Party")?.trim() || "Pardais Party";
+    const category = window.prompt("Category:", "Music")?.trim() || "Music";
+    const form = new FormData();
+    form.append("file", file);
+    form.append("title", title);
+    form.append("artist", artist);
+    form.append("category", category);
+    setMusicUploadBusy(true);
+    try {
+      const response = await authenticatedFetch("/api/v1/admin/music/upload", { method: "POST", body: form }, { username: user?.username, uid: user?.uid });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data?.success) throw new Error(data?.error || `Upload failed (${response.status})`);
+      await loadProductionMusicLibrary();
+      alert("🎵 Song added permanently to Pardais Music Library.");
+    } catch (error: any) {
+      console.error("[PARDAIS MUSIC] Upload error:", error);
+      alert(error?.message || "Music upload failed. Please try again.");
+    } finally {
+      setMusicUploadBusy(false);
+      if (musicUploadInputRef.current) musicUploadInputRef.current.value = "";
+    }
+  };
   const [userLiveShowExitOptions, setUserLiveShowExitOptions] = useState<boolean>(false);
 
   // 🚪 APP EXIT NAVIGATION & BACK EVENT INTERCEPTOR SYSTEM
@@ -4393,7 +4460,7 @@ export default function App() {
   const [userLivePkActive, setUserLivePkActive] = useState<boolean>(false);
   const [userLivePkConnected, setUserLivePkConnected] = useState<boolean>(false);
   const [userLivePkInvitePanelOpen, setUserLivePkInvitePanelOpen] = useState<boolean>(false);
-  const [userLiveCoHost, setUserLiveCoHost] = useState<{ username: string; displayName?: string; avatar: string; fans: string; level: number; vipLevel?: number; isCamOff?: boolean; userId?: string } | null>(null);
+  const [userLiveCoHost, setUserLiveCoHost] = useState<{ username: string; avatar: string; fans: string; level: number; vipLevel?: number; isCamOff?: boolean; userId?: string } | null>(null);
   const [userLiveAvailableHosts, setUserLiveAvailableHosts] = useState<Array<any>>([]);
   const [userLivePkState, setUserLivePkState] = useState<string>("idle"); // "idle" | "1v1_connected" | "pk_countdown" | "pk_active" | "pk_finished"
   const [userLivePkCountdown, setUserLivePkCountdown] = useState<number>(3);
@@ -4454,7 +4521,7 @@ export default function App() {
     return () => clearInterval(interval);
   }, []);
 
-  const liveBroadcasterName = clientView === "user-live" ? getDisplayName(user, "Broadcaster") : getDisplayName(activeHost, "Broadcaster");
+  const liveBroadcasterName = clientView === "user-live" ? user.username : (activeHost?.name || "Broadcaster");
   const liveBroadcasterAvatar = clientView === "user-live" ? (user.avatar || DEFAULT_USER.avatar) : (activeHost?.avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80");
   const liveBroadcasterLevel = clientView === "user-live" ? (user.userLevel || 1) : (activeHost?.hostLevel || activeHost?.level || 1);
   const [userLiveChatVisible, setUserLiveChatVisible] = useState<boolean>(true);
@@ -4520,14 +4587,7 @@ export default function App() {
             level: user.userLevel || 1,
             fans: user.fans || "12K fans",
             isLive: clientView === "user-live" || clientView === "live-room",
-            inPk: userLivePkActive || userLivePkState === "pk_active" || userLivePkState === "pk_countdown" || userLivePkState === "pk_finished",
-            liveCategory: clientView === "user-live"
-              ? ((userLivePkActive || userLivePkState === "pk_active" || userLivePkState === "pk_countdown" || userLivePkState === "pk_finished")
-                  ? "pk"
-                  : (userLivePkConnected || userLiveCoHost?.username ? "1v1" : (userLiveGuestModeActive ? "guest" : "solo")))
-              : "viewer",
-            guestModeActive: Boolean(userLiveGuestModeActive),
-            guestSeatCount: activeUserLiveGuestCount
+            inPk: userLivePkConnected || userLivePkActive
           })
         });
       } catch (e) {
@@ -4538,7 +4598,7 @@ export default function App() {
     sendPresence();
     const interval = setInterval(sendPresence, 3500);
     return () => clearInterval(interval);
-  }, [user.username, user.uid, user.avatar, user.userLevel, user.fans, clientView, userLivePkConnected, userLivePkActive, userLiveGuestModeActive, activeUserLiveGuestCount]);
+  }, [user.username, user.uid, user.avatar, user.userLevel, user.fans, clientView, userLivePkConnected, userLivePkActive]);
 
   // Real-time Available Hosts Polling (runs when invite drawer is open)
   useEffect(() => {
@@ -4604,7 +4664,6 @@ export default function App() {
                 const otherHost = (sess.hostA?.username || "").toLowerCase() === (user.username || "").toLowerCase() ? sess.hostB : sess.hostA;
                 setUserLiveCoHost({
                   username: otherHost.username,
-                  displayName: otherHost.displayName || otherHost.name || otherHost.fullName || otherHost.username,
                   userId: otherHost.userId || otherHost.username,
                   avatar: otherHost.avatar || "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=100&q=80",
                   level: Number(otherHost.level) || 1,
@@ -4646,7 +4705,6 @@ export default function App() {
             if (otherHost && (!userLivePkConnected || userLiveCoHost?.username !== otherHost.username || userLiveCoHost?.level !== otherHost.level)) {
               setUserLiveCoHost({
                 username: otherHost.username,
-                displayName: otherHost.displayName || otherHost.name || otherHost.fullName || otherHost.username,
                 userId: otherHost.userId || otherHost.username,
                 avatar: otherHost.avatar || "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=100&q=80",
                 level: Number(otherHost.level) || 1,
@@ -5332,55 +5390,16 @@ export default function App() {
     }
   }, [clientView, activeHost?.id, activeHost?.category]);
 
-  // Direct Guest Invitation Receiver. This is deliberately independent from the
-  // host-state polling so an invite is still delivered while the viewer is already
-  // inside the host's Solo Live room.
-  useEffect(() => {
-    if (clientView !== "live-room" || !activeHost?.id || !user?.username) return;
-
-    let cancelled = false;
-    const pollGuestInvite = async () => {
-      try {
-        const res = await fetch(`/api/v1/hosts/${encodeURIComponent(activeHost.id)}/invites/${encodeURIComponent(user.username)}`);
-        if (!res.ok) return;
-        const data = await res.json();
-        if (cancelled) return;
-        if (data?.pendingInvite) {
-          setViewerInvitationPending({
-            seatId: Number(data.pendingInvite.seatId) || 1,
-            hostName: data.pendingInvite.hostName || activeHost.name || "Host"
-          });
-          setViewerRequestStatus("pending");
-        }
-      } catch (_) {}
-    };
-
-    pollGuestInvite();
-    const interval = window.setInterval(pollGuestInvite, 700);
-    return () => { cancelled = true; window.clearInterval(interval); };
-  }, [clientView, activeHost?.id, activeHost?.name, user?.username]);
-
   // Host Side Live State Synchronizer (Pushes camera status, pulls viewers, comments, gifts, likes & join events in real-time)
   useEffect(() => {
     if (clientView !== "user-live" || !user?.username) return;
 
     const hostId = `h-${user.uniqueId || user.username || "pardais_1001"}`;
     const syncHostState = () => {
-      // Canonical live mode is mutually exclusive and is what every viewer should see.
-      const isPk = Boolean(
-        userLivePkActive ||
-        userLivePkState === "pk_active" ||
-        userLivePkState === "pk_countdown" ||
-        userLivePkState === "pk_finished"
-      );
-      const isOneVsOne = !isPk && Boolean(userLivePkConnected || userLiveCoHost?.username);
-      const isGuest = !isPk && !isOneVsOne && Boolean(
-        userLiveGuestModeActive ||
-        (Array.isArray(userLiveGuestSeats) && userLiveGuestSeats.some(s => s.name !== null))
-      );
-      const liveMode = isPk ? "pk" : (isOneVsOne ? "1v1" : (isGuest ? "guest" : "solo"));
-      const currentCategory = liveMode === "pk" ? "pk" : (liveMode === "1v1" ? "1v1" : (liveMode === "guest" ? "guest" : "video"));
-      const currentSubCategory = liveMode === "pk" ? "PK" : (liveMode === "1v1" ? "1v1" : (liveMode === "guest" ? "Guest" : "Solo"));
+      const isPk = Boolean(userLivePkActive || userLivePkConnected || userLiveCoHost?.username);
+      const isGuest = Boolean(userLiveGuestModeActive || (Array.isArray(userLiveGuestSeats) && userLiveGuestSeats.some(s => s.name !== null)));
+      const currentCategory = isPk ? "pk" : (isGuest ? "guest" : "video");
+      const currentSubCategory = isPk ? (prepLiveCategory === "1v1" ? "1v1" : "PK") : (isGuest ? "Guest" : (prepLiveCategory || "Solo"));
 
       fetch(`/api/v1/hosts/${hostId}`, {
         method: "PUT",
@@ -5388,8 +5407,7 @@ export default function App() {
         body: JSON.stringify({
           id: hostId,
           hostUsername: user.username,
-          displayName: getDisplayName(user),
-          name: getDisplayName(user),
+          name: user.username,
           avatar: user.avatar,
           hostUid: user.uniqueId || user.username,
           hostLevel: user.userLevel || 1,
@@ -5397,7 +5415,6 @@ export default function App() {
           vipLevel: user.vipLevel || 0,
           cameraEnabled: userLiveCam,
           isCamOff: !userLiveCam,
-          liveMode,
           pkActive: isPk,
           inPk: isPk,
           pkScoreHost: userLivePkScoreMy,
@@ -5432,25 +5449,6 @@ export default function App() {
           if (Array.isArray(data.connectedViewers)) {
             setUserLiveViewerList(data.connectedViewers);
           }
-          // Keep host-side guest seats synchronized with the authoritative backend.
-          // This prevents the 1-second host PUT loop from overwriting a guest seat
-          // that was just accepted by the invited viewer.
-          if (Array.isArray(data.guestSeats)) {
-            setUserLiveGuestSeats(data.guestSeats);
-          }
-          if (Array.isArray(data.guestRequests)) {
-            setUserLiveGuestRequests(data.guestRequests.map((r: any) => ({
-              id: String(r.id || `${r.username}-${r.timestamp || Date.now()}`),
-              username: String(r.username || "Viewer"),
-              avatar: String(r.avatar || ""),
-              level: Number(r.level || r.userLevel || 1),
-              vipLevel: Number(r.vipLevel || 0),
-              coins: Number(r.coins || 0),
-              seatId: Number(r.seatId || 1)
-            })));
-          }
-          if (Array.isArray(data.pkHostASupporters)) setPkHostASupporters(data.pkHostASupporters);
-          if (Array.isArray(data.pkHostBSupporters)) setPkHostBSupporters(data.pkHostBSupporters);
           // Synchronize total likes
           if (data.likes !== undefined) {
             setUserLiveLikes(data.likes);
@@ -5618,35 +5616,17 @@ export default function App() {
             triggerJoinNotif(data.lastJoinEvent.username, data.lastJoinEvent.userLevel, data.lastJoinEvent.vipLevel);
           }
 
-          // Canonical live mode synchronization. The server's liveMode is the
-          // single source of truth for viewers: solo, guest, 1v1 or pk.
-          const liveMode = String(
-            data.liveMode ||
-            (data.category === "pk" ? "pk" :
-              (data.category === "1v1" || data.subCategory === "1v1" ? "1v1" :
-                (data.category === "guest" || data.guestModeActive ? "guest" : "solo")))
-          ).toLowerCase();
-          const isHostPkActive = liveMode === "pk";
-          const isHostOneVsOne = liveMode === "1v1";
-          const isHostGuestMode = liveMode === "guest";
-
-          // Immediately clear stale mode state when the host changes mode.
-          // This is what prevents a viewer from remaining on the previous PK
-          // screen after the host returns to 1v1/guest/solo.
-          setUserLivePkActive(isHostPkActive);
-          setViewerLiveGuestModeActive(isHostGuestMode);
-          if (liveMode === "solo") {
-            setUserLivePkState("idle");
-            setUserLivePkCountdown(0);
-            setUserLivePkWinner(null);
-            setViewerLiveGuestSeats([]);
-          } else if (isHostOneVsOne) {
-            setUserLivePkState("1v1_connected");
-            setUserLivePkCountdown(0);
-            setUserLivePkWinner(null);
-            setViewerLiveGuestSeats([]);
-          } else if (isHostGuestMode) {
-            setUserLivePkState("idle");
+          // Sync PK battle score & active state
+          const isHostPkActive = Boolean(
+            data.pkActive || 
+            data.inPk || 
+            data.category === "pk" || 
+            data.subCategory === "PK" || 
+            data.subCategory === "1v1" || 
+            data.coHostUsername
+          );
+          if (data.pkActive !== undefined || data.inPk !== undefined || isHostPkActive) {
+            setUserLivePkActive(isHostPkActive);
           }
           if (data.pkScoreHost !== undefined) {
             setPkScoreHost(data.pkScoreHost);
@@ -5663,39 +5643,19 @@ export default function App() {
           if (data.pkTimer !== undefined) {
             setPkTimer(data.pkTimer);
           }
-          if (liveMode === "pk") {
-            if (Array.isArray(data.pkHostASupporters)) setPkHostASupporters(data.pkHostASupporters);
-            if (Array.isArray(data.pkHostBSupporters)) setPkHostBSupporters(data.pkHostBSupporters);
-          } else {
-            setPkHostASupporters([]);
-            setPkHostBSupporters([]);
-          }
 
-          // Sync guest seats and pending join requests from the authoritative host snapshot.
-          if (isHostGuestMode && Array.isArray(data.guestSeats)) {
+          // Sync guest mode state & seats
+          const isHostGuestMode = Boolean(
+            data.guestModeActive || 
+            data.subCategory === "Guest" || 
+            data.subCategory === "Multi-guest" || 
+            data.category === "guest" || 
+            (Array.isArray(data.guestSeats) && data.guestSeats.some((s: any) => s.name !== null))
+          );
+          setViewerLiveGuestModeActive(isHostGuestMode);
+
+          if (Array.isArray(data.guestSeats)) {
             setViewerLiveGuestSeats(data.guestSeats);
-          }
-          if (data.lastGuestSeatEvent && data.lastGuestSeatEvent.timestamp > (lastViewerJoinEventTimestamp.current || 0)) {
-            const guestEventUser = String(data.lastGuestSeatEvent.username || "").toLowerCase();
-            if (guestEventUser === String(user.username || "").toLowerCase()) {
-              if (data.lastGuestSeatEvent.type === "rejected") {
-                setViewerRequestStatus("none");
-              } else if (data.lastGuestSeatEvent.type === "accepted") {
-                setViewerRequestStatus("accepted");
-                setViewerLiveGuestModeActive(true);
-              }
-            }
-          }
-          if (Array.isArray(data.guestRequests)) {
-            setUserLiveGuestRequests(data.guestRequests.map((r: any) => ({
-              id: String(r.id || `${r.username}-${r.timestamp || Date.now()}`),
-              username: String(r.username || "Viewer"),
-              avatar: String(r.avatar || ""),
-              level: Number(r.level || r.userLevel || 1),
-              vipLevel: Number(r.vipLevel || 0),
-              coins: Number(r.coins || 0),
-              seatId: Number(r.seatId || 1)
-            })));
           }
 
           // Check for pending direct host seat invitations
@@ -5744,19 +5704,16 @@ export default function App() {
               level: data.hostLevel || data.level || prev.level || 1,
               cameraEnabled: isCamOn,
               isCamOff: !isCamOn,
-              liveMode,
-              category: liveMode === "pk" ? "pk" : (liveMode === "1v1" ? "1v1" : (liveMode === "guest" ? "guest" : "video")),
-              subCategory: liveMode === "pk" ? "PK" : (liveMode === "1v1" ? "1v1" : (liveMode === "guest" ? "Guest" : "Solo")),
+              category: data.category || prev.category,
+              subCategory: data.subCategory || prev.subCategory,
               guestModeActive: isHostGuestMode,
-              guestSeats: isHostGuestMode ? (Array.isArray(data.guestSeats) ? data.guestSeats : prev.guestSeats || []) : [],
-              coHostUsername: (liveMode === "pk" || liveMode === "1v1") ? (data.coHostUsername !== undefined ? data.coHostUsername : prev.coHostUsername) : undefined,
-              coHostAvatar: (liveMode === "pk" || liveMode === "1v1") ? (data.coHostAvatar !== undefined ? data.coHostAvatar : prev.coHostAvatar) : undefined,
-              coHostVipLevel: (liveMode === "pk" || liveMode === "1v1") ? (data.coHostVipLevel !== undefined ? Number(data.coHostVipLevel) : Number(prev.coHostVipLevel || 0)) : 0,
-              opponentName: (liveMode === "pk" || liveMode === "1v1") ? (data.coHostUsername || data.opponentName || prev.opponentName) : undefined,
-              opponentAvatar: (liveMode === "pk" || liveMode === "1v1") ? (data.coHostAvatar || data.opponentAvatar || prev.opponentAvatar) : undefined,
+              coHostUsername: data.coHostUsername !== undefined ? data.coHostUsername : prev.coHostUsername,
+              coHostAvatar: data.coHostAvatar !== undefined ? data.coHostAvatar : prev.coHostAvatar,
+              coHostVipLevel: data.coHostVipLevel !== undefined ? Number(data.coHostVipLevel) : Number(prev.coHostVipLevel || 0),
+              opponentName: data.coHostUsername || data.opponentName || prev.opponentName,
+              opponentAvatar: data.coHostAvatar || data.opponentAvatar || prev.opponentAvatar,
               inPk: isHostPkActive,
-              pkActive: isHostPkActive,
-              pkState: isHostPkActive ? (data.pkState || prev.pkState) : (liveMode === "1v1" ? "1v1_connected" : "idle")
+              pkActive: isHostPkActive
             };
           });
         })
@@ -5928,12 +5885,6 @@ export default function App() {
           .then(res => res.json())
           .then(userData => {
             if (userData && userData.username) {
-              if (userData.notificationSettings && typeof userData.notificationSettings === "object") {
-                const merged = { ...notifSettingsRef.current, ...userData.notificationSettings };
-                setNotifSettings(merged);
-                notifSettingsRef.current = merged;
-                localStorage.setItem("pardais_notif_settings", JSON.stringify(merged));
-              }
               setUser(prev => ({ ...prev, ...userData }));
               if (Array.isArray(userData.followingUsernames)) {
                 setFollowedUsers(userData.followingUsernames.map((v: any) => String(v)));
@@ -5951,7 +5902,7 @@ export default function App() {
         .then(data => {
           if (Array.isArray(data)) {
             setAppNotifications(data);
-            setHasUnreadNotifications(data.some((n: any) => n.isNew && isNotificationEnabled(n)));
+            setHasUnreadNotifications(data.some(n => n.isNew));
           }
         })
         .catch(err => console.error("Error loading notifications:", err));
@@ -6168,19 +6119,31 @@ export default function App() {
             setAppNotifications(prev => {
               const prevIds = new Set((prev || []).map(n => n.id));
               const newlyArrived = data.filter(n => n.isNew && !prevIds.has(n.id));
-              const enabledNew = newlyArrived.filter((n: any) => isNotificationEnabled(n));
 
-              if (enabledNew.length > 0) {
-                const latest = enabledNew[0];
-                if (notifSettingsRef.current.sound !== false) playNotificationChime();
+              if (newlyArrived.length > 0) {
+                const latest = newlyArrived[0];
+                if (notifSettings.sound !== false) {
+                  playNotificationChime();
+                }
                 setActiveToastNotif(latest);
                 setHasUnreadNotifications(true);
-                if (notifSettingsRef.current.push !== false && typeof window !== "undefined" && "Notification" in window && Notification.permission === "granted") {
-                  try { new Notification(latest.title || "Pardais Alert", { body: latest.text, icon: latest.userAvatar || "/icon.png" }); } catch (e) {}
+
+                if (
+                  notifSettings.push !== false &&
+                  typeof window !== "undefined" &&
+                  "Notification" in window &&
+                  Notification.permission === "granted"
+                ) {
+                  try {
+                    new Notification(latest.title || "Pardais Alert", {
+                      body: latest.text,
+                      icon: latest.userAvatar || "/icon.png"
+                    });
+                  } catch (e) {}
                 }
               }
 
-              setHasUnreadNotifications(data.some((n: any) => n.isNew && isNotificationEnabled(n)));
+              setHasUnreadNotifications(data.some(n => n.isNew));
               return data;
             });
           }
@@ -6396,14 +6359,13 @@ export default function App() {
     const rect = e.currentTarget.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
-    const visualY = Math.min(rect.height - 120, y + 70);
 
     const heartId = Date.now().toString() + Math.random();
     const colors = ["#ff007f", "#ff3366", "#ef4444", "#ec4899", "#d946ef", "#8b5cf6", "#f59e0b"];
     const randomColor = colors[Math.floor(Math.random() * colors.length)];
 
     setActiveHearts(prev => [...prev, { id: heartId, left: (x / rect.width) * 100 }]);
-    setDoubleTapHearts(prev => [...prev, { id: heartId, x, y: visualY, color: randomColor }]);
+    setDoubleTapHearts(prev => [...prev, { id: heartId, x, y, color: randomColor }]);
 
     setTimeout(() => {
       setActiveHearts(prev => prev.filter(h => h.id !== heartId));
@@ -6411,11 +6373,15 @@ export default function App() {
     }, 1500);
 
     const isPk = Boolean(
-      activeHost?.category === "pk" ||
-      activeHost?.subCategory === "pk" ||
+      activeHost?.category === "pk" || 
+      activeHost?.subCategory === "pk" || 
+      activeHost?.category === "1v1" ||
+      activeHost?.subCategory === "1v1" ||
       activeHost?.inPk ||
-      activeHost?.pkActive ||
-      userLivePkActive
+      activeHost?.coHostUsername ||
+      activeHost?.coHostName ||
+      userLivePkActive ||
+      userLivePkConnected
     );
 
     // Increment room likes count
@@ -6436,8 +6402,30 @@ export default function App() {
 
     // PK Match Score: Call server tap endpoint
     if (isPk) {
-      // Do not decide the PK side on the client. The server resolves the side
-      // from the host whose live stream the user is currently watching.
+      let roomSide = "hostA";
+
+      if (clientView === "user-live") {
+        const myName = (user?.username || "").toLowerCase();
+        const coHostName = (userLiveCoHost?.username || "").toLowerCase();
+        if (myName && coHostName && myName === coHostName) {
+          roomSide = "hostB";
+        }
+      } else {
+        const broadHost = (activeHost?.hostUsername || activeHost?.name || "").toLowerCase();
+        const coHost = (activeHost?.coHostUsername || activeHost?.coHostName || activeHost?.opponentName || "").toLowerCase();
+        if (broadHost && coHost && broadHost === coHost) {
+          roomSide = "hostB";
+        }
+      }
+
+      if (roomSide === "hostB") {
+        setPkScoreOpponent(prev => prev + 1);
+        setUserLivePkScoreOther(prev => prev + 1);
+      } else {
+        setPkScoreHost(prev => prev + 1);
+        setUserLivePkScoreMy(prev => prev + 1);
+      }
+
       fetch("/api/v1/pk/tap", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -6446,6 +6434,7 @@ export default function App() {
           username: user.username,
           userId: user.uid || user.username,
           hostUsername: activeHost?.hostUsername || activeHost?.name || user.username,
+          targetHostSide: roomSide
         })
       }).then(res => res.json()).then(resData => {
         if (resData.success && resData.session) {
@@ -7247,11 +7236,6 @@ export default function App() {
           setUser(prev => ({
             ...prev,
             coins: data.remainingCoins !== undefined ? data.remainingCoins : prev.coins,
-            xp: data.xp !== undefined ? data.xp : prev.xp,
-            coinSpendTotal: data.coinSpendTotal !== undefined ? data.coinSpendTotal : prev.coinSpendTotal,
-            userLevel: data.userLevel !== undefined ? data.userLevel : prev.userLevel,
-            level: data.level !== undefined ? data.level : (data.userLevel !== undefined ? data.userLevel : prev.level),
-            vipLevel: data.vipLevel !== undefined ? data.vipLevel : prev.vipLevel,
             ...(data.recipientCreatorBalance !== undefined && data.recipientRecipientUsername && data.recipientRecipientUsername === prev.username ? { diamonds: data.recipientCreatorBalance } : {})
           }));
           if (data.recipientCreatorBalance !== undefined && String(data.recipient || "").toLowerCase() === String(user.username || "").toLowerCase()) {
@@ -7489,7 +7473,12 @@ export default function App() {
   // User Solo Live Broadcaster Handlers
   const startUserSoloLive = () => {
     if (!requireAuth("start live streaming as a host")) return;
-    // Level-5 live-stream restriction removed for testing rollout. Any authenticated user can start Solo Live.
+    const isAdmin = isAuthorizedAdmin(user) || isAuthorizedAdmin(user?.email || user?.username);
+    const userLvl = Number(user?.userLevel || user?.level || 1);
+    if (!isAdmin && userLvl < 5) {
+      alert(`🔒 Live Stream Lock (Minimum Level 5 Required)!\n\nLive stream turn on krny k liye Level 5 zarori hai!\n\nAap ka current level: Level ${userLvl}.\nCoins spend kare'n (games, party rooms, or reels) taake aap ka level fast level-up ho sake! 🚀`);
+      return;
+    }
 
     requestAppPermission(
       "camera",
@@ -7507,7 +7496,13 @@ export default function App() {
   };
 
   const actuallyGoLive = () => {
-    // Level-5 live-stream restriction removed for testing rollout.
+    const isAdmin = isAuthorizedAdmin(user) || isAuthorizedAdmin(user?.email || user?.username);
+    const userLvl = Number(user?.userLevel || user?.level || 1);
+    if (!isAdmin && userLvl < 5) {
+      alert(`🔒 Live Stream Lock!\n\nLive stream turn on krny k liye Level 5 zarori hai! (Aap ka level: ${userLvl})`);
+      setClientView("feed");
+      return;
+    }
 
     setClientView("user-live");
     setUserLiveDuration(0); 
@@ -7699,12 +7694,11 @@ export default function App() {
     const newHostData = {
       id: hostId,
       hostUserId: user.uniqueId || user.username || user.id,
-      hostName: getDisplayName(user, "Pardais Broadcaster"),
+      hostName: user.username || user.fullName || "Pardais Broadcaster",
       hostAvatar: user.avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80",
       hostUsername: user.username,
-      displayName: getDisplayName(user, "Pardais Broadcaster"),
       hostUid: user.uniqueId || user.username,
-      name: getDisplayName(user, "Pardais Broadcaster"),
+      name: user.username || "Pardais Broadcaster",
       role: "Broadcaster",
       avatar: user.avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80",
       viewers: 0,
@@ -8333,36 +8327,38 @@ export default function App() {
     }
 
     if (!data || !data.token || !data.user) {
-      // NEVER synthesize a new Level-1/zero-wallet profile when the backend is
-      // temporarily unavailable. That old fallback could make an existing
-      // Google account look freshly created after an app/backend update.
-      // Restore the same local account snapshot if it belongs to this UID/email;
-      // otherwise stop here and ask the user to retry once the API is reachable.
-      let savedProfile: UserProfile | null = null;
-      try {
-        const raw = localStorage.getItem("pardais_user_profile");
-        if (raw) {
-          const parsed = JSON.parse(raw);
-          const sameUid = Boolean(parsed?.uid && userUid && String(parsed.uid) === String(userUid));
-          const sameEmail = Boolean(parsed?.email && userEmail && String(parsed.email).toLowerCase() === String(userEmail).toLowerCase());
-          if (sameUid || sameEmail) savedProfile = parsed;
-        }
-      } catch {}
-
-      if (savedProfile && (savedProfile.username || savedProfile.uniqueId)) {
-        console.warn("[GOOGLE AUTH] Backend unavailable; preserving existing local account state instead of creating a reset profile.");
-        data = {
-          token: localStorage.getItem("pardais_auth_token") || "",
-          user: savedProfile,
-          isNewUser: false,
-          needsProfileCompletion: false,
-          offlineRestore: true
-        };
-      } else {
-        setLoginError("Pardais server is temporarily unavailable. Please try again in a moment.");
-        setChooserError("Pardais server is temporarily unavailable. Please try again in a moment.");
-        return;
-      }
+      // Keep Google signup resilient, but never mark a Google account as
+      // permanently registered until the user chooses a username and password.
+      const fallbackToken = `pardais_session_${userUid}_${Math.random().toString(36).substring(2, 10)}`;
+      const fallbackUser: UserProfile = {
+        uid: userUid,
+        email: userEmail,
+        username: "",
+        uniqueId: `pardes_${userEmail.toLowerCase().replace(/[^a-zA-Z0-9]/g, "").slice(0, 10).toUpperCase()}`,
+        fullName: userDisplayName || "",
+        avatar: userPhotoURL,
+        coverPhoto: "",
+        bio: "",
+        gender: "",
+        country: "Pakistan",
+        language: "Urdu / Hinglish",
+        familyId: "",
+        agencyId: "",
+        isVerified: true,
+        isBanned: false,
+        twoFactorEnabled: false,
+        coins: 0,
+        diamonds: 0,
+        vipLevel: 0,
+        userLevel: 1,
+        hostLevel: 1,
+        wealthLevel: 1,
+        xp: 0,
+        authProvider: "google",
+        accountStatus: "pending_profile",
+        profileCompleted: false
+      } as any;
+      data = { token: fallbackToken, user: fallbackUser, isNewUser: true, needsProfileCompletion: true };
     }
 
     localStorage.setItem("pardais_auth_token", data.token);
@@ -10814,15 +10810,7 @@ export default function App() {
                           if (resp.ok) {
                             const data = await resp.json();
                             if (data.remainingCoins !== undefined) {
-                              setUser(prev => ({
-                                ...prev,
-                                coins: data.remainingCoins,
-                                xp: data.xp !== undefined ? data.xp : prev.xp,
-                                coinSpendTotal: data.coinSpendTotal !== undefined ? data.coinSpendTotal : prev.coinSpendTotal,
-                                userLevel: data.userLevel !== undefined ? data.userLevel : prev.userLevel,
-                                level: data.level !== undefined ? data.level : (data.userLevel !== undefined ? data.userLevel : prev.level),
-                                vipLevel: data.vipLevel !== undefined ? data.vipLevel : prev.vipLevel
-                              }));
+                              setUser(prev => ({ ...prev, coins: data.remainingCoins }));
                             }
                             if (data.giftEvent) {
                               processIncomingGiftEvent(data.giftEvent);
@@ -11217,12 +11205,12 @@ export default function App() {
                                                   <img 
                                                     src={seat.avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80"} 
                                                     className="w-full h-full object-cover cursor-pointer hover:scale-110 transition-transform" 
-                                                    alt={seat.displayName || seat.name}
+                                                    alt={seat.name}
                                                     onClick={(e) => {
                                                       e.stopPropagation();
                                                       handleOpenPartyUserProfile(seat.name, seat.avatar, seat.id, undefined, Number(seat.vipLevel || 0));
                                                     }}
-                                                    title={`Click to view ${(seat.displayName || seat.name)}'s Profile`}
+                                                    title={`Click to view @${seat.name}'s Profile`}
                                                   />
                                                 </VipAnimatedFrame>
                                               ) : (
@@ -11281,7 +11269,7 @@ export default function App() {
                                         {/* Seated occupant name, seat label & per-seat gifting */}
                                         <div className="flex flex-col items-center leading-none max-w-[72px] mt-1">
                                           <p className="text-[8.5px] font-extrabold text-amber-100/95 truncate text-center font-sans tracking-tight">
-                                            {isOccupied ? (isMe ? "You" : (seat.displayName || seat.name)) : `Seat ${seat.id}`}
+                                            {isOccupied ? (isMe ? "You" : seat.name) : `Seat ${seat.id}`}
                                           </p>
                                           <span className="text-[6.5px] text-amber-400/80 font-mono font-bold mt-0.5">#{seat.id}</span>
                                           <span
@@ -11770,7 +11758,7 @@ export default function App() {
                                     <div key={viewer.username} className="flex items-center justify-between p-2 rounded-xl bg-black/40 border border-white/5">
                                       <div className="flex items-center space-x-2 bg-transparent">
                                         <img src={viewer.avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80"} className="w-7 h-7 rounded-full object-cover border border-amber-400/40" alt="avatar" />
-                                        <p className="text-[9px] font-bold text-white uppercase font-mono bg-transparent">{viewer.displayName || viewer.username}</p>
+                                        <p className="text-[9px] font-bold text-white uppercase font-mono bg-transparent">@{viewer.username}</p>
                                       </div>
                                       <button
                                         onClick={async () => {
@@ -11929,18 +11917,50 @@ export default function App() {
 
                           {/* 🎵 PARTY BACKGROUND MUSIC LIBRARY */}
                           {showPartyMusicLibrary && (
-                            <div className="absolute inset-x-3 bottom-16 z-[70] bg-[#090912]/98 border-2 border-amber-400/50 rounded-3xl p-3.5 shadow-[0_0_35px_rgba(245,158,11,0.28)] backdrop-blur-xl flex flex-col max-h-[68%] animate-slide-up">
+                            <div className="absolute inset-x-3 bottom-16 z-[70] bg-[#090912]/98 border-2 border-amber-400/50 rounded-3xl p-3.5 shadow-[0_0_35px_rgba(245,158,11,0.28)] backdrop-blur-xl flex flex-col max-h-[72%] animate-slide-up">
                               <div className="flex items-center justify-between border-b border-white/10 pb-2.5 mb-2.5">
                                 <div className="flex items-center gap-2 text-left">
                                   <div className="w-8 h-8 rounded-xl bg-amber-500/15 border border-amber-400/30 flex items-center justify-center">
                                     <Music className="w-4 h-4 text-amber-300" />
                                   </div>
                                   <div>
-                                    <p className="text-[10px] font-black text-white uppercase tracking-widest font-mono">Party Music Library</p>
-                                    <p className="text-[7.5px] text-gray-400">Background music stays live while voices continue.</p>
+                                    <p className="text-[10px] font-black text-white uppercase tracking-widest font-mono">Party Music</p>
+                                    <p className="text-[7.5px] text-gray-400">Search, save and play music in your Party.</p>
                                   </div>
                                 </div>
-                                <button onClick={() => setShowPartyMusicLibrary(false)} className="w-6 h-6 rounded-full bg-white/5 text-gray-400 hover:text-white flex items-center justify-center cursor-pointer">✕</button>
+                                <div className="flex items-center gap-1.5">
+                                  {user?.isAdmin === true && (
+                                    <>
+                                      <input
+                                        ref={musicUploadInputRef}
+                                        type="file"
+                                        accept="audio/*,.mp3,.aac,.m4a,.wav,.ogg,.webm,.flac"
+                                        className="hidden"
+                                        onChange={(e) => handleAdminMusicUpload(e.target.files?.[0] || null)}
+                                      />
+                                      <button
+                                        onClick={() => musicUploadInputRef.current?.click()}
+                                        disabled={musicUploadBusy}
+                                        className="px-2 py-1.5 rounded-xl bg-amber-500 text-black text-[7px] font-black uppercase disabled:opacity-50 cursor-pointer"
+                                      >{musicUploadBusy ? "Uploading…" : "+ Add Song"}</button>
+                                    </>
+                                  )}
+                                  <button onClick={() => setShowPartyMusicLibrary(false)} className="w-6 h-6 rounded-full bg-white/5 text-gray-400 hover:text-white flex items-center justify-center cursor-pointer">✕</button>
+                                </div>
+                              </div>
+
+                              <div className="grid grid-cols-3 gap-1.5 mb-2.5">
+                                {[
+                                  ["library", "Library"],
+                                  ["audius", "🔎 Search"],
+                                  ["saved", "📌 Saved"]
+                                ].map(([key, label]) => (
+                                  <button
+                                    key={key}
+                                    onClick={() => setMusicSource(key as "library" | "audius" | "saved")}
+                                    className={`py-1.5 rounded-xl text-[7.5px] font-black uppercase tracking-wide border cursor-pointer ${musicSource === key ? "bg-amber-500 text-black border-amber-300" : "bg-white/[0.03] text-gray-400 border-white/10"}`}
+                                  >{label}</button>
+                                ))}
                               </div>
 
                               <div className="flex items-center gap-2 mb-2.5">
@@ -11949,7 +11969,7 @@ export default function App() {
                                   <input
                                     value={partyMusicSearch}
                                     onChange={(e) => setPartyMusicSearch(e.target.value)}
-                                    placeholder="Search songs, artists, categories..."
+                                    placeholder={musicSource === "audius" ? "Search Audius songs / artists..." : musicSource === "saved" ? "Search saved songs..." : "Search Party library..."}
                                     className="flex-1 bg-transparent text-[9px] text-white placeholder-gray-600 focus:outline-none"
                                   />
                                 </div>
@@ -11962,27 +11982,58 @@ export default function App() {
                               </div>
 
                               <div className="flex-1 overflow-y-auto space-y-1.5 pr-1">
-                                {MOCK_TRACKS.filter((track) => {
+                                {musicSource === "audius" && audiusSearchLoading ? (
+                                  <div className="py-8 text-center text-[8px] text-gray-500 font-mono">Searching Audius…</div>
+                                ) : musicSource === "saved" && savedMusicLoading ? (
+                                  <div className="py-8 text-center text-[8px] text-gray-500 font-mono">Loading your Saved Songs…</div>
+                                ) : (() => {
+                                  const sourceTracks = musicSource === "audius" ? audiusSearchResults : musicSource === "saved" ? savedMusicTracks : musicLibraryTracks;
                                   const q = partyMusicSearch.trim().toLowerCase();
-                                  return !q || `${track.title} ${track.artist} ${track.category}`.toLowerCase().includes(q);
-                                }).map(track => {
-                                  const active = partyMusicTrack?.id === track.id;
-                                  return (
-                                    <button
-                                      key={track.id}
-                                      onClick={() => { setPartyMusicTrack(track); setPartyMusicPlaying(true); }}
-                                      className={`w-full flex items-center gap-2.5 p-2 rounded-xl border text-left transition-all cursor-pointer ${active ? "bg-amber-500/10 border-amber-400/50" : "bg-white/[0.02] border-white/5 hover:bg-white/5"}`}
-                                    >
-                                      <img src={track.cover || "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=100"} className="w-9 h-9 rounded-lg object-cover border border-white/10" alt="" />
-                                      <span className="min-w-0 flex-1">
-                                        <span className={`block text-[9px] font-black truncate ${active ? "text-amber-300" : "text-white"}`}>{track.title}</span>
-                                        <span className="block text-[7px] text-gray-400 truncate">{track.artist} • {track.category}</span>
-                                      </span>
-                                      <span className="text-[7px] text-gray-500 font-mono">{track.duration}</span>
-                                      <span className="text-xs">{active && partyMusicPlaying ? "⏸️" : "▶️"}</span>
-                                    </button>
-                                  );
-                                })}
+                                  const tracks = sourceTracks.filter((track) => !q || `${track.title} ${track.artist} ${track.category}`.toLowerCase().includes(q));
+                                  if (musicSource === "audius" && q.length < 2) {
+                                    return <div className="py-8 text-center text-[8px] text-gray-500 font-mono">Type at least 2 letters to search Audius.</div>;
+                                  }
+                                  if (tracks.length === 0) {
+                                    return <div className="py-8 text-center text-[8px] text-gray-500 font-mono">{musicSource === "saved" ? "No saved songs yet. Search Audius and tap 📌 Save." : musicSource === "audius" ? "No Audius songs found." : "No songs added yet. Authorized admin can use + Add Song."}</div>;
+                                  }
+                                  return tracks.map(track => {
+                                    const active = partyMusicTrack?.id === track.id;
+                                    const saved = isMusicSaved(track);
+                                    const providerId = String(track.providerTrackId || track.id);
+                                    return (
+                                      <div
+                                        key={track.id}
+                                        className={`w-full flex items-center gap-2.5 p-2 rounded-xl border text-left transition-all ${active ? "bg-amber-500/10 border-amber-400/50" : "bg-white/[0.02] border-white/5 hover:bg-white/5"}`}
+                                      >
+                                        <button
+                                          onClick={() => { setPartyMusicTrack(track); setPartyMusicPlaying(true); }}
+                                          className="w-9 h-9 rounded-lg overflow-hidden shrink-0 border border-white/10 cursor-pointer"
+                                        >
+                                          <img src={track.cover || "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=100"} className="w-full h-full object-cover" alt="" />
+                                        </button>
+                                        <button
+                                          onClick={() => { setPartyMusicTrack(track); setPartyMusicPlaying(true); }}
+                                          className="min-w-0 flex-1 text-left cursor-pointer"
+                                        >
+                                          <span className={`block text-[9px] font-black truncate ${active ? "text-amber-300" : "text-white"}`}>{track.title}</span>
+                                          <span className="block text-[7px] text-gray-400 truncate">{track.artist} • {track.category}{track.source ? ` • ${track.source}` : ""}</span>
+                                        </button>
+                                        {track.provider === "audius" && (
+                                          <button
+                                            onClick={() => toggleMusicSaved(track)}
+                                            disabled={savingMusicIds.has(providerId)}
+                                            title={saved ? "Remove from Saved Songs" : "Save Song"}
+                                            className={`w-7 h-7 rounded-lg border flex items-center justify-center text-[11px] cursor-pointer disabled:opacity-50 ${saved ? "bg-amber-500/15 border-amber-400/50 text-amber-300" : "bg-white/5 border-white/10 text-gray-400"}`}
+                                          >{savingMusicIds.has(providerId) ? "…" : saved ? "📌" : "☆"}</button>
+                                        )}
+                                        <button
+                                          onClick={() => { if (active) setPartyMusicPlaying(v => !v); else { setPartyMusicTrack(track); setPartyMusicPlaying(true); } }}
+                                          className="w-7 h-7 rounded-lg bg-amber-500/10 border border-amber-400/20 text-[10px] text-amber-300 cursor-pointer"
+                                        >{active && partyMusicPlaying ? "⏸" : "▶"}</button>
+                                      </div>
+                                    );
+                                  });
+                                })()}
                               </div>
 
                               {partyMusicTrack && (
@@ -12408,7 +12459,7 @@ export default function App() {
                               <div className="flex items-center space-x-1.5">
                                 {liveRoomTopGifters.map((viewer, idx) => (
                                   <div key={viewer.id || idx} className="flex flex-col items-center bg-transparent">
-                                    <img src={viewer.avatar || DEFAULT_USER.avatar} className="w-6.5 h-6.5 rounded-full border border-white/20 object-cover shadow" title={viewer.displayName || viewer.username} />
+                                    <img src={viewer.avatar || DEFAULT_USER.avatar} className="w-6.5 h-6.5 rounded-full border border-white/20 object-cover shadow" title={viewer.username} />
                                     <span className="text-[7px] text-gray-200 font-black font-mono scale-90 mt-0.5">
                                       {viewer.coinsContributed >= 1000 ? `${(viewer.coinsContributed / 1000).toFixed(1)}K` : viewer.coinsContributed}
                                     </span>
@@ -12602,28 +12653,69 @@ export default function App() {
                                 {viewerLiveGuestSeats.map(seat => (
                                   <div
                                     key={seat.id}
-                                    onClick={async () => {
+                                    onClick={() => {
                                       if (!seat.name) {
-                                        if (!activeHost?.id || !user?.username) return;
-                                        try {
-                                          const res = await fetch(`/api/v1/hosts/${encodeURIComponent(activeHost.id)}/guest-requests`, {
-                                            method: "POST",
-                                            headers: { "Content-Type": "application/json" },
-                                            body: JSON.stringify({
+                                        const joinChoice = window.confirm(`Guest Seat #${seat.id} is vacant!\n\n- Click OK to JOIN IMMEDIATELY as a Guest.\n- Click Cancel to send an application request to the Host's requests queue.`);
+                                        if (joinChoice) {
+                                          // Seat user immediately
+                                          const updatedSeats = viewerLiveGuestSeats.map(s => {
+                                            if (s.id === seat.id) {
+                                              return {
+                                                ...s,
+                                                name: user.username,
+                                                avatar: user.avatar,
+                                                diamonds: "0.0K",
+                                                isMuted: false,
+                                                isCamMuted: false,
+                                                isBigFrame: false
+                                              };
+                                            }
+                                            return s;
+                                          });
+                                          triggerJoinNotif(user.username, user.userLevel || user.level || 1, user.vipLevel || 0);
+                                          setViewerLiveGuestSeats(updatedSeats);
+                                          setViewerRequestStatus("accepted");
+                                          setChatMessages(prev => [
+                                            ...prev,
+                                            {
+                                              id: "msg-join-" + Date.now(),
+                                              username: "System 🎙️",
+                                              message: `🎉 @${user.username} has joined Guest Seat #${seat.id}!`,
+                                              vipLevel: 0,
+                                              userLevel: 0,
+                                              isSystem: true,
+                                              isFlagged: false,
+                                              timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                                            }
+                                          ]);
+                                          alert(`🎉 You have successfully joined Guest Seat #${seat.id}! Click on your seat to open controls.`);
+                                        } else {
+                                          setUserLiveGuestRequests(prev => [
+                                            ...prev,
+                                            {
+                                              id: "req-" + Date.now(),
                                               username: user.username,
                                               avatar: user.avatar,
                                               seatId: seat.id,
-                                              vipLevel: user.vipLevel || 0,
-                                              coins: user.coins || 0,
-                                              level: user.userLevel || user.level || 1
-                                            })
-                                          });
-                                          const data = await res.json().catch(() => ({}));
-                                          if (!res.ok) throw new Error(data?.error || "Guest request failed");
-                                          setViewerRequestStatus("pending");
-                                          alert(`🎙️ Guest request sent to @${activeHost.hostUsername || activeHost.name || "Host"}.`);
-                                        } catch (err: any) {
-                                          alert(`Unable to send guest request: ${err?.message || "Please try again."}`);
+                                              vipLevel: user.vipLevel,
+                                              coins: user.coins
+                                            }
+                                          ]);
+                                          // Also send system message
+                                          setChatMessages(prev => [
+                                            ...prev,
+                                            {
+                                              id: "msg-req-" + Date.now(),
+                                              username: "System 🎙️",
+                                              message: `${user.username} applied to join Seat ${seat.id}! Approval pending...`,
+                                              vipLevel: 0,
+                                              userLevel: 0,
+                                              isSystem: true,
+                                              isFlagged: false,
+                                              timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                                            }
+                                          ]);
+                                          alert("🎙️ Application request sent to the Host's dashboard! (You can view and approve this request by switching to the 'Host Live' stream simulator).");
                                         }
                                       } else {
                                         setShowGuestSeatActionModal({ seatId: seat.id, isUserLive: false });
@@ -12679,7 +12771,7 @@ export default function App() {
 
                                         {/* Guest Info overlay */}
                                         <div className="absolute bottom-1 inset-x-1 flex flex-col items-center z-10">
-                                          <span className="text-[7px] text-white font-black truncate max-w-[50px] leading-tight text-center">{seat.displayName || seat.name}</span>
+                                          <span className="text-[7px] text-white font-black truncate max-w-[50px] leading-tight text-center">{seat.name}</span>
                                           <span className="text-[6px] text-yellow-300 font-mono scale-90 leading-none mt-0.5">💎 {seat.diamonds || "0"}</span>
                                         </div>
 
@@ -12755,7 +12847,7 @@ export default function App() {
                                           className="font-black text-[#66fcf1] hover:text-[#45a29e] hover:underline cursor-pointer transition-colors"
                                           title="Tap for host controls"
                                         >
-                                          {(msg as any).displayName || msg.username}
+                                          {msg.username}
                                         </span>
                                       </div>
                                       <p className="text-gray-300 text-[8.5px] font-medium leading-tight mt-0.5">{msg.message}</p>
@@ -12874,21 +12966,6 @@ export default function App() {
                                     <span>Tap to Send Hearts</span>
                                   </button>
 
-                                  {/* Guest Camera Toggle — real camera publish control */}
-                                  {viewerIsCurrentlyGuest && (
-                                    <button
-                                      onClick={() => setViewerGuestCamEnabled(prev => !prev)}
-                                      className={`w-full py-1.5 rounded-lg text-[8px] font-black uppercase tracking-wider flex items-center justify-center space-x-1 transition-all cursor-pointer active:scale-95 border ${
-                                        viewerGuestCamEnabled
-                                          ? "bg-emerald-600/80 hover:bg-emerald-500 text-white border-emerald-400/30"
-                                          : "bg-red-600/80 hover:bg-red-500 text-white border-red-400/30"
-                                      }`}
-                                    >
-                                      {viewerGuestCamEnabled ? <Camera className="w-3 h-3" /> : <CameraOff className="w-3 h-3" />}
-                                      <span>{viewerGuestCamEnabled ? "Camera On" : "Camera Off"}</span>
-                                    </button>
-                                  )}
-
                                   {/* Exit Broadcast */}
                                   <button
                                     onClick={() => {
@@ -12968,7 +13045,7 @@ export default function App() {
                                 activeHost.coHostName
                               );
 
-                              const hostAName = getDisplayName(activeHost, "Pardais User");
+                              const hostAName = activeHost.name || "Pardais User";
                               const hostBName = activeHost.coHostUsername || activeHost.coHostName || activeHost.opponentName || "Connected Host";
                               const hostBAvatar = activeHost.coHostAvatar || activeHost.opponentAvatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&h=150&q=80";
 
@@ -13256,7 +13333,7 @@ export default function App() {
                                         {/* Streaming Chat Comments */}
                                         {chatMessages.map(msg => (
                                           <div key={msg.id} className="text-[10.5px] text-gray-200">
-                                            <span className="font-black text-cyan-300 mr-1.5">@{(msg as any).displayName || msg.username}:</span>
+                                            <span className="font-black text-cyan-300 mr-1.5">@{msg.username}:</span>
                                             <span>{msg.message}</span>
                                           </div>
                                         ))}
@@ -13520,17 +13597,16 @@ export default function App() {
                                   }
                                   role={isViewerOnGuestSeat ? "publisher" : "subscriber"}
                                   userId={user.username || user.uniqueId || "viewer_101"}
-                                  publishCameraTrack={isViewerOnGuestSeat && viewerGuestCamEnabled}
+                                  publishCameraTrack={false}
                                   publishMicrophoneTrack={isViewerOnGuestSeat && !isViewerGuestSeatMuted}
                                   muted={isViewerOnGuestSeat ? isViewerGuestSeatMuted : false}
-                                  videoMuted={isViewerOnGuestSeat ? !viewerGuestCamEnabled : (activeHost.category === "audio" || activeHost.cameraEnabled === false || activeHost.isCamOff === true || activeHost.cameraMuted === true)}
+                                  videoMuted={activeHost.category === "audio" || activeHost.cameraEnabled === false || activeHost.isCamOff === true || activeHost.cameraMuted === true}
                                   hostAvatar={activeHost.avatar || activeHost.hostAvatar || liveBroadcasterAvatar}
-                                  hostName={getDisplayName(activeHost, liveBroadcasterName)}
+                                  hostName={activeHost.name || activeHost.hostUsername || liveBroadcasterName}
                                   vipLevel={Number(activeHost.vipLevel || 0)}
                                   coHostVipLevel={Number(activeHost.coHostVipLevel || activeHost.opponentVipLevel || 0)}
                                   coverPhoto={activeHost.coverPhoto || userLiveCoverPhoto}
                                   showCoverPhoto={activeHost.showCoverPhoto !== undefined ? activeHost.showCoverPhoto : userLiveShowCoverPhoto}
-                                  showGuestRemoteVideos={viewerLiveGuestModeActive}
                                   isCoHostMode={Boolean(
                                     activeHost.category === "pk" ||
                                     activeHost.category === "1v1" ||
@@ -13567,7 +13643,7 @@ export default function App() {
                                             </div>
                                           )}
                                         </div>
-                                        <p className="text-[8px] font-black text-gray-300 mt-1 max-w-[50px] truncate">{seat.displayName || seat.name || "Join"}</p>
+                                        <p className="text-[8px] font-black text-gray-300 mt-1 max-w-[50px] truncate">{seat.name || "Join"}</p>
                                       </div>
                                     ))}
                                   </div>
@@ -13694,11 +13770,13 @@ export default function App() {
                               {/* PK SCORE PROGRESS BAR & SYSTEM COMMENT (LOWERED & CENTERED IN GAP) */}
                               {(() => {
                                 const isPkMatch = Boolean(
-                                  activeHost.liveMode === "pk" ||
                                   activeHost.category === "pk" ||
-                                  activeHost.subCategory === "PK" ||
+                                  activeHost.category === "1v1" ||
+                                  activeHost.subCategory === "pk" ||
+                                  activeHost.subCategory === "1v1" ||
                                   activeHost.inPk ||
-                                  activeHost.pkActive
+                                  activeHost.coHostUsername ||
+                                  activeHost.coHostName
                                 );
 
                                 if (!isPkMatch) return null;
@@ -13854,7 +13932,7 @@ export default function App() {
                               )}
 
                               {/* TRANSPARENT COMMENTS OVERLAY ON TOP OF LIVE VIDEO */}
-                              <div className="absolute bottom-[72px] left-2 right-2 z-20 w-auto max-h-[52vh] overflow-y-auto overscroll-contain touch-pan-y space-y-1.5 pr-1 text-left no-scrollbar pointer-events-auto flex flex-col justify-end">
+                              <div className="absolute bottom-16 left-2 z-20 w-[82%] sm:w-[320px] max-h-[30vh] overflow-y-auto space-y-1.5 pr-1 text-left no-scrollbar pointer-events-none flex flex-col justify-end">
                                 {/* Pinned comment if any */}
                                 {pinnedCommentId && (() => {
                                   const pinnedMsg = chatMessages.find(m => m.id === pinnedCommentId);
@@ -13882,7 +13960,7 @@ export default function App() {
                                 {chatMessages.slice(-20).map(msg => (
                                   <div
                                     key={msg.id}
-                                    className={`pointer-events-auto w-full max-w-[96%] text-[10px] rounded-xl px-2 py-1.5 backdrop-blur-[2px] border border-white/10 shadow-lg transition-all break-words whitespace-normal ${
+                                    className={`pointer-events-auto text-[10px] rounded-xl p-2 backdrop-blur-md border border-white/10 shadow-lg transition-all ${
                                       msg.isSystem
                                         ? "bg-purple-950/50 text-purple-200 border-l-2 border-purple-400"
                                         : msg.isFlagged
@@ -13906,7 +13984,7 @@ export default function App() {
                                           }}
                                           className="font-black text-[#66fcf1] hover:text-[#45a29e] cursor-pointer"
                                         >
-                                          {(msg as any).displayName || msg.username}
+                                          {msg.username}
                                         </span>
                                         <span className="text-gray-400 font-mono text-[8px]">{msg.timestamp}</span>
                                       </div>
@@ -13967,7 +14045,7 @@ export default function App() {
                                         </button>
                                       </div>
                                     ) : (
-                                      <p className="mt-0.5 text-gray-100 font-medium drop-shadow leading-snug break-words whitespace-normal">{msg.message}</p>
+                                      <p className="mt-0.5 text-gray-200 font-medium drop-shadow">{msg.message}</p>
                                     )}
                                   </div>
                                 ))}
@@ -15170,7 +15248,7 @@ export default function App() {
                                 <div className="flex items-center justify-between">
                                   <div className="space-y-1 bg-transparent">
                                     <div className="flex items-center space-x-2">
-                                      <h4 className="text-sm font-black text-white">{getDisplayName(user)}</h4>
+                                      <h4 className="text-sm font-black text-white">{user.fullName || user.username || "Pardais User"}</h4>
                                       <CheckCircle2 className="w-3.5 h-3.5 text-[#66fcf1]" />
                                       {user.isVerified && (
                                         <BadgeCheck className="w-4 h-4 text-green-400 fill-green-400/10" />
@@ -15224,8 +15302,8 @@ export default function App() {
                                 "{user.bio}"
                               </p>
 
-                              {/* 👥 FOLLOWER, FOLLOWING, LIKES + FIND FRIENDS PANEL */}
-                              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center pt-1">
+                              {/* 👥 FOLLOWER, FOLLOWING, AND LIKES BUTTON PANEL */}
+                              <div className="grid grid-cols-3 gap-2 text-center pt-1">
                                 <button
                                   type="button"
                                   onClick={() => alert(`👥 Followers Directory:\nYou have ${((user.followersCount ?? 0)).toLocaleString()} verified fans. All follower IDs are synced in the Pakistan region server.`)}
@@ -15261,118 +15339,6 @@ export default function App() {
                                   </span>
                                   <span className="text-[7.5px] uppercase tracking-wider text-gray-400 font-bold">Total Likes</span>
                                 </button>
-
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setFindFriendsSearch("");
-                                    setShowFindFriendsModal(true);
-                                  }}
-                                  className="bg-gradient-to-b from-[#1e1e2d] to-[#12121a] hover:from-purple-500/20 hover:to-[#1e1e2d] border border-[#303040] hover:border-purple-400/60 p-2.5 rounded-xl transition-all flex flex-col items-center justify-center group active:scale-95 shadow-md"
-                                  title="Find Friends"
-                                >
-                                  <Search className="w-4 h-4 text-purple-300 mb-1 group-hover:scale-110 transition-transform" />
-                                  <span className="text-xs font-black text-white font-mono">Find</span>
-                                  <span className="text-[7.5px] uppercase tracking-wider text-gray-400 font-bold">Find Friends</span>
-                                </button>
-                              </div>
-                            </div>
-                          )}
-
-                          {/* ===================================================================== */}
-                          {/* 🔎 FIND FRIENDS — REAL-TIME REGISTERED USER DIRECTORY */}
-                          {/* ===================================================================== */}
-                          {showFindFriendsModal && (
-                            <div className="fixed inset-0 z-[120] bg-black/75 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
-                              <div className="w-full sm:max-w-lg max-h-[86vh] bg-[#101018] border border-purple-500/40 rounded-t-3xl sm:rounded-3xl shadow-2xl overflow-hidden flex flex-col">
-                                <div className="p-4 border-b border-white/10 bg-gradient-to-r from-purple-900/30 via-[#171725] to-pink-900/20">
-                                  <div className="flex items-center justify-between gap-3">
-                                    <div>
-                                      <h3 className="text-base font-black text-white flex items-center gap-2">
-                                        <Users className="w-5 h-5 text-purple-300" /> Find Friends
-                                      </h3>
-                                      <p className="text-[9px] text-gray-400 mt-1">Search and follow anyone registered on Pardais.</p>
-                                    </div>
-                                    <button
-                                      type="button"
-                                      onClick={() => setShowFindFriendsModal(false)}
-                                      className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 border border-white/10 text-white flex items-center justify-center active:scale-95"
-                                      aria-label="Close Find Friends"
-                                    >
-                                      <X className="w-4 h-4" />
-                                    </button>
-                                  </div>
-                                  <div className="mt-3 relative">
-                                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
-                                    <input
-                                      value={findFriendsSearch}
-                                      onChange={(e) => setFindFriendsSearch(e.target.value)}
-                                      placeholder="Search username, name or Pardais ID..."
-                                      className="w-full bg-black/40 border border-white/10 focus:border-purple-400 rounded-xl pl-9 pr-3 py-2.5 text-xs text-white placeholder:text-gray-500 outline-none"
-                                      autoFocus
-                                    />
-                                  </div>
-                                </div>
-
-                                <div className="flex-1 overflow-y-auto p-3 space-y-2">
-                                  {findFriendsUsers.length === 0 ? (
-                                    <div className="py-12 text-center text-gray-500">
-                                      <Users className="w-9 h-9 mx-auto mb-2 opacity-40" />
-                                      <p className="text-xs font-bold">No users found</p>
-                                      <p className="text-[9px] mt-1">Try a username, name or Pardais ID.</p>
-                                    </div>
-                                  ) : (
-                                    findFriendsUsers.map((candidate: any) => {
-                                      const username = String(candidate.username || "").trim();
-                                      const following = isFollowingUser(username);
-                                      const targetFollowing = Array.isArray(candidate.followingUsernames)
-                                        && candidate.followingUsernames.some((v: any) => String(v || "").toLowerCase() === String(user?.username || "").toLowerCase());
-                                      const mutualFriend = following && targetFollowing;
-                                      const displayName = candidate.fullName || username;
-                                      const avatar = candidate.avatarUrl || candidate.avatar || DEFAULT_USER.avatar;
-
-                                      return (
-                                        <div key={`${username}-${candidate.uid || candidate.uniqueId || "user"}`} className="flex items-center gap-3 p-2.5 rounded-2xl bg-white/[0.035] border border-white/[0.07] hover:border-purple-500/30 transition-all">
-                                          <img src={avatar} alt={displayName} className="w-11 h-11 rounded-full object-cover border-2 border-purple-500/40 shrink-0" />
-                                          <div className="min-w-0 flex-1">
-                                            <div className="flex items-center gap-1.5 min-w-0">
-                                              <span className="text-xs font-black text-white truncate">{displayName}</span>
-                                              {candidate.isVerified && <BadgeCheck className="w-3.5 h-3.5 text-green-400 shrink-0" />}
-                                              {mutualFriend && <span className="text-[7px] font-black px-1.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">FRIEND</span>}
-                                            </div>
-                                            <p className="text-[9px] text-gray-400 truncate">@{username}</p>
-                                            <p className="text-[8px] text-gray-500 font-mono truncate">{candidate.uniqueId || "Pardais User"}</p>
-                                          </div>
-                                          <button
-                                            type="button"
-                                            onClick={() => {
-                                              if (following) {
-                                                setFollowedUsers(prev => prev.filter(v => String(v).toLowerCase() !== username.toLowerCase()));
-                                              } else {
-                                                setFollowedUsers(prev => prev.some(v => String(v).toLowerCase() === username.toLowerCase()) ? prev : [...prev, username]);
-                                              }
-                                              setUser(prev => ({ ...prev, followingCount: following ? Math.max(0, Number(prev.followingCount || 0) - 1) : Number(prev.followingCount || 0) + 1 }));
-                                            }}
-                                            className={`shrink-0 min-w-[78px] px-3 py-2 rounded-xl text-[9px] font-black border transition-all active:scale-95 ${
-                                              mutualFriend
-                                                ? "bg-emerald-500/15 border-emerald-400/30 text-emerald-300"
-                                                : following
-                                                  ? "bg-white/10 border-white/15 text-gray-300"
-                                                  : "bg-gradient-to-r from-purple-600 to-pink-600 border-purple-300/40 text-white shadow-lg"
-                                            }`}
-                                          >
-                                            {mutualFriend ? "Friends" : following ? "Following" : "Follow"}
-                                          </button>
-                                        </div>
-                                      );
-                                    })
-                                  )}
-                                </div>
-
-                                <div className="px-4 py-3 border-t border-white/10 bg-black/20 flex items-center justify-between">
-                                  <span className="text-[8px] text-gray-500 font-mono">{findFriendsUsers.length} users</span>
-                                  <button type="button" onClick={() => setShowFindFriendsModal(false)} className="text-[9px] font-black text-purple-300 hover:text-white">Done</button>
-                                </div>
                               </div>
                             </div>
                           )}
@@ -15754,15 +15720,7 @@ export default function App() {
                                                   if (data?.nextClaimAt) { setDailyClaimAvailable(false); setDailyNextClaimAt(data.nextClaimAt); }
                                                   throw new Error(data?.error || "Daily reward could not be claimed.");
                                                 }
-                                                setUser(prev => ({
-                                                  ...prev,
-                                                  coins: data.remainingCoins,
-                                                  xp: data.xp !== undefined ? data.xp : prev.xp,
-                                                  coinSpendTotal: data.coinSpendTotal !== undefined ? data.coinSpendTotal : prev.coinSpendTotal,
-                                                  userLevel: data.userLevel !== undefined ? data.userLevel : prev.userLevel,
-                                                  level: data.userLevel !== undefined ? data.userLevel : prev.level,
-                                                  vipLevel: data.vipLevel !== undefined ? data.vipLevel : prev.vipLevel
-                                                }));
+                                                setUser(prev => ({ ...prev, coins: data.remainingCoins, xp: data.xp, userLevel: data.userLevel, vipLevel: data.vipLevel }));
                                                 setMissions(prev => prev.map(item => ({ ...item, current: item.target, status: "Completed" })));
                                                 setDailyClaimAvailable(false);
                                                 setDailyNextClaimAt(data.nextClaimAt || Date.now() + 86400000);
@@ -15899,67 +15857,6 @@ export default function App() {
                                               <p>🆔 User ID: <span className="text-amber-300 font-bold">@{user.username}</span></p>
                                               <p>🏷️ Status: <span className="text-emerald-400 font-bold">Approved Official Agency</span></p>
                                             </div>
-
-                                            {/* LIVE COIN SELLER WALLET */}
-                                            {(() => {
-                                              const seller = (coinSellers || []).find((s: any) =>
-                                                String(s.ownerUsername || s.username || "").toLowerCase() === String(user?.username || "").toLowerCase()
-                                              );
-                                              const balance = Number(coinSellerWallet?.seller?.coinBalance ?? seller?.coinBalance ?? 0);
-                                              return (
-                                                <div className="mt-2 bg-[#0c1620] border border-cyan-500/30 rounded-xl p-2.5 space-y-2">
-                                                  <div className="flex justify-between items-center">
-                                                    <span className="text-[9px] font-black text-cyan-300 uppercase">🪙 Seller Coin Wallet</span>
-                                                    <span className="text-[10px] font-black text-yellow-300">{balance.toLocaleString()} Coins</span>
-                                                  </div>
-                                                  <div className="grid grid-cols-1 gap-1.5">
-                                                    <input value={coinSellerRecipient} onChange={e => setCoinSellerRecipient(e.target.value)} placeholder="Buyer Pardais ID / Username" className="w-full bg-[#12121a] border border-white/10 rounded-lg px-2.5 py-2 text-[9px] text-white outline-none focus:border-cyan-400" />
-                                                    <input type="number" min="1" value={coinSellerTransferAmount} onChange={e => setCoinSellerTransferAmount(e.target.value)} placeholder="Coins to send" className="w-full bg-[#12121a] border border-white/10 rounded-lg px-2.5 py-2 text-[9px] text-yellow-300 outline-none focus:border-yellow-400" />
-                                                    <input value={coinSellerTransferNote} onChange={e => setCoinSellerTransferNote(e.target.value)} placeholder="Sale note (optional)" className="w-full bg-[#12121a] border border-white/10 rounded-lg px-2.5 py-2 text-[9px] text-white outline-none focus:border-cyan-400" />
-                                                  </div>
-                                                  <button
-                                                    type="button"
-                                                    disabled={coinSellerTransferSubmitting || !coinSellerRecipient.trim() || Number(coinSellerTransferAmount) <= 0}
-                                                    onClick={async () => {
-                                                      const amount = Math.floor(Number(coinSellerTransferAmount));
-                                                      if (!amount || !coinSellerRecipient.trim()) return;
-                                                      setCoinSellerTransferSubmitting(true);
-                                                      try {
-                                                        const token = localStorage.getItem("pardais_auth_token");
-                                                        const response = await fetch("/api/v1/coin-seller/transfer", {
-                                                          method: "POST",
-                                                          headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-                                                          body: JSON.stringify({ recipient: coinSellerRecipient.trim(), amount, note: coinSellerTransferNote.trim() })
-                                                        });
-                                                        const data = await response.json().catch(() => ({}));
-                                                        if (!response.ok || !data.success) throw new Error(data.error || "Coin transfer failed.");
-                                                        setCoinSellerWallet((prev: any) => ({ ...(prev || {}), seller: data.seller }));
-                                                        setCoinSellers(prev => prev.map((x: any) => x.id === data.seller.id ? { ...x, coinBalance: data.seller.coinBalance, coinsAvailable: `${data.seller.coinBalance.toLocaleString()} Coins` } : x));
-                                                        setCoinSellerTransferHistory(prev => [data.transaction, ...prev]);
-                                                        setCoinSellerRecipient(""); setCoinSellerTransferAmount(""); setCoinSellerTransferNote("");
-                                                        alert(`🟢 ${amount.toLocaleString()} coins sent to @${data.buyer.username}. Coins were added to the buyer's Gifting Wallet.`);
-                                                      } catch (err: any) { alert(err?.message || "Coin transfer failed."); }
-                                                      finally { setCoinSellerTransferSubmitting(false); }
-                                                    }}
-                                                    className="w-full py-2 bg-gradient-to-r from-cyan-600 to-blue-600 disabled:opacity-40 rounded-lg text-white text-[8px] font-black uppercase cursor-pointer"
-                                                  >
-                                                    {coinSellerTransferSubmitting ? "Processing..." : "Send Coins to User"}
-                                                  </button>
-                                                  <div className="border-t border-white/5 pt-2">
-                                                    <div className="flex justify-between items-center mb-1"><span className="text-[7px] text-gray-400 uppercase">Sales History</span><span className="text-[7px] text-gray-500">Permanent</span></div>
-                                                    <div className="max-h-28 overflow-y-auto space-y-1">
-                                                      {(coinSellerTransferHistory.length ? coinSellerTransferHistory : (coinSellerWallet?.history || [])).slice(0, 10).map((tx: any) => (
-                                                        <div key={tx.id} className="flex justify-between bg-black/20 rounded px-2 py-1 text-[7px]">
-                                                          <span className="text-gray-300">→ @{tx.recipientUsername || "user"}</span>
-                                                          <span className="text-yellow-300 font-bold">-{Number(tx.amount || 0).toLocaleString()}</span>
-                                                        </div>
-                                                      ))}
-                                                      {!coinSellerTransferHistory.length && !coinSellerWallet?.history?.length && <span className="text-[7px] text-gray-500">No sales yet.</span>}
-                                                    </div>
-                                                  </div>
-                                                </div>
-                                              );
-                                            })()}
                                           </div>
                                         ) : (
                                           <>
@@ -18445,7 +18342,7 @@ export default function App() {
                               <span className="text-[9px] font-mono font-black text-pink-400 uppercase tracking-widest bg-black/50 px-3.5 py-1 rounded-full border border-pink-500/30 backdrop-blur-md">
                                 🎙️ AUDIO BROADCAST STUDIO
                               </span>
-                              <h3 className="text-sm font-black text-white">{getDisplayName(user)}</h3>
+                              <h3 className="text-sm font-black text-white">{user.fullName || user.username}</h3>
                               <p className="text-[10px] text-gray-300 font-medium">Ready for HD Voice Live Stream</p>
                             </div>
 
@@ -19183,9 +19080,6 @@ export default function App() {
                                     coverPhoto={userLiveCoverPhoto}
                                     showCoverPhoto={userLiveShowCoverPhoto}
                                     isCoHostMode={Boolean(userLivePkConnected || userLiveCoHost)}
-                                    showGuestRemoteVideos={userLiveGuestModeActive}
-                                    liveFilter={userLiveFaceFilter}
-                                    beautySettings={userLiveBeauty}
                                     coHostAvatar={userLiveCoHost?.avatar}
                                     coHostName={userLiveCoHost?.username}
                                     coHostVideoMuted={userLiveCoHost?.isCamOff}
@@ -19230,7 +19124,7 @@ export default function App() {
                                   <div className="flex items-center space-x-1.5">
                                     {liveRoomTopGifters.map((viewer, idx) => (
                                       <div key={viewer.id || idx} className="flex flex-col items-center bg-transparent">
-                                        <img src={viewer.avatar || DEFAULT_USER.avatar} className="w-6.5 h-6.5 rounded-full border border-white/20 object-cover shadow" title={viewer.displayName || viewer.username} />
+                                        <img src={viewer.avatar || DEFAULT_USER.avatar} className="w-6.5 h-6.5 rounded-full border border-white/20 object-cover shadow" title={viewer.username} />
                                         <span className="text-[7px] text-gray-200 font-black font-mono scale-90 mt-0.5">
                                           {viewer.coinsContributed >= 1000 ? `${(viewer.coinsContributed / 1000).toFixed(1)}K` : viewer.coinsContributed}
                                         </span>
@@ -19324,9 +19218,9 @@ export default function App() {
                                 )}
 
                                 {/* UPPER 60%: GUEST ROOMS GRID AND HOST SEAT */}
-                                <div className={`h-[60%] w-full p-2 gap-2 bg-black/10 shrink-0 relative ${activeUserLiveGuestCount > 0 && activeUserLiveGuestCount <= 4 ? "grid" : "flex"}`} style={activeUserLiveGuestCount > 0 && activeUserLiveGuestCount <= 4 ? { gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gridTemplateRows: `repeat(${Math.ceil((activeUserLiveGuestCount + 1) / 2)}, minmax(0, 1fr))` } : undefined}>
+                                <div className="h-[60%] w-full flex p-2 gap-2 bg-black/10 shrink-0 relative">
                                   {/* LEFT: MAIN HOST OR PINNED GUEST SCREEN (50% Width) */}
-                                  <div className={`${activeUserLiveGuestCount > 0 && activeUserLiveGuestCount <= 4 ? "w-full h-full" : "w-1/2 h-full"} rounded-2xl overflow-hidden relative border border-pink-500/30 bg-[#0e0c15] shadow-lg flex items-center justify-center`}>
+                                  <div className="w-1/2 h-full rounded-2xl overflow-hidden relative border border-pink-500/30 bg-[#0e0c15] shadow-lg flex items-center justify-center">
                                     {(() => {
                                       const pinnedGuest = userLiveGuestSeats.find(s => s.name !== null && s.isBigFrame);
                                       if (pinnedGuest) {
@@ -19490,7 +19384,7 @@ export default function App() {
                                   </div>
 
                                   {/* RIGHT: 8 GUEST SEATS GRID (50% Width) */}
-                                  <div className={`${activeUserLiveGuestCount > 0 && activeUserLiveGuestCount <= 4 ? "contents" : "w-1/2 h-full grid grid-cols-2 grid-rows-4 gap-1.5"}`}>
+                                  <div className="w-1/2 h-full grid grid-cols-2 grid-rows-4 gap-1.5">
                                     {userLiveGuestSeats.map(seat => (
                                       <div
                                         key={seat.id}
@@ -19501,7 +19395,7 @@ export default function App() {
                                             setShowGuestSeatActionModal({ seatId: seat.id, isUserLive: true });
                                           }
                                         }}
-                                        className={`${!seat.name && activeUserLiveGuestCount > 0 && activeUserLiveGuestCount <= 4 ? "hidden" : ""} rounded-xl overflow-hidden relative border flex flex-col justify-center items-center transition-all cursor-pointer ${
+                                        className={`rounded-xl overflow-hidden relative border flex flex-col justify-center items-center transition-all cursor-pointer ${
                                           seat.name 
                                             ? (seat.isBigFrame 
                                                 ? "border-purple-500 ring-2 ring-purple-500/80 shadow-purple-500/20 shadow-lg bg-purple-950/20 animate-pulse" 
@@ -19584,7 +19478,7 @@ export default function App() {
 
                                             {/* Guest Info text overlay */}
                                             <div className="absolute bottom-1 inset-x-1 flex flex-col items-center z-10">
-                                              <span className="text-[7px] text-white font-black truncate max-w-[50px] leading-tight text-center">{seat.displayName || seat.name}</span>
+                                              <span className="text-[7px] text-white font-black truncate max-w-[50px] leading-tight text-center">{seat.name}</span>
                                               <span className="text-[6px] text-yellow-300 font-mono scale-90 leading-none mt-0.5">💎 {seat.diamonds || "0"}</span>
                                             </div>
 
@@ -19660,7 +19554,7 @@ export default function App() {
                                               className="font-black text-[#66fcf1] hover:text-[#45a29e] hover:underline cursor-pointer transition-colors"
                                               title="Tap for host controls"
                                             >
-                                              {(msg as any).displayName || msg.username}
+                                              {msg.username}
                                             </span>
                                           </div>
                                           <p className="text-gray-300 text-[8.5px] font-medium leading-tight mt-0.5">{msg.message}</p>
@@ -19751,7 +19645,7 @@ export default function App() {
                                       </div>
                                       <div className="flex flex-col text-left">
                                         <span className="text-[9px] font-black text-white flex items-center space-x-0.5 leading-none">
-                                          <span>{getDisplayName(user, liveBroadcasterName)}</span>
+                                          <span>{user.username || user.displayName || liveBroadcasterName}</span>
                                           <span className="text-blue-400 text-[7px]">✔️</span>
                                         </span>
                                         <div className="flex items-center space-x-1 mt-0.5">
@@ -19824,9 +19718,9 @@ export default function App() {
                                         }
                                       }}
                                       className="text-[7.5px] font-black uppercase text-pink-500 bg-pink-950/20 px-2 py-0.5 rounded-full border border-pink-500/25 tracking-wider animate-pulse cursor-pointer hover:scale-105 active:scale-95 transition-all"
-                                      title={userLivePkActive ? "PK Battle Active" : "Start PK Battle"}
+                                      title={userLivePkActive ? "PK Battle Active" : "Click for One Versus One Lobby!"}
                                     >
-                                      {userLivePkActive ? "⚔️ PK Battle" : "⚔️ PK"}
+                                      {userLivePkActive ? "⚔️ PK Battle" : "👥 One Versus One Lobby"}
                                     </button>
                                     <span className="text-[6.5px] text-gray-500 font-mono mt-0.5">ROOM #3041</span>
                                   </div>
@@ -19865,7 +19759,6 @@ export default function App() {
                                       publishCameraTrack={userLiveCam}
                                       publishMicrophoneTrack={userLiveMic}
                                       videoMuted={!userLiveCam}
-                                      facingMode={cameraFacingMode}
                                       hostAvatar={user.avatar || DEFAULT_USER.avatar}
                                       hostName={user.username || DEFAULT_USER.username}
                                       vipLevel={Number(user.vipLevel || 0)}
@@ -19874,8 +19767,6 @@ export default function App() {
                                       coHostName={userLiveCoHost?.username}
                                       coHostVipLevel={Number(userLiveCoHost?.vipLevel || 0)}
                                       coHostVideoMuted={userLiveCoHost?.isCamOff}
-                                      liveFilter={userLiveFaceFilter}
-                                      beautySettings={userLiveBeauty}
                                       onPublishSuccess={handleHostPublishSuccess}
                                     />
                                   </div>
@@ -20014,7 +19905,7 @@ export default function App() {
                                             {/* Left label overlay inside camera */}
                                             <div className="absolute bottom-4 left-2 bg-black/60 backdrop-blur-md px-1.5 py-0.5 rounded-full border border-white/5 flex items-center space-x-1 z-10 select-none">
                                               <span className="w-1.5 h-1.5 bg-pink-500 rounded-full animate-ping shrink-0"></span>
-                                              <span className="text-[7.5px] font-black text-white">{getDisplayName(user, "Host")}</span>
+                                              <span className="text-[7.5px] font-black text-white">{user.username || user.displayName || "Host"}</span>
                                               <span className="text-[6.5px] text-yellow-400 font-bold font-mono">💎 {userLivePkScoreMy}</span>
                                             </div>
 
@@ -20070,7 +19961,7 @@ export default function App() {
                                                     className="w-14 h-14 rounded-full object-cover border-2 border-blue-500/70 shadow-lg"
                                                     alt={userLiveCoHost?.username || "Co-Host"}
                                                   />
-                                                  <span className="text-[9px] font-black text-white truncate max-w-[90%]">{getDisplayName(userLiveCoHost, "Co-Host")}</span>
+                                                  <span className="text-[9px] font-black text-white truncate max-w-[90%]">{userLiveCoHost?.username || userLiveCoHost?.name || "Co-Host"}</span>
                                                   <span className="text-[7px] text-blue-300 font-bold bg-blue-500/20 px-2 py-0.5 rounded-full border border-blue-500/30 uppercase tracking-wider">
                                                     📷 Camera Off
                                                   </span>
@@ -20207,7 +20098,7 @@ export default function App() {
                                                   });
                                                   const data = await res.json();
                                                   if (data.success) {
-                                                    alert(`⚔️ PK Battle challenge sent to @${getDisplayName(userLiveCoHost, "opponent")}!`);
+                                                    alert(`⚔️ PK Battle challenge sent to @${userLiveCoHost?.username || "opponent"}!`);
                                                   }
                                                 } catch (e) {
                                                   console.error("Error starting PK battle:", e);
@@ -20312,7 +20203,7 @@ export default function App() {
                                                     }}
                                                     className="font-black text-[#66fcf1] hover:text-[#45a29e] hover:underline cursor-pointer transition-colors"
                                                   >
-                                                    {(msg as any).displayName || msg.username}
+                                                    {msg.username}
                                                   </span>
                                                   <span>{msg.message}</span>
                                                 </p>
@@ -20337,7 +20228,7 @@ export default function App() {
                                                         }}
                                                         className="font-black text-[#66fcf1] hover:text-[#45a29e] hover:underline cursor-pointer transition-colors"
                                                       >
-                                                        {(msg as any).displayName || msg.username}
+                                                        {msg.username}
                                                       </span>
                                                     </span>
 
@@ -20380,7 +20271,7 @@ export default function App() {
                                                                 alert("📌 Comment unpinned.");
                                                               } else {
                                                                 setUserLivePinnedCommentId(msg.id);
-                                                                alert(`📌 Pinned @${(msg as any).displayName || msg.username}'s comment!`);
+                                                                alert(`📌 Pinned @${msg.username}'s comment!`);
                                                               }
                                                             }}
                                                             className={`${userLivePinnedCommentId === msg.id ? "text-yellow-400" : "text-gray-400 hover:text-yellow-400"} text-[8px]`}
@@ -20393,7 +20284,7 @@ export default function App() {
                                                               onClick={() => {
                                                                 setUserLiveMessages(prev => prev.filter(m => m.id !== msg.id));
                                                                 if (userLivePinnedCommentId === msg.id) setUserLivePinnedCommentId(null);
-                                                                alert(`🗑️ Moderated & deleted @${(msg as any).displayName || msg.username}'s comment.`);
+                                                                alert(`🗑️ Moderated & deleted @${msg.username}'s comment.`);
                                                               }}
                                                               className="text-red-400 hover:text-red-300 text-[8px]"
                                                               title="Moderate: Delete Comment"
@@ -20501,16 +20392,15 @@ export default function App() {
                                         {userLiveMic ? <Mic className="w-4 h-4" /> : <MicOff className="w-4 h-4" />}
                                       </button>
 
-                                      {/* Camera ON/OFF — Cover Photo is already available in More. */}
+                                      {/* Cover Photo Button */}
                                       <button
-                                        type="button"
-                                        onClick={() => setUserLiveCam(prev => !prev)}
-                                        className={`w-7.5 h-7.5 rounded-full flex items-center justify-center transition-all cursor-pointer border ${
-                                          userLiveCam ? "bg-purple-600 text-white border-purple-400" : "bg-red-600/80 text-white border-red-400"
+                                        onClick={() => setUserLiveShowCoverModal(true)}
+                                        className={`w-7.5 h-7.5 rounded-full flex items-center justify-center transition-all cursor-pointer ${
+                                          userLiveShowCoverPhoto && userLiveCoverPhoto ? "bg-pink-600 text-white border border-pink-400" : "bg-white/10 text-gray-400 border border-white/5"
                                         }`}
-                                        title={userLiveCam ? "Turn Camera Off" : "Turn Camera On"}
+                                        title="Change or Remove Cover Photo"
                                       >
-                                        {userLiveCam ? <Camera className="w-4 h-4" /> : <CameraOff className="w-4 h-4" />}
+                                        <ImageIcon className="w-4 h-4" />
                                       </button>
 
                                       {/* More (•••) */}
@@ -20534,7 +20424,7 @@ export default function App() {
                             {/* TOP HEADER ROW OVERLAYS */}
                             <div className="px-3 py-1 flex items-center justify-between z-10 bg-transparent select-none pt-2">
                               {/* Left Host Bubble */}
-                              <div className="flex items-center space-x-2 bg-black/40 backdrop-blur-md px-2 py-1 rounded-2xl border border-white/10 shadow-lg min-w-0 max-w-[55%] shrink">
+                              <div className="flex items-center space-x-2 bg-black/40 backdrop-blur-md px-2 py-1 rounded-full border border-white/10 shadow-lg">
                                 <div className="relative">
                                   <img
                                     src={liveBroadcasterAvatar || DEFAULT_USER.avatar}
@@ -20544,47 +20434,37 @@ export default function App() {
                                     ✓
                                   </span>
                                 </div>
-                                <div className="flex flex-col text-left pr-1 min-w-0 max-w-[150px]">
-                                  <span className="text-[10.5px] font-black text-white flex items-center space-x-0.5 whitespace-nowrap truncate max-w-[150px]">
-                                    <span className="truncate">{liveBroadcasterName}</span>
-                                    <span className="text-blue-400 text-[8px] shrink-0">✔️</span>
+                                <div className="flex flex-col text-left pr-1">
+                                  <span className="text-[10px] font-black text-white flex items-center space-x-0.5">
+                                    <span>{liveBroadcasterName}</span>
+                                    <span className="text-blue-400 text-[8px]">✔️</span>
                                   </span>
-                                  <div className="flex items-center space-x-1 bg-transparent mt-0.5">
-                                    <span className="text-[7.5px] bg-purple-600 text-white px-1 py-0.2 rounded font-black font-mono shrink-0">Lv.{liveBroadcasterLevel}</span>
-                                    <span className="text-[7px] bg-gradient-to-r from-amber-400 to-yellow-500 text-black px-1.5 py-0.2 rounded-full font-black font-mono shrink-0">👑 VIP</span>
-                                    <span className="text-[7px] text-gray-300 font-bold font-mono shrink-0">Solo Live</span>
+                                  <div className="flex items-center space-x-1 bg-transparent">
+                                    <span className="text-[7.5px] bg-purple-600 text-white px-1 py-0.2 rounded font-black font-mono">Lv.{liveBroadcasterLevel}</span>
+                                    <span className="text-[7.5px] text-gray-300 font-bold font-mono">Solo Live</span>
                                   </div>
                                 </div>
                               </div>
 
-                              {/* Top-right Supporters / viewers — keep this compact in the corner so the host name has room. */}
-                              <div className="ml-auto mr-1 flex items-center justify-end space-x-1.5 overflow-x-auto max-w-[96px] no-scrollbar shrink-0">
+                              {/* Center-Right Connected Viewers & Contributors List */}
+                              <div className="flex items-center space-x-1.5 overflow-x-auto max-w-[120px] no-scrollbar">
                                 {userLiveViewerList.length > 0 ? (
                                   userLiveViewerList.map((viewer, idx) => (
-                                    <button
-                                      type="button"
-                                      key={(viewer as any).userId || viewer.username || idx}
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        const lvl = Number((viewer as any).level || 1);
-                                        setViewerMenuUser({ username: String(viewer.username || "Viewer"), userLevel: lvl, vipLevel: Number((viewer as any).vipLevel || getVipLevelFromUserLevel(lvl)), avatar: viewer.avatar, userId: String((viewer as any).userId || viewer.username || "") });
-                                      }}
-                                      className="flex flex-col items-center bg-transparent shrink-0 cursor-pointer active:scale-95"
-                                    >
+                                    <div key={(viewer as any).userId || viewer.username || idx} className="flex flex-col items-center bg-transparent shrink-0">
                                       <img
                                         src={viewer.avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=100&q=80"}
                                         className="w-6.5 h-6.5 rounded-full border border-emerald-400/80 object-cover shadow"
-                                        title={`${viewer.displayName || viewer.username} (Lv.${viewer.level || 1})`}
+                                        title={`@${viewer.username} (Lv.${viewer.level || 1})`}
                                       />
                                       <span className="text-[6px] text-emerald-300 font-mono font-bold scale-90 mt-0.5 truncate max-w-[35px]">
-                                        {viewer.displayName || viewer.username}
+                                        @{viewer.username}
                                       </span>
-                                    </button>
+                                    </div>
                                   ))
                                 ) : (
                                   liveRoomTopGifters.map((viewer, idx) => (
                                     <div key={viewer.id || idx} className="flex flex-col items-center bg-transparent shrink-0">
-                                      <img src={viewer.avatar || DEFAULT_USER.avatar} className="w-6.5 h-6.5 rounded-full border border-white/20 object-cover shadow" title={viewer.displayName || viewer.username} />
+                                      <img src={viewer.avatar || DEFAULT_USER.avatar} className="w-6.5 h-6.5 rounded-full border border-white/20 object-cover shadow" title={viewer.username} />
                                       <span className="text-[7px] text-gray-200 font-black font-mono scale-90 mt-0.5">
                                         {viewer.coinsContributed >= 1000 ? `${(viewer.coinsContributed / 1000).toFixed(1)}K` : viewer.coinsContributed}
                                       </span>
@@ -20595,6 +20475,21 @@ export default function App() {
 
                               {/* Far Right Ranking, Stats & Close */}
                               <div className="flex items-center space-x-1.5">
+                                {/* Ranking 🔥 Button in Solo Live top bar header */}
+                                <button
+                                  onClick={() => {
+                                    setRankingType("host");
+                                    setRankingPeriod("hourly");
+                                    setRankingSearchQuery("");
+                                    setShowRankingModal(true);
+                                  }}
+                                  className="bg-gradient-to-r from-orange-500 via-red-500 to-pink-600 hover:brightness-110 active:scale-95 text-white text-[7.5px] font-black px-2 py-1 rounded-full flex items-center space-x-1 shadow-lg border border-yellow-400/20 transition-all cursor-pointer select-none shrink-0"
+                                  title="Open Rankings"
+                                >
+                                  <Flame className="w-2.5 h-2.5 text-yellow-300 fill-yellow-300 animate-pulse" />
+                                  <span>Ranking 🔥</span>
+                                </button>
+
                                 <div className="bg-black/45 backdrop-blur-md px-2.5 py-1 rounded-full border border-white/5 flex items-center space-x-1 text-[9px] font-black text-white font-mono shadow-md">
                                   <Eye className="w-3 h-3 text-[#66fcf1]" />
                                   <span>{userLiveViewers >= 1000 ? `${(userLiveViewers / 1000).toFixed(1)}K` : userLiveViewers}</span>
@@ -20676,33 +20571,48 @@ export default function App() {
                                 </div>
                                 <div className="flex items-center space-x-1 shrink-0 ml-1.5">
                                   <button
-                                    onClick={async () => {
+                                    onClick={() => {
                                       const req = userLiveGuestRequests[0];
                                       const emptySeatIdx = userLiveGuestSeats.findIndex(s => s.name === null);
-                                      if (emptySeatIdx === -1) { alert("All 8 guest seats on screen are occupied! Remove a guest first."); return; }
-                                      const targetSeatId = userLiveGuestSeats[emptySeatIdx].id;
-                                      try {
-                                        const res = await fetch(`/api/v1/hosts/${encodeURIComponent(`h-${user.uniqueId || user.username || "pardais_1001"}`)}/guest-requests/${encodeURIComponent(req.id)}/respond`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "accept", seatId: targetSeatId }) });
-                                        const data = await res.json().catch(() => ({}));
-                                        if (!res.ok) throw new Error(data?.error || "Accept failed");
-                                        setUserLiveGuestSeats(data.guestSeats || []);
-                                        setUserLiveGuestRequests(data.guestRequests || []);
-                                        triggerJoinNotif(req.username, req.level || 1, req.vipLevel || 0);
-                                      } catch (err: any) { alert(`Unable to accept guest: ${err?.message || "Please try again."}`); }
+                                      if (emptySeatIdx === -1) {
+                                        alert("All 8 guest seats on screen are occupied! Remove a guest first.");
+                                        return;
+                                      }
+                                      const updated = [...userLiveGuestSeats];
+                                      updated[emptySeatIdx] = {
+                                        id: updated[emptySeatIdx].id,
+                                        name: req.username || "Guest",
+                                        avatar: req.avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&h=150&q=80",
+                                        diamonds: "1.2K",
+                                        isMuted: false,
+                                        isCamMuted: false,
+                                        isBigFrame: false
+                                      };
+                                      setUserLiveGuestSeats(updated);
+                                      setUserLiveGuestRequests(prev => prev.filter(r => r.id !== req.id));
+                                      triggerJoinNotif(req.username, req.level || 1, (req as any).vipLevel || 0);
+                                      setUserLiveMessages(prev => [
+                                        ...prev,
+                                        {
+                                          id: "ul-accept-" + Date.now(),
+                                          username: "System 🎙️",
+                                          message: `🎉 Host accepted @${req.username} onto Guest Seat #${updated[emptySeatIdx].id}!`,
+                                          vipLevel: 0,
+                                          userLevel: 0,
+                                          isSystem: true,
+                                          isFlagged: false,
+                                          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                                        }
+                                      ]);
                                     }}
                                     className="bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white font-black text-[8.5px] px-2.5 py-1 rounded-xl shadow border border-emerald-300/40 cursor-pointer active:scale-95 transition-all"
                                   >
                                     Accept
                                   </button>
                                   <button
-                                    onClick={async () => {
+                                    onClick={() => {
                                       const reqId = userLiveGuestRequests[0].id;
-                                      try {
-                                        const res = await fetch(`/api/v1/hosts/${encodeURIComponent(`h-${user.uniqueId || user.username || "pardais_1001"}`)}/guest-requests/${encodeURIComponent(reqId)}/respond`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "reject" }) });
-                                        const data = await res.json().catch(() => ({}));
-                                        if (!res.ok) throw new Error(data?.error || "Reject failed");
-                                        setUserLiveGuestRequests(data.guestRequests || []);
-                                      } catch (err: any) { alert(`Unable to reject request: ${err?.message || "Please try again."}`); }
+                                      setUserLiveGuestRequests(prev => prev.filter(r => r.id !== reqId));
                                     }}
                                     className="bg-red-600/80 hover:bg-red-600 text-white font-bold text-[8.5px] px-2 py-1 rounded-xl shadow border border-red-400/30 cursor-pointer active:scale-95 transition-all"
                                   >
@@ -20927,12 +20837,12 @@ export default function App() {
 
                               {/* BOTTOM LIVE CHAT STREAM FEED */}
                               {userLiveChatVisible && (
-                                <div className="h-[42vh] min-h-[150px] max-h-[360px] w-full px-3 overflow-y-auto overscroll-contain touch-pan-y space-y-1 z-10 flex flex-col justify-end pb-1">
-                                  <div className="space-y-1 max-h-full overflow-y-auto scrollbar-none pr-1 bg-transparent w-full">
+                                <div className="h-32 px-3 overflow-y-auto space-y-1 z-10 flex flex-col justify-end pb-1 max-w-[210px]">
+                                  <div className="space-y-1 max-h-full overflow-y-auto scrollbar-none pr-1 bg-transparent">
                                     {userLiveMessages.slice(-15).map(msg => (
                                       <div
                                         key={msg.id}
-                                        className={`w-full text-[9px] rounded-xl p-1.5 bg-black/25 backdrop-blur-[2px] text-left break-words whitespace-normal`}
+                                        className={`text-[9px] rounded-xl p-1 bg-black/35 text-left`}
                                       >
                                         {msg.isSystem ? (
                                           <p className="leading-normal flex items-center flex-wrap gap-1 bg-transparent text-pink-300">
@@ -20948,7 +20858,7 @@ export default function App() {
                                               }}
                                               className="font-black text-[#66fcf1] hover:text-[#45a29e] hover:underline cursor-pointer transition-colors"
                                             >
-                                              {(msg as any).displayName || msg.username}
+                                              {msg.username}
                                             </span>
                                             <span>{msg.message}</span>
                                           </p>
@@ -20971,7 +20881,7 @@ export default function App() {
                                                 }}
                                                 className="font-black text-[#66fcf1] hover:text-[#45a29e] hover:underline cursor-pointer transition-colors"
                                               >
-                                                {(msg as any).displayName || msg.username}
+                                                {msg.username}
                                               </span>
                                             </span>
                                             <span className="text-gray-200 inline align-middle font-medium">{msg.message}</span>
@@ -21120,7 +21030,7 @@ export default function App() {
                                       Start PK
                                     </h4>
                                     <p className="text-[9.5px] text-gray-300 font-sans leading-normal">
-                                      1v1 PK Request for <strong className="text-pink-400">@{getDisplayName(userLiveCoHost, "co-host")}</strong>
+                                      One Versus One Lobby Request for <strong className="text-pink-400">@{userLiveCoHost?.username || "co-host"}</strong>
                                     </p>
                                   </div>
 
@@ -21132,16 +21042,16 @@ export default function App() {
                                         className="w-9 h-9 rounded-full border border-pink-500 object-cover" 
                                         alt={user.username}
                                       />
-                                      <span className="text-[7.5px] text-gray-300 font-bold mt-0.5 truncate max-w-[60px]">{getDisplayName(user)}</span>
+                                      <span className="text-[7.5px] text-gray-300 font-bold mt-0.5 truncate max-w-[60px]">{user.username}</span>
                                     </div>
                                     <span className="text-pink-500 font-black text-sm font-mono">VS</span>
                                     <div className="flex flex-col items-center">
                                       <img 
                                         src={userLiveCoHost?.avatar || "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=100&q=80"} 
                                         className="w-9 h-9 rounded-full border border-purple-500 object-cover" 
-                                        alt={getDisplayName(userLiveCoHost, "Opponent")}
+                                        alt={userLiveCoHost?.username || "Opponent"}
                                       />
-                                      <span className="text-[7.5px] text-purple-300 font-bold mt-0.5 truncate max-w-[60px]">{getDisplayName(userLiveCoHost, "Co-Host")}</span>
+                                      <span className="text-[7.5px] text-purple-300 font-bold mt-0.5 truncate max-w-[60px]">{userLiveCoHost?.username || "Co-Host"}</span>
                                     </div>
                                   </div>
 
@@ -21274,8 +21184,8 @@ export default function App() {
                                       }}
                                       className="flex-1 bg-gradient-to-r from-emerald-600 to-green-600 hover:scale-105 active:scale-95 text-white font-black py-2 rounded-xl text-[9px] uppercase tracking-wide transition-all shadow-md flex items-center justify-center space-x-1 cursor-pointer"
                                     >
-                                      <span>✓</span>
-                                      <span>{incoming1v1Invite.isPkBattle || incoming1v1Invite.inviteType === "pk_battle" ? "Accept PK Request" : "Accept Request"}</span>
+                                      <span>⚔️</span>
+                                      <span>Accept PK Request</span>
                                     </button>
                                     <button
                                       onClick={async () => {
@@ -21405,14 +21315,14 @@ export default function App() {
                                   <div className="space-y-1 bg-transparent">
                                     <div className="text-3xl">💔</div>
                                     <h3 className="text-lg font-black text-red-500 font-mono tracking-wider">DEFEAT</h3>
-                                    <p className="text-[10px] text-gray-400 font-sans">@{getDisplayName(userLiveCoHost, "Opponent")} won this battle!</p>
+                                    <p className="text-[10px] text-gray-400 font-sans">@{userLiveCoHost?.username || "Opponent"} won this battle!</p>
                                   </div>
                                 )}
 
                                 <div className="flex items-center justify-center space-x-4 py-2 px-3 bg-white/5 rounded-xl border border-white/10 font-mono text-xs">
                                   <div className="text-pink-400 font-bold">{user.username}: <span className="text-white font-black">{userLivePkScoreMy}</span></div>
                                   <span className="text-gray-500">VS</span>
-                                  <div className="text-blue-400 font-bold">{getDisplayName(userLiveCoHost, "Opponent")}: <span className="text-white font-black">{userLivePkScoreOther}</span></div>
+                                  <div className="text-blue-400 font-bold">{userLiveCoHost?.username || "Opponent"}: <span className="text-white font-black">{userLivePkScoreOther}</span></div>
                                 </div>
                               </div>
                             )}
@@ -21468,24 +21378,10 @@ export default function App() {
                                     />
                                   </div>
                                 </div>
-                                <div className="space-y-1.5 pt-1 border-t border-white/5">
-                                  <div className="flex items-center justify-between">
-                                    <span className="text-gray-300">Free AR Filter</span>
-                                    <span className="font-mono text-pink-400">{userLiveFaceFilter}</span>
-                                  </div>
-                                  <div className="grid grid-cols-3 gap-1.5 max-h-28 overflow-y-auto pr-0.5">
-                                    {["Original","Natural Beauty","Glass Skin","Soft Glow","Fresh Skin","Cat","Bunny","Dog","Devil Horns","Crown","Cool Glasses","Hearts","Flower Crown","Sparkle","Alien"].map((f) => (
-                                      <button key={f} type="button" onClick={() => setUserLiveFaceFilter(f)} className={`px-1.5 py-1.5 rounded-lg border text-[7px] font-black ${userLiveFaceFilter === f ? "bg-pink-500/20 border-pink-500 text-white" : "bg-white/5 border-white/10 text-gray-300"}`}>
-                                        {f === "Cat" ? "🐱 Cat" : f === "Bunny" ? "🐰 Bunny" : f === "Dog" ? "🐶 Dog" : f === "Devil Horns" ? "😈 Horns" : f === "Crown" ? "👑 Crown" : f === "Cool Glasses" ? "😎 Glasses" : f === "Hearts" ? "❤️ Hearts" : f === "Flower Crown" ? "🌸 Flower" : f === "Sparkle" ? "✨ Sparkle" : f === "Alien" ? "👽 Alien" : f}
-                                      </button>
-                                    ))}
-                                  </div>
-                                  <p className="text-[7px] text-gray-500">Free filters are safe render-only effects; the Agora camera track stays untouched.</p>
-                                </div>
-
                                 <button
                                   onClick={() => {
                                     setUserLiveShowBeautyModal(false);
+                                    alert("✨ Beauty metrics updated and calibrated!");
                                   }}
                                   className="w-full bg-pink-600 hover:bg-pink-500 text-white py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all"
                                 >
@@ -21896,45 +21792,49 @@ export default function App() {
                                         </div>
                                         <div className="flex items-center space-x-1.5">
                                           <button
-                                            onClick={async () => {
-                                              // ACCEPT REQUEST ON SERVER (authoritative guest seat)
+                                            onClick={() => {
+                                              // ACCEPT REQUEST
                                               const emptySeatIdx = userLiveGuestSeats.findIndex(s => s.name === null);
                                               if (emptySeatIdx === -1) {
                                                 alert("All guest seats are currently full! Remove a guest first.");
                                                 return;
                                               }
-                                              const targetSeatId = userLiveGuestSeats[emptySeatIdx].id;
-                                              try {
-                                                const res = await fetch(`/api/v1/hosts/${encodeURIComponent(`h-${user.uniqueId || user.username || "pardais_1001"}`)}/guest-requests/${encodeURIComponent(req.id)}/respond`, {
-                                                  method: "POST",
-                                                  headers: { "Content-Type": "application/json" },
-                                                  body: JSON.stringify({ action: "accept", seatId: targetSeatId })
-                                                });
-                                                const data = await res.json().catch(() => ({}));
-                                                if (!res.ok) throw new Error(data?.error || "Accept failed");
-                                                setUserLiveGuestSeats(data.guestSeats || []);
-                                                setUserLiveGuestRequests(data.guestRequests || []);
-                                                triggerJoinNotif(req.username, req.level || 1, req.vipLevel || 0);
-                                                alert(`Accepted ${req.username} onto Guest Seat ${targetSeatId}!`);
-                                              } catch (err: any) {
-                                                alert(`Unable to accept guest: ${err?.message || "Please try again."}`);
-                                              }
+                                              const updatedSeats = [...userLiveGuestSeats];
+                                              updatedSeats[emptySeatIdx] = {
+                                                id: updatedSeats[emptySeatIdx].id,
+                                                name: req.username,
+                                                avatar: req.avatar,
+                                                vipLevel: req.vipLevel || 0,
+                                                diamonds: "10.0K",
+                                                isMuted: false,
+                                                isCamMuted: false,
+                                                isBigFrame: false
+                                              };
+                                              setUserLiveGuestSeats(updatedSeats);
+                                              setUserLiveGuestRequests(prev => prev.filter(r => r.id !== req.id));
+                                              setUserLiveMessages(prev => [
+                                                ...prev,
+                                                {
+                                                  id: "ul-accept-" + Date.now(),
+                                                  username: "System 🎙️",
+                                                  message: `${req.username} has joined Guest Seat ${updatedSeats[emptySeatIdx].id}!`,
+                                                  vipLevel: 0,
+                                                  userLevel: 0,
+                                                  isSystem: true,
+                                                  isFlagged: false,
+                                                  timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                                                }
+                                              ]);
+                                              alert(`Accepted ${req.username} onto Guest Seat ${updatedSeats[emptySeatIdx].id}!`);
                                             }}
                                             className="bg-green-600 hover:bg-green-500 text-white text-[8px] font-black uppercase px-2 py-1 rounded"
                                           >
                                             Accept
                                           </button>
                                           <button
-                                            onClick={async () => {
-                                              try {
-                                                const res = await fetch(`/api/v1/hosts/${encodeURIComponent(`h-${user.uniqueId || user.username || "pardais_1001"}`)}/guest-requests/${encodeURIComponent(req.id)}/respond`, {
-                                                  method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "reject" })
-                                                });
-                                                const data = await res.json().catch(() => ({}));
-                                                if (!res.ok) throw new Error(data?.error || "Reject failed");
-                                                setUserLiveGuestRequests(data.guestRequests || []);
-                                                alert(`Rejected request from ${req.username}.`);
-                                              } catch (err: any) { alert(`Unable to reject request: ${err?.message || "Please try again."}`); }
+                                            onClick={() => {
+                                              setUserLiveGuestRequests(prev => prev.filter(r => r.id !== req.id));
+                                              alert(`Rejected request from ${req.username}.`);
                                             }}
                                             className="bg-red-600/30 hover:bg-red-600/50 text-red-300 text-[8px] font-black uppercase px-2 py-1 rounded"
                                           >
@@ -22190,7 +22090,7 @@ export default function App() {
                                           </div>
                                           <div className="flex flex-col bg-transparent">
                                             <div className="flex items-center space-x-1 bg-transparent">
-                                              <span className="text-[10px] font-black text-white">{seat.displayName || seat.name}</span>
+                                              <span className="text-[10px] font-black text-white">{seat.name}</span>
                                               <span className="text-[6.5px] bg-yellow-400 text-black px-1 rounded font-black font-mono leading-none flex items-center">Lv.{Math.floor(Math.random() * 20) + 10}</span>
                                             </div>
                                             <span className="text-[7px] text-gray-400 font-mono mt-0.5">UID: 981726{seat.id}</span>
@@ -22398,8 +22298,6 @@ export default function App() {
                                   <button
                                     onClick={() => {
                                       setViewerRequestStatus("accepted");
-                                      setViewerLiveGuestModeActive(true);
-                                      setViewerGuestCamEnabled(true);
                                       const targetSeatId = viewerInvitationPending.seatId;
                                       
                                       const updatedSeats = [...viewerLiveGuestSeats];
@@ -22633,7 +22531,7 @@ export default function App() {
                                       }}
                                       className="col-span-2 p-2.5 rounded bg-gradient-to-r from-red-600 via-[#ff007f] to-purple-600 hover:from-red-500 hover:to-purple-500 text-white border border-red-500/20 text-center font-black text-[8.5px] uppercase tracking-wider animate-pulse cursor-pointer"
                                     >
-                                      ⚔️ 1v1
+                                      👥 One Versus One Lobby
                                     </button>
                                   )}
                                   <button
@@ -22669,6 +22567,15 @@ export default function App() {
                                   </button>
                                   <button
                                     onClick={() => {
+                                      setUserLiveShowBeautyModal(true);
+                                      setUserLiveShowMoreModal(false);
+                                    }}
+                                    className="p-2 rounded bg-white/5 hover:bg-white/10 text-white border border-white/5 text-center font-bold text-[8px] cursor-pointer"
+                                  >
+                                    ✨ Beauty & Filters
+                                  </button>
+                                  <button
+                                    onClick={() => {
                                       setUserLiveShowMusicModal(true);
                                       setUserLiveShowMoreModal(false);
                                     }}
@@ -22700,7 +22607,7 @@ export default function App() {
                                     }}
                                     className="p-2 rounded bg-white/5 hover:bg-white/10 text-white border border-white/5 text-center font-bold text-[8px] cursor-pointer"
                                   >
-                                    ⚔️ 1v1
+                                    👥 One Versus One Lobby
                                   </button>
                                   <button
                                     onClick={() => {
@@ -22794,7 +22701,9 @@ export default function App() {
 
                                 {/* Track list (scrollable) */}
                                 <div className="flex-1 overflow-y-auto pr-1 space-y-2 max-h-[35vh]">
-                                  {MOCK_TRACKS.map((track) => {
+                                  {musicLibraryTracks.length === 0 ? (
+                                    <div className="py-8 text-center text-[8px] text-gray-500 font-mono">No songs are available yet. Ask an authorized admin to add music.</div>
+                                  ) : musicLibraryTracks.map((track) => {
                                     const isActive = userLiveActiveTrack?.id === track.id;
                                     return (
                                       <div 
@@ -22937,7 +22846,7 @@ export default function App() {
                                     </button>
                                   </div>
                                   <p className="text-[8.5px] text-gray-400 mt-1 leading-normal">
-                                    Send a 1v1 invitation. Solo hosts can receive it; Guest and PK hosts stay visible as busy and cannot be invited.
+                                    Send a co-host request. Only available Solo Live hosts are shown. Accepted co-hosts join in 1v1 mode.
                                   </p>
                                 </div>
 
@@ -23014,9 +22923,7 @@ export default function App() {
                                         fans: String(u.fans || "10K fans"),
                                         level: Number(u.level || 1),
                                         flag: "🇵🇰",
-                                        inPkBattle: Boolean(u.inPk || u.mode === "pk"),
-                                        mode: u.mode || (u.status?.includes("Guest") ? "guest" : u.status?.includes("PK") ? "pk" : "solo"),
-                                        canInvite: u.canInvite !== false && u.mode !== "guest" && u.mode !== "pk",
+                                        inPkBattle: false,
                                         status: u.status || "🔴 Live Solo"
                                       }))
                                       .filter(host => !host.inPkBattle && host.username.toLowerCase() !== user?.username?.toLowerCase() && (
@@ -23047,7 +22954,6 @@ export default function App() {
 
                                     return hostList.map((host) => {
                                       const isInvited = userLiveInvitedHostId === host.username || userLiveInvitedHostId === host.id;
-                                      const isBusy = host.canInvite === false || host.mode === "guest" || host.mode === "pk";
                                       return (
                                         <div 
                                           key={host.id}
@@ -23068,16 +22974,16 @@ export default function App() {
                                           </div>
 
                                           <button
-                                            disabled={userLiveInvitedHostId !== null || isBusy}
-                                            onClick={() => { if (!isBusy) handleInviteHostTo1v1Match(host); }}
+                                            disabled={userLiveInvitedHostId !== null}
+                                            onClick={() => {
+                                              handleInviteHostTo1v1Match(host);
+                                            }}
                                             className={`px-3 py-1.5 rounded-full text-[8.5px] font-black uppercase tracking-wider font-mono transition-all cursor-pointer ${
                                               isInvited
                                                 ? "bg-purple-900/20 text-purple-400 border border-purple-500/20 flex items-center space-x-1"
-                                                : isBusy
-                                                  ? "bg-gray-800 text-gray-500 border border-white/5 cursor-not-allowed opacity-60"
-                                                  : userLiveInvitedHostId !== null
-                                                    ? "bg-gray-800 text-gray-500 border border-white/5 cursor-not-allowed opacity-50"
-                                                    : "bg-gradient-to-r from-[#ff007f] to-[#7b2cbf] text-white hover:scale-105 active:scale-95 shadow-md"
+                                                : userLiveInvitedHostId !== null
+                                                  ? "bg-gray-800 text-gray-500 border border-white/5 cursor-not-allowed opacity-50"
+                                                  : "bg-gradient-to-r from-[#ff007f] to-[#7b2cbf] text-white hover:scale-105 active:scale-95 shadow-md"
                                             }`}
                                           >
                                             {isInvited ? (
@@ -23086,7 +22992,7 @@ export default function App() {
                                                 <span>{userLiveInviteCountdown}s</span>
                                               </>
                                             ) : (
-                                              isBusy ? (host.status || "Busy") : "Invite"
+                                              "Invite"
                                             )}
                                           </button>
                                         </div>
@@ -23107,9 +23013,9 @@ export default function App() {
                             <div className="bg-black border-t border-white/5 py-1 px-4 z-10 flex items-center justify-between text-center select-none">
                               {[
                                 { id: "mute", label: userLiveMic ? "Mute" : "Unmute", icon: userLiveMic ? "🔇" : "🎙️" },
-                                { id: "camera", label: userLiveCam ? "Camera" : "Camera Off", icon: userLiveCam ? "📷" : "🚫" },
-                                { id: "beauty", label: "Beauty", icon: "✨" },
+                                { id: "cover", label: "Cover", icon: "🖼️" },
                                 { id: "cohost", label: "Invite Host", icon: "👥", primary: true },
+                                { id: "start-guest", label: "Start Guest", icon: "🎙️", primary: true },
                                 { id: "more", label: "More", icon: "•••" }
                               ].map((btn) => (
                                 <button
@@ -23118,12 +23024,12 @@ export default function App() {
                                     if (btn.id === "mute") {
                                       setUserLiveMic(!userLiveMic);
                                       alert(userLiveMic ? "🎙️ Broadcast Mic is now MUTED" : "🎙️ Broadcast Mic is now LIVE / UNMUTED");
-                                    } else if (btn.id === "camera") {
-                                      setUserLiveCam(prev => !prev);
-                                    } else if (btn.id === "beauty") {
-                                      setUserLiveShowBeautyModal(true);
+                                    } else if (btn.id === "cover") {
+                                      setUserLiveShowCoverModal(true);
                                     } else if (btn.id === "cohost") {
                                       setUserLivePkInvitePanelOpen(true);
+                                    } else if (btn.id === "start-guest") {
+                                      handleStartGuestFromSolo();
                                     } else if (btn.id === "more") {
                                       setUserLiveShowMoreModal(true);
                                     }
@@ -23134,11 +23040,7 @@ export default function App() {
                                       : "hover:bg-white/5 p-1 rounded-lg cursor-pointer"
                                   }`}
                                 >
-                                  <span className={btn.primary ? "text-sm text-white font-bold" : "text-sm text-gray-200"}>
-                                    {btn.id === "camera" ? (
-                                      userLiveCam ? <Camera className="w-4 h-4" /> : <CameraOff className="w-4 h-4" />
-                                    ) : btn.icon}
-                                  </span>
+                                  <span className={btn.primary ? "text-sm text-white font-bold" : "text-sm text-gray-200"}>{btn.icon}</span>
                                   <span className="text-[7px] text-gray-300 font-bold tracking-wider mt-0.5">{btn.label}</span>
                                 </button>
                               ))}
@@ -25651,11 +25553,7 @@ export default function App() {
                               </div>
                             </div>
 
-                            <div className="flex items-center space-x-1.5">
-                              <button type="button" onClick={() => setShowNotifSettingsDrawer(true)} className="p-1.5 rounded-lg bg-[#0e0e15] border border-[#2a2a3a] text-gray-300 hover:text-pink-400 hover:border-pink-500/50 transition-all" title="Notification Settings">
-                                <Settings className="w-3.5 h-3.5" />
-                              </button>
-                                                        {/* 3-Dot Options Dropdown */}
+                            {/* 3-Dot Options Dropdown */}
                             <div className="relative">
                               <button
                                 type="button"
@@ -25739,7 +25637,6 @@ export default function App() {
                                   </div>
                                 </>
                               )}
-                            </div>
                             </div>
                           </div>
 
@@ -29847,13 +29744,9 @@ export default function App() {
                               if (!amt || amt <= 0) return;
                               setAdminAgencyCoinSubmitting(true);
 
-                              const adminToken = localStorage.getItem("pardais_auth_token");
                               fetch("/api/v1/agency-coin-transactions", {
                                 method: "POST",
-                                headers: {
-                                  "Content-Type": "application/json",
-                                  ...(adminToken ? { Authorization: `Bearer ${adminToken}` } : {})
-                                },
+                                headers: { "Content-Type": "application/json" },
                                 body: JSON.stringify({
                                   agencyId: selectedAgencyForCoins.id,
                                   agencyType: selectedAgencyForCoins.agencyType || "coin_seller",
@@ -31236,18 +31129,7 @@ export default function App() {
                           <div className="space-y-1.5 pt-2 bg-transparent">
                             <button
                               type="button"
-                              onClick={async () => {
-                                if (activePermissionRequest.type === "notifications" && typeof window !== "undefined" && "Notification" in window) {
-                                  try {
-                                    const result = await Notification.requestPermission();
-                                    if (result !== "granted") {
-                                      const newPerms = { ...permissionStates, notifications: "denied" };
-                                      savePermissionStates(newPerms);
-                                      setActivePermissionRequest(null);
-                                      return;
-                                    }
-                                  } catch {}
-                                }
+                              onClick={() => {
                                 const newPerms = { ...permissionStates, [activePermissionRequest.type]: "granted" };
                                 savePermissionStates(newPerms);
                                 activePermissionRequest.onGranted();
@@ -31261,17 +31143,7 @@ export default function App() {
                             </button>
                             <button
                               type="button"
-                              onClick={async () => {
-                                if (activePermissionRequest.type === "notifications" && typeof window !== "undefined" && "Notification" in window) {
-                                  try {
-                                    const result = await Notification.requestPermission();
-                                    if (result !== "granted") {
-                                      savePermissionStates({ ...permissionStates, notifications: "denied" });
-                                      setActivePermissionRequest(null);
-                                      return;
-                                    }
-                                  } catch {}
-                                }
+                              onClick={() => {
                                 const newPerms = { ...permissionStates, [activePermissionRequest.type]: "granted" };
                                 savePermissionStates(newPerms);
                                 activePermissionRequest.onGranted();
@@ -31579,18 +31451,14 @@ export default function App() {
                           {/* Toggle Options */}
                           <div className="space-y-2 text-left bg-transparent">
                             {[
-                              { key: "followers", label: "👤 New Followers", desc: "Someone follows you" },
-                              { key: "followUnfollow", label: "🔄 Follow / Unfollow", desc: "Follow and unfollow activity" },
-                              { key: "friends", label: "🤝 Friends", desc: "Mutual-follow friendship alerts" },
-                              { key: "likes", label: "💖 Video / Live Likes", desc: "Likes on videos, reels and live" },
-                              { key: "comments", label: "💬 Comments", desc: "Comments and replies" },
-                              { key: "messages", label: "✉️ Messages", desc: "New direct messages and chats" },
-                              { key: "gifts", label: "🎁 Gifts", desc: "Gift receipts" },
-                              { key: "transactions", label: "🪙 Coin Transactions", desc: "Wallet and coin activity" },
-                              { key: "announcements", label: "📢 Announcements", desc: "Official Pardais updates" },
-                              { key: "security", label: "🔐 Login / Logout", desc: "Account security activity" },
-                              { key: "sound", label: "🔊 Notification Sound", desc: "Sound for enabled alerts" },
-                              { key: "push", label: "📱 Push Notifications", desc: "Native/browser push when available" },
+                              { key: "sound", label: "🔊 Sound Alerts", desc: "Play audio chime on incoming notifications" },
+                              { key: "push", label: "📱 Browser Push", desc: "Receive native push alerts on desktop & mobile" },
+                              { key: "followers", label: "👤 New Followers", desc: "Get notified when someone follows you" },
+                              { key: "likes", label: "💖 Likes & Reactions", desc: "Get notified when people like your reels or profile" },
+                              { key: "comments", label: "💬 Comments", desc: "Get notified on comment replies & posts" },
+                              { key: "gifts", label: "🎁 Gifts", desc: "Get notified on real-time gift receipts" },
+                              { key: "transactions", label: "🪙 Coin Transactions", desc: "Wallet updates and coin balance activity logs" },
+                              { key: "announcements", label: "📢 Admin Announcements", desc: "Platform updates and community guidelines" },
                             ].map((opt) => (
                               <div key={opt.key} className="flex items-center justify-between p-2.5 rounded-xl bg-[#0e0e15] border border-white/5">
                                 <div className="space-y-0.5 bg-transparent">
@@ -31733,26 +31601,6 @@ export default function App() {
                   </p>
                 </div>
               </button>
-
-              {clientView === "user-live" && viewerMenuUser.username !== user.username && (
-                <button
-                  onClick={async () => {
-                    const emptySeat = (userLiveGuestSeats || []).find((seat: any) => !seat?.name);
-                    if (!emptySeat) { alert("All guest seats are full. Remove a guest first."); return; }
-                    const hostId = `h-${user.uniqueId || user.username || "pardais_1001"}`;
-                    try {
-                      const res = await fetch(`/api/v1/hosts/${hostId}/invites`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ targetUsername: viewerMenuUser.username, seatId: emptySeat.id }) });
-                      const data = await res.json().catch(() => ({}));
-                      if (!res.ok) throw new Error(data?.error || "Invite failed");
-                      alert(`🎙️ Guest invitation sent to @${viewerMenuUser.username} for Seat #${emptySeat.id}.`);
-                      setViewerMenuUser(null);
-                    } catch (err: any) { alert(`Unable to send guest invitation: ${err?.message || "Please try again."}`); }
-                  }}
-                  className="w-full flex items-center space-x-3 p-2 bg-gradient-to-r from-pink-600/20 to-purple-600/20 hover:from-pink-600/30 hover:to-purple-600/30 rounded-xl border border-pink-500/30 text-pink-100 text-xs transition-all cursor-pointer text-left"
-                >
-                  <span className="text-base">🎙️</span><div className="flex-1"><p className="font-bold text-white">Invite as Guest</p><p className="text-[8.5px] text-gray-300">Invite this viewer to join your live screen</p></div>
-                </button>
-              )}
 
               <button
                 onClick={() => {

@@ -112,6 +112,8 @@ export function handleQuotaError(err: any, operationName: string) {
 export const COLLECTIONS = [
   "users",
   "gifts",
+  "musicTracks",
+  "musicFavorites",
   "categories",
   "hosts",
   "parties",
@@ -178,6 +180,8 @@ export const dbDataCache: any = {
   },
   users: [],
   gifts: [],
+  musicTracks: [],
+  musicFavorites: [],
   categories: [],
   hosts: [],
   parties: [],
@@ -385,23 +389,6 @@ export async function persistEmailRegistry(email: string, user: any): Promise<bo
   }
 }
 
-export async function listPersistedUsers(): Promise<any[]> {
-  if (!db || !shouldTryFirestore()) return [];
-  try {
-    const snap = await withTimeout(getDocs(collection(db, "users")), 6000, null as any);
-    if (!snap) return [];
-    const items: any[] = [];
-    snap.forEach((docSnap: any) => {
-      const data = docSnap.data();
-      if (data && (data.uid || data.uniqueId || data.username || data.email)) items.push(data);
-    });
-    return items;
-  } catch (err) {
-    handleQuotaError(err, "list persisted users");
-    return [];
-  }
-}
-
 export async function getPersistedUserForSession(session: any): Promise<any | null> {
   if (!session || !shouldTryFirestore()) return null;
   const candidates: any[] = [];
@@ -503,6 +490,8 @@ export async function checkAndSeedDatabase() {
     const collectionsToSeed = [
       { name: "users", key: "username", data: localDb.users },
       { name: "gifts", key: "id", data: localDb.gifts },
+      { name: "musicTracks", key: "id", data: localDb.musicTracks },
+      { name: "musicFavorites", key: "id", data: localDb.musicFavorites },
       { name: "hosts", key: "id", data: [] }, // No demo hosts!
       { name: "families", key: "id", data: localDb.families },
       { name: "agencies", key: "id", data: [] }, // No demo agencies!
@@ -636,6 +625,24 @@ export function startFirestoreSynchronization() {
           });
           dbDataCache.gifts = Array.from(giftMap.values());
         }
+      } else if (colName === "musicTracks") {
+        // Music catalog is additive and durable; never erase the library because a
+        // temporary/partial Firestore snapshot is empty.
+        if (items.length > 0) {
+          const musicMap = new Map<string, any>();
+          (dbDataCache.musicTracks || []).forEach((t: any) => { if (t?.id) musicMap.set(String(t.id), t); });
+          items.forEach((t: any) => { if (t?.id) musicMap.set(String(t.id), { ...musicMap.get(String(t.id)), ...t }); });
+          dbDataCache.musicTracks = Array.from(musicMap.values());
+        }
+      } else if (colName === "musicFavorites") {
+        // User music saves are durable. Empty snapshots are treated as transient so
+        // a reconnect can never wipe a user's saved songs from the local cache.
+        if (items.length > 0) {
+          const favoriteMap = new Map<string, any>();
+          (dbDataCache.musicFavorites || []).forEach((f: any) => { if (f?.id) favoriteMap.set(String(f.id), f); });
+          items.forEach((f: any) => { if (f?.id) favoriteMap.set(String(f.id), { ...favoriteMap.get(String(f.id)), ...f }); });
+          dbDataCache.musicFavorites = Array.from(favoriteMap.values());
+        }
       } else if (colName === "posts") {
         // Never wipe durable Moments posts on an empty/stale snapshot.
         if (items.length > 0) {
@@ -765,29 +772,7 @@ export async function syncDocument(collectionName: string, docId: string, data: 
   if (!shouldTryFirestore()) return false;
   try {
     if (!docId) return false;
-    const cleanData = sanitizeForFirestore(data);
-
-    // IMPORTANT: user state is account-scoped and must never depend on which
-    // legacy mirror happened to be written last. Older builds wrote follows,
-    // likes, gifts, wallets, etc. only to the username document while login
-    // could later resolve the uid_/email_ mirror. That made an app/backend
-    // restart look like a data reset. Whenever ANY user document is synced,
-    // fan the exact same canonical snapshot out to every stable identity key.
-    if (collectionName === "users" && data && typeof data === "object") {
-      const mirrors = new Set<string>();
-      mirrors.add(String(docId));
-      if (data.username) mirrors.add(String(data.username));
-      if (data.uid) mirrors.add(`uid_${String(data.uid)}`);
-      if (data.uniqueId) mirrors.add(`id_${String(data.uniqueId).toLowerCase()}`);
-      if (data.email) mirrors.add(`email_${String(data.email).toLowerCase().replace(/[^a-zA-Z0-9]/g, "_")}`);
-
-      for (const mirrorId of mirrors) {
-        await setDoc(doc(db, "users", mirrorId), cleanData, { merge: true });
-      }
-      return true;
-    }
-
-    await setDoc(doc(db, collectionName, String(docId)), cleanData, { merge: true });
+    await setDoc(doc(db, collectionName, String(docId)), sanitizeForFirestore(data), { merge: true });
     return true;
   } catch (err) {
     handleQuotaError(err, `syncDocument ${collectionName}/${docId}`);

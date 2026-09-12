@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Sparkles, Trophy, RotateCw, Volume2, VolumeX, ShieldCheck, Flame, Zap, ArrowLeft, Play, Coins, User } from "lucide-react";
 import { UserProfile } from "../../types";
+import { getProgressionFromCoins } from "../../levelUtils";
 
 interface DragonTigerProps {
   user: UserProfile;
@@ -8,8 +9,6 @@ interface DragonTigerProps {
   onBack: () => void;
   soundEnabled: boolean;
   onGameWin?: (coins: number, gameName: string) => void;
-  onCoinSpend?: (amount: number, gameName: string) => Promise<any>;
-  onCreatorEarning?: (amount: number, gameName: string) => Promise<any>;
 }
 
 type BetTarget = "dragon" | "tiger" | "tie" | "suited_tie";
@@ -45,9 +44,7 @@ export const DragonTigerGame: React.FC<DragonTigerProps> = ({
   setUser,
   onBack,
   soundEnabled,
-  onGameWin,
-  onCoinSpend,
-  onCreatorEarning
+  onGameWin
 }) => {
   const [selectedChip, setSelectedChip] = useState<number>(100);
   const [bets, setBets] = useState<{ [key in BetTarget]: number }>({
@@ -67,7 +64,7 @@ export const DragonTigerGame: React.FC<DragonTigerProps> = ({
   const [lastWinAmount, setLastWinAmount] = useState<number>(0);
   const [history, setHistory] = useState<("D" | "T" | "Tie")[]>(["D", "T", "T", "D", "Tie", "D", "T", "D"]);
 
-  const totalBet = Object.values(bets).reduce<number>((a, b) => a + Number(b), 0);
+  const totalBet = Object.values(bets).reduce((a, b) => a + b, 0);
 
   // Sound effect trigger
   const playSound = (freq: number, type: OscillatorType = "sine", duration: number = 0.1) => {
@@ -102,19 +99,26 @@ export const DragonTigerGame: React.FC<DragonTigerProps> = ({
     return () => clearTimeout(timer);
   }, [gameState, countdown]);
 
-  const handlePlaceBet = async (target: BetTarget) => {
+  const handlePlaceBet = (target: BetTarget) => {
     if (gameState !== "betting") return;
     if (user.coins < selectedChip) {
       alert("❌ Insufficient Gifting Coins to place this chip bet!");
       return;
     }
 
-    try {
-      if (onCoinSpend) await onCoinSpend(selectedChip, "Dragon vs Tiger");
-    } catch (err: any) {
-      alert(err?.message || "Coin transaction failed. Please try again.");
-      return;
-    }
+    // Deduct coins & add XP
+    setUser(prev => {
+      const newXp = (prev.xp || 0) + selectedChip;
+      const prog = getProgressionFromCoins(newXp);
+      return {
+        ...prev,
+        coins: Math.max(0, (prev.coins || 0) - selectedChip),
+        xp: newXp,
+        userLevel: prog.level,
+        level: prog.level,
+        vipLevel: prog.vipLevel
+      };
+    });
 
     setBets(prev => ({
       ...prev,
@@ -205,9 +209,10 @@ export const DragonTigerGame: React.FC<DragonTigerProps> = ({
           }
 
           if (payout > 0) {
-            if (onCreatorEarning) {
-              void onCreatorEarning(payout, "Dragon vs Tiger").catch((err) => console.error("Dragon vs Tiger earning persistence failed:", err));
-            }
+            setUser(prev => ({
+              ...prev,
+              diamonds: (prev.diamonds || 0) + payout
+            }));
             setLastWinAmount(payout);
             playSound(900, "sine", 0.4);
             if (onGameWin) onGameWin(payout, "Dragon vs Tiger");

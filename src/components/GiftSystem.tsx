@@ -49,7 +49,7 @@ const isPlayableGiftVideoUrl = (url: any) => {
 const resolveGiftAnimationVideoUrl = (gift: any): string => {
   const candidates = [gift?.videoUrl, gift?.animationUrl, gift?.animationFile];
   for (const candidate of candidates) {
-    if (isPlayableGiftVideoUrl(candidate) || /\.svg(?:$|[?#])/i.test(String(candidate || "").trim())) return String(candidate).trim();
+    if (isPlayableGiftVideoUrl(candidate)) return String(candidate).trim();
   }
   return "";
 };
@@ -375,7 +375,7 @@ export const ViewerGiftBox: React.FC<ViewerGiftBoxProps> = ({
         animate={{ y: 0 }}
         exit={{ y: "100%" }}
         transition={{ type: "spring", damping: 28, stiffness: 260 }}
-        className="fixed left-0 right-0 bottom-0 z-[1000] h-[53vh] max-h-[590px] min-h-[390px] bg-[#101018]/[0.98] border-t border-white/10 rounded-t-[28px] shadow-[0_-12px_45px_rgba(0,0,0,0.75)] backdrop-blur-xl flex flex-col overflow-hidden"
+        className="absolute left-0 right-0 bottom-0 z-[60] h-[53vh] max-h-[590px] min-h-[390px] bg-[#101018]/[0.98] border-t border-white/10 rounded-t-[28px] shadow-[0_-12px_45px_rgba(0,0,0,0.75)] backdrop-blur-xl flex flex-col overflow-hidden"
       >
         {/* Bottom-sheet handle */}
         <div className="flex justify-center pt-2 pb-1 shrink-0">

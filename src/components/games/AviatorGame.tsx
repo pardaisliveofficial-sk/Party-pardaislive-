@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { ArrowLeft, Sparkles, Zap, Flame, Trophy, Play, CheckCircle2, RotateCw } from "lucide-react";
 import { UserProfile } from "../../types";
+import { getProgressionFromCoins } from "../../levelUtils";
 
 interface AviatorGameProps {
   user: UserProfile;
@@ -8,8 +9,6 @@ interface AviatorGameProps {
   onBack: () => void;
   soundEnabled: boolean;
   onGameWin?: (coins: number, gameName: string) => void;
-  onCoinSpend?: (amount: number, gameName: string) => Promise<any>;
-  onCreatorEarning?: (amount: number, gameName: string) => Promise<any>;
 }
 
 const BET_PRESETS = [50, 100, 500, 1000, 5000, 10000, 50000, 100000];
@@ -19,9 +18,7 @@ export const AviatorGame: React.FC<AviatorGameProps> = ({
   setUser,
   onBack,
   soundEnabled,
-  onGameWin,
-  onCoinSpend,
-  onCreatorEarning
+  onGameWin
 }) => {
   const [betAmount, setBetAmount] = useState<number>(100);
   const [autoCashoutMult, setAutoCashoutMult] = useState<number | null>(null);
@@ -217,7 +214,7 @@ export const AviatorGame: React.FC<AviatorGameProps> = ({
     ctx.restore();
   };
 
-  const handlePlaceBet = async () => {
+  const handlePlaceBet = () => {
     if (gameState !== "waiting" && gameState !== "flying") return;
     if (hasBet) return;
     if (user.coins < betAmount) {
@@ -225,12 +222,19 @@ export const AviatorGame: React.FC<AviatorGameProps> = ({
       return;
     }
 
-    try {
-      if (onCoinSpend) await onCoinSpend(betAmount, "Aviator");
-    } catch (err: any) {
-      alert(err?.message || "Coin transaction failed. Please try again.");
-      return;
-    }
+    // Deduct coins & level progress
+    setUser(prev => {
+      const newXp = (prev.xp || 0) + betAmount;
+      const prog = getProgressionFromCoins(newXp);
+      return {
+        ...prev,
+        coins: Math.max(0, (prev.coins || 0) - betAmount),
+        xp: newXp,
+        userLevel: prog.level,
+        level: prog.level,
+        vipLevel: prog.vipLevel
+      };
+    });
 
     setHasBet(true);
     playTone(550, "sine", 0.1);
@@ -246,10 +250,11 @@ export const AviatorGame: React.FC<AviatorGameProps> = ({
     setCashoutMult(finalMult);
     setCashoutProfit(winAmount);
 
-    // Persist winnings in the Creator Center earning wallet.
-    if (onCreatorEarning) {
-      void onCreatorEarning(winAmount, "Aviator").catch((err) => console.error("Aviator earning persistence failed:", err));
-    }
+    // Credit to diamonds earning wallet
+    setUser(prev => ({
+      ...prev,
+      diamonds: (prev.diamonds || 0) + winAmount
+    }));
 
     playTone(880, "triangle", 0.35);
     if (onGameWin) onGameWin(winAmount, "Aviator");

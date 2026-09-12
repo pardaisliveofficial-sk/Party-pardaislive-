@@ -6,6 +6,13 @@ export interface MusicTrack {
   duration: string;
   category: "Ambient" | "Chill Beats" | "Sufi Chill" | "Electro Pop" | "Instrumental";
   cover: string;
+  provider?: "pardais" | "audius";
+  providerTrackId?: string;
+  permalink?: string;
+  isStreamable?: boolean;
+  playCount?: number;
+  favoriteCount?: number;
+  source?: string;
 }
 
 export const PARDAIS_MUSIC_TRACKS: MusicTrack[] = [
