@@ -12688,7 +12688,7 @@ export default function App() {
                                 {viewerLiveGuestSeats.map(seat => (
                                   <div
                                     key={seat.id}
-                                    onClick={() => {
+                                    onClick={async () => {
                                       if (!seat.name) {
                                         if (!activeHost?.id || !user?.username) { alert("Please login to join as a guest."); return; }
                                         try {
