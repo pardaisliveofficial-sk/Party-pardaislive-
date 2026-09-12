@@ -4229,14 +4229,6 @@ export default function App() {
     setPartyMusicVolume(userLiveMusicVolume);
   }, [clientView, userLiveActiveTrack?.id, userLiveMusicPlaying, userLiveMusicVolume]);
 
-  // Keep both music controllers in lock-step for Solo + Guest Room.
-  useEffect(() => {
-    if (clientView !== "user-live") return;
-    if (partyMusicTrack?.id !== userLiveActiveTrack?.id) setUserLiveActiveTrack(partyMusicTrack);
-    if (partyMusicPlaying !== userLiveMusicPlaying) setUserLiveMusicPlaying(partyMusicPlaying);
-    if (Math.abs(partyMusicVolume - userLiveMusicVolume) > 0.001) setUserLiveMusicVolume(partyMusicVolume);
-  }, [clientView, partyMusicTrack?.id, partyMusicPlaying, partyMusicVolume]);
-
   const searchAudiusMusic = async (query: string) => {
     const q = query.trim();
     if (q.length < 2) {
@@ -4257,14 +4249,44 @@ export default function App() {
     }
   };
 
+  // Shared Solo/Guest music opener + playback actions.
+  // The opener refreshes the exact production library already used by Party.
+  const openUserLiveMusicModal = () => {
+    setMusicSource("library");
+    setPartyMusicSearch("");
+    setUserLiveShowMusicModal(true);
+    void loadProductionMusicLibrary();
+  };
+
+  const selectSharedMusicTrack = (track: MusicTrack) => {
+    setPartyMusicTrack(track);
+    setPartyMusicPlaying(true);
+    setUserLiveActiveTrack(track);
+    setUserLiveMusicPlaying(true);
+  };
+
+  const stopSharedMusicTrack = () => {
+    setPartyMusicPlaying(false);
+    setPartyMusicTrack(null);
+    setUserLiveMusicPlaying(false);
+    setUserLiveActiveTrack(null);
+  };
+
+  // Refresh the production music library whenever Solo/Guest music is opened.
   useEffect(() => {
-    if (!showPartyMusicLibrary || musicSource !== "audius") return;
+    if (!userLiveShowMusicModal) return;
+    void loadProductionMusicLibrary();
+    if (musicSource === "saved") void loadSavedMusic();
+  }, [userLiveShowMusicModal, musicSource]);
+
+  useEffect(() => {
+    if ((!showPartyMusicLibrary && !userLiveShowMusicModal) || musicSource !== "audius") return;
     const q = partyMusicSearch.trim();
     const timer = window.setTimeout(() => {
       searchAudiusMusic(q);
     }, 450);
     return () => window.clearTimeout(timer);
-  }, [partyMusicSearch, musicSource, showPartyMusicLibrary]);
+  }, [partyMusicSearch, musicSource, showPartyMusicLibrary, userLiveShowMusicModal]);
 
   const isMusicSaved = (track: MusicTrack) => {
     const providerId = String(track.providerTrackId || track.id);
@@ -11174,183 +11196,7 @@ export default function App() {
                               </div>
                             </div>
 
-                            {/* 🎙️ 12-SEAT LOUNGE AUDIOGRID AREA (3 COLUMNS x 4 ROWS = 12 HEXAGON SEATS) */}
-                            <div className="px-3 py-2 space-y-2 bg-transparent">
-                              <div className={`grid ${Number(party.maxCapacity || party.seatCount || 12) === 25 ? "grid-cols-5 gap-x-1.5 gap-y-2" : "grid-cols-3 gap-x-2.5 gap-y-3"} bg-black/50 backdrop-blur-md border border-amber-500/30 rounded-2xl p-2 shadow-[0_0_30px_rgba(0,0,0,0.9)] relative overflow-hidden`}>
-                                {/* Ambient decorative highlights inside grid */}
-                                <div className="absolute -top-16 -left-16 w-36 h-36 rounded-full bg-amber-500/15 blur-3xl pointer-events-none" />
-                                <div className="absolute -bottom-16 -right-16 w-36 h-36 rounded-full bg-yellow-500/15 blur-3xl pointer-events-none" />
-
-                                {(() => {
-                                  const seatCount = Number(party.maxCapacity || party.seatCount || 12) === 25 ? 25 : 12;
-                                   const fullSeats = Array.from({ length: seatCount }, (_, i) => {
-                                    const sId = i + 1;
-                                    const found = party.seats?.find((s: any) => s.id === sId);
-                                    return found || { id: sId, name: null, avatar: null, vipLevel: 0, isMuted: false };
-                                  });
-
-                                  return fullSeats.map((seat) => {
-                                    const isOccupied = !!seat.name;
-                                    const isMe = seat.name === user.username;
-                                    const seatIsMuted = seat.isMuted;
-                                    const isHostSeat = seat.id === 1;
-
-                                    return (
-                                      <div 
-                                        key={seat.id} 
-                                        className="flex flex-col items-center relative bg-transparent"
-                                      >
-                                        {/* Golden Crown overlay for Host Seat #1 */}
-                                        {isHostSeat && (
-                                          <span className="absolute -top-3.5 left-1/2 -translate-x-1/2 text-[14px] drop-shadow-[0_0_8px_rgba(245,158,11,1)] z-20 animate-bounce pointer-events-none">
-                                            👑
-                                          </span>
-                                        )}
-
-                                        {/* 🔷 GOLDEN HEXAGON SEAT FRAME */}
-                                        <div 
-                                          onClick={() => handleSeatClick(seat.id, seat.name)}
-                                          className={`relative cursor-pointer transition-all duration-300 hover:scale-108 active:scale-95 flex items-center justify-center ${
-                                            Number(party.maxCapacity || party.seatCount || 12) === 25
-                                               ? (isHostSeat ? "w-13 h-13" : "w-11 h-11")
-                                               : (isHostSeat ? "w-16 h-16" : "w-13.5 h-13.5")
-                                          }`}
-                                        >
-                                          {/* Animated Golden Glow behind Hexagon */}
-                                          <div 
-                                            className={`absolute inset-0 bg-gradient-to-tr from-amber-400 via-yellow-300 to-amber-600 transition-all ${
-                                              isHostSeat
-                                                ? "opacity-80 blur-md animate-pulse"
-                                                : isOccupied && !seatIsMuted 
-                                                  ? "opacity-90 blur-md animate-pulse" 
-                                                  : "opacity-30 blur-xs hover:opacity-60"
-                                            }`} 
-                                            style={{ clipPath: "polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%)" }} 
-                                          />
-
-                                          {/* Outer Golden Hexagon Border Frame */}
-                                          <div 
-                                            className={`w-full h-full p-[2.5px] bg-gradient-to-b ${
-                                              isHostSeat 
-                                                ? "from-amber-200 via-yellow-400 to-amber-600 shadow-[0_0_20px_rgba(245,158,11,0.8)]"
-                                                : isOccupied 
-                                                  ? isMe 
-                                                    ? "from-yellow-300 via-amber-400 to-amber-600 shadow-[0_0_15px_rgba(245,158,11,0.6)]"
-                                                    : "from-amber-300/90 via-yellow-400/90 to-amber-600/90 shadow-[0_0_10px_rgba(245,158,11,0.4)]"
-                                                  : "from-amber-400/60 via-yellow-500/40 to-amber-700/60 hover:from-amber-300 hover:to-yellow-400"
-                                            }`}
-                                            style={{ clipPath: "polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%)" }}
-                                          >
-                                            {/* Inner Hexagon Window Container */}
-                                            <div 
-                                              className="w-full h-full bg-[#080914] flex items-center justify-center relative overflow-hidden"
-                                              style={{ clipPath: "polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%)" }}
-                                            >
-                                              {/* Metallic Highlight Gradient Overlay */}
-                                              <div className="absolute inset-0 bg-gradient-to-br from-amber-300/15 via-transparent to-purple-900/20 pointer-events-none" />
-
-                                              {isOccupied ? (
-                                                <VipAnimatedFrame vipLevel={Number(seat.vipLevel || 0)} showLevelBadge={false} frameScale={Number(party.maxCapacity || party.seatCount || 12) === 25 ? 120 : 145} className="w-full h-full">
-                                                  <img 
-                                                    src={seat.avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80"} 
-                                                    className="w-full h-full object-cover cursor-pointer hover:scale-110 transition-transform" 
-                                                    alt={seat.name}
-                                                    onClick={(e) => {
-                                                      e.stopPropagation();
-                                                      handleOpenPartyUserProfile(seat.name, seat.avatar, seat.id, undefined, Number(seat.vipLevel || 0));
-                                                    }}
-                                                    title={`Click to view @${seat.name}'s Profile`}
-                                                  />
-                                                </VipAnimatedFrame>
-                                              ) : (
-                                                <div className="flex flex-col items-center justify-center bg-transparent text-amber-400">
-                                                  <span className="text-[13px] bg-transparent font-black leading-none drop-shadow-[0_0_8px_rgba(245,158,11,0.9)] animate-pulse">🎙️</span>
-                                                  <span className="text-[8px] bg-transparent font-mono text-amber-300 font-black uppercase tracking-wider mt-0.5">#{seat.id}</span>
-                                                </div>
-                                              )}
-                                            </div>
-                                          </div>
-
-                                          {isOccupied && Number(seat.vipLevel || 0) > 0 && (() => {
-                                            const vipFrame = VIP_FRAMES_LIST.find(f => f.vipLevel === Number(seat.vipLevel) && f.isActive);
-                                            if (!vipFrame || !vipFrame.asset) return null;
-                                            return (
-                                              <img
-                                                src={vipFrame.asset}
-                                                alt={`VIP ${seat.vipLevel} frame`}
-                                                className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[145%] h-[145%] object-contain pointer-events-none z-25"
-                                                draggable={false}
-                                              />
-                                            );
-                                          })()}
-
-                                          {/* HOST Badge */}
-                                          {isHostSeat && (
-                                            <span className="absolute -top-0.5 left-1/2 -translate-x-1/2 bg-gradient-to-r from-amber-300 via-yellow-400 to-amber-500 text-black text-[6px] font-black px-1.5 py-0.2 rounded-full uppercase tracking-wider font-mono border border-black shadow-md z-30 pointer-events-none">
-                                              HOST
-                                            </span>
-                                          )}
-
-                                          {/* Soundwave equalizer indicator overlay if talking & unmuted */}
-                                          {isOccupied && !seatIsMuted && (
-                                            <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 bg-gradient-to-r from-amber-300 via-yellow-400 to-amber-500 text-black rounded-full px-1.5 py-0.5 flex items-center space-x-0.5 text-[5px] font-black uppercase tracking-wider border border-black animate-pulse shadow-lg z-30 pointer-events-none">
-                                              <span className="w-0.5 h-1.5 bg-black rounded-full animate-bounce"></span>
-                                              <span className="w-0.5 h-2.5 bg-black rounded-full animate-bounce delay-75"></span>
-                                              <span className="w-0.5 h-1.5 bg-black rounded-full animate-bounce delay-150"></span>
-                                            </div>
-                                          )}
-
-                                          {/* Muted indicator overlay */}
-                                          {isOccupied && seatIsMuted && (
-                                            <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 bg-red-950 border border-red-500/60 rounded-full w-4 h-4 flex items-center justify-center shadow-md z-30 pointer-events-none">
-                                              <span className="text-[7px] text-red-400 leading-none">🎙️⃠</span>
-                                            </div>
-                                          )}
-
-                                          {/* Host seat-lock indicator */}
-                                          {seat.isLocked && (
-                                            <div className="absolute top-0.5 right-0.5 bg-black/85 border border-amber-400/70 rounded-full w-4 h-4 flex items-center justify-center shadow-lg z-30 pointer-events-none">
-                                              <Lock className="w-2.5 h-2.5 text-amber-300" />
-                                            </div>
-                                          )}
-                                        </div>
-
-                                        {/* Seated occupant name, seat label & per-seat gifting */}
-                                        <div className="flex flex-col items-center leading-none max-w-[72px] mt-1">
-                                          <p className="text-[8.5px] font-extrabold text-amber-100/95 truncate text-center font-sans tracking-tight">
-                                            {isOccupied ? (isMe ? "You" : seat.name) : `Seat ${seat.id}`}
-                                          </p>
-                                          <span className="text-[6.5px] text-amber-400/80 font-mono font-bold mt-0.5">#{seat.id}</span>
-                                          <span
-                                            className="inline-flex items-center gap-0.5 mt-0.5 px-1 py-0.5 rounded-full bg-amber-500/10 border border-amber-400/25 text-[6.5px] text-amber-200 font-black font-mono whitespace-nowrap"
-                                            title={`Total gift value received by Seat ${seat.id} (100% display value)`}
-                                          >
-                                            <span className="text-[8px] leading-none">🎁</span>
-                                            <span>{seat.giftCoins || "0"}</span>
-                                          </span>
-                                        </div>
-                                      </div>
-                                    );
-                                  });
-                                })()}
-                              </div>
-
-                              {/* 🎙️ AGORA REAL-TIME VOICE PIPELINE CONTROLLER */}
-                              <AgoraPartyAudio
-                                partyId={party.id}
-                                channelName={`party-${party.id}`}
-                                userRole={isHostOfRoom ? "host" : (mySeatedSeat ? "speaker" : "listener")}
-                                isMuted={isHostOfRoom ? Boolean(partyHostMicMuted[party.id]) : (isAllGuestsMuted ? true : (mySeatedSeat ? mySeatedSeat.isMuted === true : true))}
-                                  username={user.username}
-                                avatar={user.avatar}
-                                musicTrack={partyMusicTrack}
-                                musicPlaying={partyMusicPlaying}
-                                musicVolume={partyMusicVolume}
-                                reactionEvent={isHostOfRoom ? partyReactionEvent : null}
-                              />
-                            </div>
-
-                            {/* COMPACT PARTY STATUS / STATS ROW — moved below the seats to save top space */}
+                            {/* COMPACT PARTY STATUS / STATS ROW — ABOVE THE SEATS */}
                             {(() => {
                               const totalViewers = Array.isArray(party.connectedViewers)
                                 ? party.connectedViewers.length
@@ -11366,7 +11212,7 @@ export default function App() {
                               const gifterRank = getRankingData("gifter", "monthly").find((item: any) => item.name === user.username || item.name === user.fullName);
 
                               return (
-                                <div className="mx-3 mb-1 mt-0.5 rounded-xl border border-amber-500/20 bg-black/55 backdrop-blur-md px-2 py-1.5 shadow-lg">
+                                <div data-pardais-party-status="above-seats" className="mx-3 mb-1 mt-0.5 rounded-xl border border-amber-500/20 bg-black/55 backdrop-blur-md px-2 py-1.5 shadow-lg">
                                   <div className="flex items-center justify-between gap-1.5 text-[7px] font-mono uppercase tracking-wide">
                                     <div className="flex items-center gap-1.5 shrink-0">
                                       <span className="relative flex h-1.5 w-1.5">
@@ -12100,6 +11946,182 @@ export default function App() {
                               )}
                             </div>
                           )}
+
+                            {/* 🎙️ 12-SEAT LOUNGE AUDIOGRID AREA (3 COLUMNS x 4 ROWS = 12 HEXAGON SEATS) */}
+                            <div className="px-3 py-2 space-y-2 bg-transparent">
+                              <div className={`grid ${Number(party.maxCapacity || party.seatCount || 12) === 25 ? "grid-cols-5 gap-x-1.5 gap-y-2" : "grid-cols-3 gap-x-2.5 gap-y-3"} bg-black/50 backdrop-blur-md border border-amber-500/30 rounded-2xl p-2 shadow-[0_0_30px_rgba(0,0,0,0.9)] relative overflow-hidden`}>
+                                {/* Ambient decorative highlights inside grid */}
+                                <div className="absolute -top-16 -left-16 w-36 h-36 rounded-full bg-amber-500/15 blur-3xl pointer-events-none" />
+                                <div className="absolute -bottom-16 -right-16 w-36 h-36 rounded-full bg-yellow-500/15 blur-3xl pointer-events-none" />
+
+                                {(() => {
+                                  const seatCount = Number(party.maxCapacity || party.seatCount || 12) === 25 ? 25 : 12;
+                                   const fullSeats = Array.from({ length: seatCount }, (_, i) => {
+                                    const sId = i + 1;
+                                    const found = party.seats?.find((s: any) => s.id === sId);
+                                    return found || { id: sId, name: null, avatar: null, vipLevel: 0, isMuted: false };
+                                  });
+
+                                  return fullSeats.map((seat) => {
+                                    const isOccupied = !!seat.name;
+                                    const isMe = seat.name === user.username;
+                                    const seatIsMuted = seat.isMuted;
+                                    const isHostSeat = seat.id === 1;
+
+                                    return (
+                                      <div 
+                                        key={seat.id} 
+                                        className="flex flex-col items-center relative bg-transparent"
+                                      >
+                                        {/* Golden Crown overlay for Host Seat #1 */}
+                                        {isHostSeat && (
+                                          <span className="absolute -top-3.5 left-1/2 -translate-x-1/2 text-[14px] drop-shadow-[0_0_8px_rgba(245,158,11,1)] z-20 animate-bounce pointer-events-none">
+                                            👑
+                                          </span>
+                                        )}
+
+                                        {/* 🔷 GOLDEN HEXAGON SEAT FRAME */}
+                                        <div 
+                                          onClick={() => handleSeatClick(seat.id, seat.name)}
+                                          className={`relative cursor-pointer transition-all duration-300 hover:scale-108 active:scale-95 flex items-center justify-center ${
+                                            Number(party.maxCapacity || party.seatCount || 12) === 25
+                                               ? (isHostSeat ? "w-13 h-13" : "w-11 h-11")
+                                               : (isHostSeat ? "w-16 h-16" : "w-13.5 h-13.5")
+                                          }`}
+                                        >
+                                          {/* Animated Golden Glow behind Hexagon */}
+                                          <div 
+                                            className={`absolute inset-0 bg-gradient-to-tr from-amber-400 via-yellow-300 to-amber-600 transition-all ${
+                                              isHostSeat
+                                                ? "opacity-80 blur-md animate-pulse"
+                                                : isOccupied && !seatIsMuted 
+                                                  ? "opacity-90 blur-md animate-pulse" 
+                                                  : "opacity-30 blur-xs hover:opacity-60"
+                                            }`} 
+                                            style={{ clipPath: "polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%)" }} 
+                                          />
+
+                                          {/* Outer Golden Hexagon Border Frame */}
+                                          <div 
+                                            className={`w-full h-full p-[2.5px] bg-gradient-to-b ${
+                                              isHostSeat 
+                                                ? "from-amber-200 via-yellow-400 to-amber-600 shadow-[0_0_20px_rgba(245,158,11,0.8)]"
+                                                : isOccupied 
+                                                  ? isMe 
+                                                    ? "from-yellow-300 via-amber-400 to-amber-600 shadow-[0_0_15px_rgba(245,158,11,0.6)]"
+                                                    : "from-amber-300/90 via-yellow-400/90 to-amber-600/90 shadow-[0_0_10px_rgba(245,158,11,0.4)]"
+                                                  : "from-amber-400/60 via-yellow-500/40 to-amber-700/60 hover:from-amber-300 hover:to-yellow-400"
+                                            }`}
+                                            style={{ clipPath: "polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%)" }}
+                                          >
+                                            {/* Inner Hexagon Window Container */}
+                                            <div 
+                                              className="w-full h-full bg-[#080914] flex items-center justify-center relative overflow-hidden"
+                                              style={{ clipPath: "polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%)" }}
+                                            >
+                                              {/* Metallic Highlight Gradient Overlay */}
+                                              <div className="absolute inset-0 bg-gradient-to-br from-amber-300/15 via-transparent to-purple-900/20 pointer-events-none" />
+
+                                              {isOccupied ? (
+                                                <VipAnimatedFrame vipLevel={Number(seat.vipLevel || 0)} showLevelBadge={false} frameScale={Number(party.maxCapacity || party.seatCount || 12) === 25 ? 120 : 145} className="w-full h-full">
+                                                  <img 
+                                                    src={seat.avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80"} 
+                                                    className="w-full h-full object-cover cursor-pointer hover:scale-110 transition-transform" 
+                                                    alt={seat.name}
+                                                    onClick={(e) => {
+                                                      e.stopPropagation();
+                                                      handleOpenPartyUserProfile(seat.name, seat.avatar, seat.id, undefined, Number(seat.vipLevel || 0));
+                                                    }}
+                                                    title={`Click to view @${seat.name}'s Profile`}
+                                                  />
+                                                </VipAnimatedFrame>
+                                              ) : (
+                                                <div className="flex flex-col items-center justify-center bg-transparent text-amber-400">
+                                                  <span className="text-[13px] bg-transparent font-black leading-none drop-shadow-[0_0_8px_rgba(245,158,11,0.9)] animate-pulse">🎙️</span>
+                                                  <span className="text-[8px] bg-transparent font-mono text-amber-300 font-black uppercase tracking-wider mt-0.5">#{seat.id}</span>
+                                                </div>
+                                              )}
+                                            </div>
+                                          </div>
+
+                                          {isOccupied && Number(seat.vipLevel || 0) > 0 && (() => {
+                                            const vipFrame = VIP_FRAMES_LIST.find(f => f.vipLevel === Number(seat.vipLevel) && f.isActive);
+                                            if (!vipFrame || !vipFrame.asset) return null;
+                                            return (
+                                              <img
+                                                src={vipFrame.asset}
+                                                alt={`VIP ${seat.vipLevel} frame`}
+                                                className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[145%] h-[145%] object-contain pointer-events-none z-25"
+                                                draggable={false}
+                                              />
+                                            );
+                                          })()}
+
+                                          {/* HOST Badge */}
+                                          {isHostSeat && (
+                                            <span className="absolute -top-0.5 left-1/2 -translate-x-1/2 bg-gradient-to-r from-amber-300 via-yellow-400 to-amber-500 text-black text-[6px] font-black px-1.5 py-0.2 rounded-full uppercase tracking-wider font-mono border border-black shadow-md z-30 pointer-events-none">
+                                              HOST
+                                            </span>
+                                          )}
+
+                                          {/* Soundwave equalizer indicator overlay if talking & unmuted */}
+                                          {isOccupied && !seatIsMuted && (
+                                            <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 bg-gradient-to-r from-amber-300 via-yellow-400 to-amber-500 text-black rounded-full px-1.5 py-0.5 flex items-center space-x-0.5 text-[5px] font-black uppercase tracking-wider border border-black animate-pulse shadow-lg z-30 pointer-events-none">
+                                              <span className="w-0.5 h-1.5 bg-black rounded-full animate-bounce"></span>
+                                              <span className="w-0.5 h-2.5 bg-black rounded-full animate-bounce delay-75"></span>
+                                              <span className="w-0.5 h-1.5 bg-black rounded-full animate-bounce delay-150"></span>
+                                            </div>
+                                          )}
+
+                                          {/* Muted indicator overlay */}
+                                          {isOccupied && seatIsMuted && (
+                                            <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 bg-red-950 border border-red-500/60 rounded-full w-4 h-4 flex items-center justify-center shadow-md z-30 pointer-events-none">
+                                              <span className="text-[7px] text-red-400 leading-none">🎙️⃠</span>
+                                            </div>
+                                          )}
+
+                                          {/* Host seat-lock indicator */}
+                                          {seat.isLocked && (
+                                            <div className="absolute top-0.5 right-0.5 bg-black/85 border border-amber-400/70 rounded-full w-4 h-4 flex items-center justify-center shadow-lg z-30 pointer-events-none">
+                                              <Lock className="w-2.5 h-2.5 text-amber-300" />
+                                            </div>
+                                          )}
+                                        </div>
+
+                                        {/* Seated occupant name, seat label & per-seat gifting */}
+                                        <div className="flex flex-col items-center leading-none max-w-[72px] mt-1">
+                                          <p className="text-[8.5px] font-extrabold text-amber-100/95 truncate text-center font-sans tracking-tight">
+                                            {isOccupied ? (isMe ? "You" : seat.name) : `Seat ${seat.id}`}
+                                          </p>
+                                          <span className="text-[6.5px] text-amber-400/80 font-mono font-bold mt-0.5">#{seat.id}</span>
+                                          <span
+                                            className="inline-flex items-center gap-0.5 mt-0.5 px-1 py-0.5 rounded-full bg-amber-500/10 border border-amber-400/25 text-[6.5px] text-amber-200 font-black font-mono whitespace-nowrap"
+                                            title={`Total gift value received by Seat ${seat.id} (100% display value)`}
+                                          >
+                                            <span className="text-[8px] leading-none">🎁</span>
+                                            <span>{seat.giftCoins || "0"}</span>
+                                          </span>
+                                        </div>
+                                      </div>
+                                    );
+                                  });
+                                })()}
+                              </div>
+
+                              {/* 🎙️ AGORA REAL-TIME VOICE PIPELINE CONTROLLER */}
+                              <AgoraPartyAudio
+                                partyId={party.id}
+                                channelName={`party-${party.id}`}
+                                userRole={isHostOfRoom ? "host" : (mySeatedSeat ? "speaker" : "listener")}
+                                isMuted={isHostOfRoom ? Boolean(partyHostMicMuted[party.id]) : (isAllGuestsMuted ? true : (mySeatedSeat ? mySeatedSeat.isMuted === true : true))}
+                                  username={user.username}
+                                avatar={user.avatar}
+                                musicTrack={partyMusicTrack}
+                                musicPlaying={partyMusicPlaying}
+                                musicVolume={partyMusicVolume}
+                                reactionEvent={isHostOfRoom ? partyReactionEvent : null}
+                              />
+                            </div>
 
                           {/* ⌨️ INTERACTIVE BOTTOM CONTROL ACTIONS ROW */}
                           <div className="relative z-20 w-full min-w-0 max-w-full px-3 pt-1 pb-[calc(0.25rem+env(safe-area-inset-bottom,0px))] flex items-center gap-1.5 sm:gap-2 shrink-0 bg-transparent overflow-hidden">
@@ -19542,50 +19564,102 @@ export default function App() {
                                   </div>
                                 </div>
 
-                                {/* LOWER AREA: FULL-WIDTH COMMENTS + LOWER NAVIGATION */}
-                                <div className="h-[40%] w-full flex flex-col bg-[#0c0a12] border-t border-white/5 relative z-10 min-h-0">
-                                  {/* FULL-WIDTH CHAT */}
-                                  <div className="flex-1 min-h-0 flex flex-col px-3 pt-2 pb-1">
-                                    <div className="flex-1 min-h-0 overflow-y-auto space-y-1.5 pr-1 flex flex-col justify-end">
+                                {/* LOWER 40%: COMMENTS & CONTROLS */}
+                                <div className="h-[40%] w-full flex bg-[#0c0a12] border-t border-white/5 relative z-10">
+                                  {/* CHAT COMMENTS FEED (60% Width) */}
+                                  <div className="w-[60%] h-full flex flex-col p-2.5 justify-between">
+                                    {/* Scrolling Comments Box */}
+                                    <div className="flex-1 overflow-y-auto space-y-1.5 pr-1 max-h-[140px] flex flex-col justify-end">
                                       {userLiveMessages.slice(-15).map(msg => (
                                         <div key={msg.id} className="bg-black/35 p-1 rounded-lg text-[9px] text-gray-200">
                                           <div className="flex items-center space-x-1">
-                                            {msg.vipLevel > 0 && <span className="text-[6px] bg-yellow-400 text-black px-0.5 rounded font-black font-mono">VIP</span>}
-                                            <span onClick={() => { const targetLvl = msg.userLevel || getHostLevelFromName(msg.username); setViewerMenuUser({ username: msg.username, userLevel: targetLvl, vipLevel: msg.vipLevel || getVipLevelFromUserLevel(targetLvl) }); }} className="font-black text-[#66fcf1] hover:underline cursor-pointer">{msg.username}</span>
+                                            {msg.vipLevel > 0 && (
+                                              <span className="text-[6px] bg-yellow-400 text-black px-0.5 rounded font-black font-mono">VIP</span>
+                                            )}
+                                            <span 
+                                              onClick={() => {
+                                                const targetLvl = msg.userLevel || getHostLevelFromName(msg.username);
+                                                setViewerMenuUser({
+                                                  username: msg.username,
+                                                  userLevel: targetLvl,
+                                                  vipLevel: msg.vipLevel || getVipLevelFromUserLevel(targetLvl)
+                                                });
+                                              }}
+                                              className="font-black text-[#66fcf1] hover:text-[#45a29e] hover:underline cursor-pointer transition-colors"
+                                              title="Tap for host controls"
+                                            >
+                                              {msg.username}
+                                            </span>
                                           </div>
                                           <p className="text-gray-300 text-[8.5px] font-medium leading-tight mt-0.5">{msg.message}</p>
                                         </div>
                                       ))}
                                     </div>
-                                    <form onSubmit={(e) => { e.preventDefault(); if (!chatInput.trim()) return; setUserLiveMessages(prev => [...prev, { id: "ul-msg-" + Date.now(), username: "You (Host)", message: chatInput, vipLevel: user.vipLevel, userLevel: user.userLevel, isSystem: false, isFlagged: false, timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }]); setChatInput(""); }} className="flex items-center gap-1.5 mt-1 bg-white/5 rounded-full px-3 py-1 border border-white/10 w-full shrink-0">
-                                      <input type="text" placeholder="Comment..." value={chatInput} onChange={(e) => setChatInput(e.target.value)} className="bg-transparent text-[9px] text-white flex-1 min-w-0 outline-none h-7 placeholder-gray-500" />
-                                      <button type="submit" className="text-purple-400 hover:text-purple-300 shrink-0"><Send className="w-4 h-4" /></button>
+
+                                    {/* Message input bar */}
+                                    <form
+                                      onSubmit={(e) => {
+                                        e.preventDefault();
+                                        if (!chatInput.trim()) return;
+                                        setUserLiveMessages(prev => [
+                                          ...prev,
+                                          {
+                                            id: "ul-msg-" + Date.now(),
+                                            username: "You (Host)",
+                                            message: chatInput,
+                                            vipLevel: user.vipLevel,
+                                            userLevel: user.userLevel,
+                                            isSystem: false,
+                                            isFlagged: false,
+                                            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                                          }
+                                        ]);
+                                        setChatInput("");
+                                      }}
+                                      className="flex items-center space-x-1.5 mt-1 bg-white/5 rounded-full px-2 py-0.5 border border-white/5"
+                                    >
+                                      <input
+                                        type="text"
+                                        placeholder="Comment..."
+                                        value={chatInput}
+                                        onChange={(e) => setChatInput(e.target.value)}
+                                        className="bg-transparent text-[8.5px] text-white flex-1 outline-none h-6 placeholder-gray-500"
+                                      />
+                                      <button type="submit" className="text-purple-400 hover:text-purple-300">
+                                        <Send className="w-3 h-3" />
+                                      </button>
                                     </form>
                                   </div>
 
-                                  {/* LOWER NAVIGATION — controls are actual handlers, comment stays full width above */}
-                                  <div className="w-full shrink-0 border-t border-white/5 bg-black/90 px-2 py-1.5 flex items-center justify-between gap-1.5 safe-area-bottom">
-                                    <button type="button" onClick={() => setUserLiveMic(v => !v)} className={`w-10 h-10 rounded-xl border flex items-center justify-center transition-all active:scale-90 ${userLiveMic ? "bg-emerald-600/30 border-emerald-400/60 text-emerald-300" : "bg-red-600/30 border-red-400/60 text-red-300"}`} title={userLiveMic ? "Mute microphone" : "Unmute microphone"}>
-                                      {userLiveMic ? <Mic className="w-5 h-5" /> : <MicOff className="w-5 h-5" />}
+                                  {/* INTERACTIVE OPTIONS & GUEST CONTROLS (40% Width) - EXACTLY TWO BUTTONS BELOW */}
+                                  <div className="w-[40%] h-full flex flex-col justify-center space-y-1.5 p-2 border-l border-white/5 bg-[#08070e]">
+                                    <div className="grid grid-cols-2 gap-1.5">
+                                      <button onClick={() => openUserLiveMusicModal()} className="h-9 rounded-xl bg-amber-500/15 border border-amber-400/30 text-amber-200 flex items-center justify-center" title="Music Player" aria-label="Music Player"><Music className="w-4 h-4" /></button>
+                                      <button onClick={() => { const data = { title: `@${user.username} Guest Room`, text: "Join my Pardais Party Guest Room!", url: window.location.href }; if (navigator.share) navigator.share(data).catch(() => {}); else navigator.clipboard?.writeText(window.location.href); }} className="h-9 rounded-xl bg-cyan-500/15 border border-cyan-400/30 text-cyan-200 flex items-center justify-center" title="Share Guest Room" aria-label="Share Guest Room"><Share2 className="w-4 h-4" /></button>
+                                    </div>
+                                    {/* 1. Gift Box Button (Visible to all users & host) */}
+                                    <button
+                                      onClick={() => setUserLiveShowGiftModal(true)}
+                                      className="w-full bg-gradient-to-r from-pink-600 via-rose-500 to-purple-600 hover:brightness-110 active:scale-95 text-white py-2 px-2 rounded-xl text-[9.5px] font-black uppercase tracking-wider flex items-center justify-center space-x-1.5 transition-all shadow-lg border border-pink-400/30 cursor-pointer"
+                                      title="Open Gift Store & Send Gifts to Host or Viewers/Guests"
+                                    >
+                                      <GiftIcon className="w-3.5 h-3.5 text-yellow-300 animate-bounce" />
+                                      <span>🎁 Gift Box</span>
                                     </button>
-                                    <button type="button" onClick={() => setUserLiveCam(v => !v)} className={`w-10 h-10 rounded-xl border flex items-center justify-center transition-all active:scale-90 ${userLiveCam ? "bg-pink-600/30 border-pink-400/60 text-pink-300" : "bg-white/5 border-white/10 text-gray-300"}`} title={userLiveCam ? "Turn camera off" : "Turn camera on"}>
-                                      {userLiveCam ? <Camera className="w-5 h-5" /> : <CameraOff className="w-5 h-5" />}
-                                    </button>
-                                    <button type="button" onClick={() => setCameraFacingMode(prev => prev === "user" ? "environment" : "user")} className="w-10 h-10 rounded-xl bg-white/5 border border-white/10 text-cyan-300 flex items-center justify-center transition-all active:scale-90" title="Rotate camera">
-                                      <RotateCw className="w-5 h-5" />
-                                    </button>
-                                    <button type="button" onClick={() => setUserLiveShowMusicModal(true)} className={`w-10 h-10 rounded-xl border flex items-center justify-center transition-all active:scale-90 ${partyMusicPlaying ? "bg-amber-500 text-black border-amber-300" : "bg-amber-500/15 border-amber-400/30 text-amber-300"}`} title="Music Player">
-                                      <Music className="w-5 h-5" />
-                                    </button>
-                                    <button type="button" onClick={() => setUserLiveShowGiftModal(true)} className="w-10 h-10 rounded-xl bg-gradient-to-r from-pink-600 to-purple-600 border border-pink-400/40 text-white flex items-center justify-center transition-all active:scale-90" title="Gift Store">
-                                      <GiftIcon className="w-5 h-5 text-yellow-300" />
-                                    </button>
-                                    <button type="button" onClick={() => { const data = { title: `@${user.username} Guest Room`, text: "Join my Pardais Party Guest Room!", url: window.location.href }; if (navigator.share) navigator.share(data).catch(() => {}); else navigator.clipboard?.writeText(window.location.href); }} className="w-10 h-10 rounded-xl bg-cyan-500/15 border border-cyan-400/30 text-cyan-300 flex items-center justify-center transition-all active:scale-90" title="Share Guest Room">
-                                      <Share2 className="w-5 h-5" />
-                                    </button>
-                                    <button type="button" onClick={() => setShowGuestRequestsModal(true)} className="relative w-10 h-10 rounded-xl bg-purple-600/20 border border-purple-400/40 text-purple-200 flex items-center justify-center transition-all active:scale-90" title="Guest Requests">
-                                      <UserCheck className="w-5 h-5" />
-                                      {userLiveGuestRequests.length > 0 && <span className="absolute -top-1 -right-1 min-w-4 h-4 px-1 bg-red-600 text-white rounded-full text-[7px] font-black flex items-center justify-center border border-black">{userLiveGuestRequests.length}</span>}
+
+                                    {/* 2. Requests Button (Host inspects and accepts/rejects requests) */}
+                                    <button
+                                      onClick={() => setShowGuestRequestsModal(true)}
+                                      className="w-full bg-gradient-to-r from-purple-700 via-indigo-600 to-cyan-600 hover:brightness-110 active:scale-95 text-white py-2 px-2 rounded-xl text-[9.5px] font-black uppercase tracking-wider flex items-center justify-center space-x-1.5 transition-all shadow-lg border border-purple-400/30 cursor-pointer relative"
+                                      title="Inspect & Accept/Reject Guest Requests"
+                                    >
+                                      <UserCheck className="w-3.5 h-3.5 text-cyan-300" />
+                                      <span>Requests ({userLiveGuestRequests.length})</span>
+                                      {userLiveGuestRequests.length > 0 && (
+                                        <span className="absolute -top-1 -right-1 w-4.5 h-4.5 bg-red-600 text-white rounded-full text-[8px] font-black flex items-center justify-center shadow animate-bounce border border-white">
+                                          {userLiveGuestRequests.length}
+                                        </span>
+                                      )}
                                     </button>
                                   </div>
                                 </div>
@@ -22551,7 +22625,7 @@ export default function App() {
                                   </button>
                                   <button
                                     onClick={() => {
-                                      setUserLiveShowMusicModal(true);
+                                      openUserLiveMusicModal();
                                       setUserLiveShowMoreModal(false);
                                     }}
                                     className="p-2 rounded bg-white/5 hover:bg-white/10 text-white border border-white/5 text-center font-bold text-[8px] cursor-pointer"
@@ -22653,7 +22727,7 @@ export default function App() {
                               </div>
                             )}
 
-                            {/* 🎵 SOLO / GUEST MUSIC LIBRARY — same functional player as Party Music */}
+                            {/* 🎵 SOLO / GUEST MUSIC LIBRARY — same production catalog + player as Party */}
                             {userLiveShowMusicModal && (
                               <div className="absolute inset-x-3 bottom-20 z-[70] bg-[#090912]/98 border-2 border-amber-400/50 rounded-3xl p-3.5 shadow-[0_0_35px_rgba(245,158,11,0.28)] backdrop-blur-xl flex flex-col max-h-[72%] animate-slide-up">
                                 <div className="flex items-center justify-between border-b border-white/10 pb-2.5 mb-2.5">
@@ -22663,22 +22737,14 @@ export default function App() {
                                     </div>
                                     <div>
                                       <p className="text-[10px] font-black text-white uppercase tracking-widest font-mono">Party Music</p>
-                                      <p className="text-[7.5px] text-gray-400">Search, save and play music in your Live.</p>
+                                      <p className="text-[7.5px] text-gray-400">Same Library, Search & Player as Party.</p>
                                     </div>
                                   </div>
                                   <div className="flex items-center gap-1.5">
                                     {user?.isAdmin === true && (
                                       <>
-                                        <input
-                                          ref={musicUploadInputRef}
-                                          type="file"
-                                          accept="audio/*,.mp3,.aac,.m4a,.wav,.ogg,.webm,.flac"
-                                          className="hidden"
-                                          onChange={(e) => handleAdminMusicUpload(e.target.files?.[0] || null)}
-                                        />
-                                        <button onClick={() => musicUploadInputRef.current?.click()} disabled={musicUploadBusy} className="px-2 py-1.5 rounded-xl bg-amber-500 text-black text-[7px] font-black uppercase disabled:opacity-50 cursor-pointer">
-                                          {musicUploadBusy ? "Uploading…" : "+ Add Song"}
-                                        </button>
+                                        <input ref={musicUploadInputRef} type="file" accept="audio/*,.mp3,.aac,.m4a,.wav,.ogg,.webm,.flac" className="hidden" onChange={(e) => handleAdminMusicUpload(e.target.files?.[0] || null)} />
+                                        <button onClick={() => musicUploadInputRef.current?.click()} disabled={musicUploadBusy} className="px-2 py-1.5 rounded-xl bg-amber-500 text-black text-[7px] font-black uppercase disabled:opacity-50 cursor-pointer">{musicUploadBusy ? "Uploading…" : "+ Add Song"}</button>
                                       </>
                                     )}
                                     <button onClick={() => setUserLiveShowMusicModal(false)} className="w-6 h-6 rounded-full bg-white/5 text-gray-400 hover:text-white flex items-center justify-center cursor-pointer">✕</button>
@@ -22686,10 +22752,8 @@ export default function App() {
                                 </div>
 
                                 <div className="grid grid-cols-3 gap-1.5 mb-2.5">
-                                  {[["library", "Library"], ["audius", "🔎 Search"], ["saved", "📌 Saved"]].map(([key, label]) => (
-                                    <button key={key} onClick={() => setMusicSource(key as "library" | "audius" | "saved")} className={`py-1.5 rounded-xl text-[7.5px] font-black uppercase tracking-wide border cursor-pointer ${musicSource === key ? "bg-amber-500 text-black border-amber-300" : "bg-white/[0.03] text-gray-400 border-white/10"}`}>
-                                      {label}
-                                    </button>
+                                  {[['library','Library'],['audius','🔎 Search'],['saved','📌 Saved']].map(([key,label]) => (
+                                    <button key={key} onClick={() => setMusicSource(key as "library" | "audius" | "saved")} className={`py-1.5 rounded-xl text-[7.5px] font-black uppercase tracking-wide border cursor-pointer ${musicSource === key ? "bg-amber-500 text-black border-amber-300" : "bg-white/[0.03] text-gray-400 border-white/10"}`}>{label}</button>
                                   ))}
                                 </div>
 
@@ -22698,43 +22762,37 @@ export default function App() {
                                     <Search className="w-3 h-3 text-gray-500" />
                                     <input value={partyMusicSearch} onChange={(e) => setPartyMusicSearch(e.target.value)} placeholder={musicSource === "audius" ? "Search Audius songs / artists..." : musicSource === "saved" ? "Search saved songs..." : "Search Party library..."} className="flex-1 bg-transparent text-[9px] text-white placeholder-gray-600 focus:outline-none" />
                                   </div>
-                                  {partyMusicTrack && (
-                                    <button onClick={() => { setPartyMusicPlaying(false); setPartyMusicTrack(null); setUserLiveMusicPlaying(false); setUserLiveActiveTrack(null); }} className="px-2.5 py-1.5 rounded-xl bg-red-500/10 border border-red-500/30 text-red-300 text-[8px] font-black cursor-pointer">STOP</button>
-                                  )}
+                                  {partyMusicTrack && <button onClick={stopSharedMusicTrack} className="px-2.5 py-1.5 rounded-xl bg-red-500/10 border border-red-500/30 text-red-300 text-[8px] font-black cursor-pointer">STOP</button>}
                                 </div>
 
                                 <div className="flex-1 overflow-y-auto space-y-1.5 pr-1">
                                   {musicSource === "audius" && audiusSearchLoading ? (
                                     <div className="py-8 text-center text-[8px] text-gray-500 font-mono">Searching Audius…</div>
                                   ) : musicSource === "saved" && savedMusicLoading ? (
-                                    <div className="py-8 text-center text-[8px] text-gray-500 font-mono">Loading your Saved Songs…</div>
+                                    <div className="py-8 text-center text-[8px] text-gray-500 font-mono">Loading Saved Songs…</div>
                                   ) : (() => {
                                     const sourceTracks = musicSource === "audius" ? audiusSearchResults : musicSource === "saved" ? savedMusicTracks : musicLibraryTracks;
                                     const q = partyMusicSearch.trim().toLowerCase();
                                     const tracks = sourceTracks.filter((track) => !q || `${track.title} ${track.artist} ${track.category}`.toLowerCase().includes(q));
                                     if (musicSource === "audius" && q.length < 2) return <div className="py-8 text-center text-[8px] text-gray-500 font-mono">Type at least 2 letters to search Audius.</div>;
-                                    if (tracks.length === 0) return <div className="py-8 text-center text-[8px] text-gray-500 font-mono">{musicSource === "saved" ? "No saved songs yet. Search Audius and tap 📌 Save." : musicSource === "audius" ? "No Audius songs found." : "No songs added yet. Authorized admin can use + Add Song."}</div>;
+                                    if (tracks.length === 0) return <div className="py-8 text-center text-[8px] text-gray-500 font-mono">{musicSource === "saved" ? "No saved songs yet." : musicSource === "audius" ? "No Audius songs found." : musicLibraryLoading ? "Loading Party Music Library…" : "No songs in Party Music Library."}</div>;
                                     return tracks.map(track => {
                                       const active = partyMusicTrack?.id === track.id;
                                       const saved = isMusicSaved(track);
                                       const providerId = String(track.providerTrackId || track.id);
                                       return (
                                         <div key={track.id} className={`w-full flex items-center gap-2.5 p-2 rounded-xl border text-left transition-all ${active ? "bg-amber-500/10 border-amber-400/50" : "bg-white/[0.02] border-white/5 hover:bg-white/5"}`}>
-                                          <button onClick={() => { setPartyMusicTrack(track); setPartyMusicPlaying(true); setUserLiveActiveTrack(track); setUserLiveMusicPlaying(true); }} className="w-9 h-9 rounded-lg overflow-hidden shrink-0 border border-white/10 cursor-pointer">
+                                          <button type="button" onClick={() => selectSharedMusicTrack(track)} className="w-9 h-9 rounded-lg overflow-hidden shrink-0 border border-white/10 cursor-pointer">
                                             <img src={track.cover || "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=100"} className="w-full h-full object-cover" alt="" />
                                           </button>
-                                          <button onClick={() => { setPartyMusicTrack(track); setPartyMusicPlaying(true); setUserLiveActiveTrack(track); setUserLiveMusicPlaying(true); }} className="min-w-0 flex-1 text-left cursor-pointer">
+                                          <button type="button" onClick={() => selectSharedMusicTrack(track)} className="min-w-0 flex-1 text-left cursor-pointer">
                                             <span className={`block text-[9px] font-black truncate ${active ? "text-amber-300" : "text-white"}`}>{track.title}</span>
                                             <span className="block text-[7px] text-gray-400 truncate">{track.artist} • {track.category}{track.source ? ` • ${track.source}` : ""}</span>
                                           </button>
                                           {track.provider === "audius" && (
-                                            <button onClick={() => toggleMusicSaved(track)} disabled={savingMusicIds.has(providerId)} title={saved ? "Remove from Saved Songs" : "Save Song"} className={`w-7 h-7 rounded-lg border flex items-center justify-center text-[11px] cursor-pointer disabled:opacity-50 ${saved ? "bg-amber-500/15 border-amber-400/50 text-amber-300" : "bg-white/5 border-white/10 text-gray-400"}`}>
-                                              {savingMusicIds.has(providerId) ? "…" : saved ? "📌" : "☆"}
-                                            </button>
+                                            <button type="button" onClick={() => toggleMusicSaved(track)} disabled={savingMusicIds.has(providerId)} className={`w-7 h-7 rounded-lg border flex items-center justify-center text-[11px] cursor-pointer disabled:opacity-50 ${saved ? "bg-amber-500/15 border-amber-400/50 text-amber-300" : "bg-white/5 border-white/10 text-gray-400"}`}>{savingMusicIds.has(providerId) ? "…" : saved ? "📌" : "☆"}</button>
                                           )}
-                                          <button onClick={() => { if (active) { const next = !partyMusicPlaying; setPartyMusicPlaying(next); setUserLiveMusicPlaying(next); } else { setPartyMusicTrack(track); setPartyMusicPlaying(true); setUserLiveActiveTrack(track); setUserLiveMusicPlaying(true); } }} className="w-7 h-7 rounded-lg bg-amber-500/10 border border-amber-400/20 text-[10px] text-amber-300 cursor-pointer">
-                                            {active && partyMusicPlaying ? "⏸" : "▶"}
-                                          </button>
+                                          <button type="button" onClick={() => { if (active) { const next = !partyMusicPlaying; setPartyMusicPlaying(next); setUserLiveMusicPlaying(next); } else selectSharedMusicTrack(track); }} className="w-7 h-7 rounded-lg bg-amber-500/10 border border-amber-400/20 text-[10px] text-amber-300 cursor-pointer">{active && partyMusicPlaying ? "⏸" : "▶"}</button>
                                         </div>
                                       );
                                     });
@@ -22745,7 +22803,7 @@ export default function App() {
                                   <div className="mt-2.5 pt-2.5 border-t border-white/10">
                                     <div className="flex items-center justify-between gap-2 mb-1.5">
                                       <span className="text-[8px] text-amber-300 font-black truncate">🎵 {partyMusicTrack.title}</span>
-                                      <button onClick={() => { const next = !partyMusicPlaying; setPartyMusicPlaying(next); setUserLiveMusicPlaying(next); setUserLiveActiveTrack(partyMusicTrack); }} className="text-[8px] px-2 py-1 rounded-lg bg-amber-500 text-black font-black cursor-pointer">{partyMusicPlaying ? "PAUSE" : "PLAY"}</button>
+                                      <button type="button" onClick={() => { const next = !partyMusicPlaying; setPartyMusicPlaying(next); setUserLiveMusicPlaying(next); }} className="text-[8px] px-2 py-1 rounded-lg bg-amber-500 text-black font-black cursor-pointer">{partyMusicPlaying ? "PAUSE" : "PLAY"}</button>
                                     </div>
                                     <div className="flex items-center gap-2">
                                       <Volume2 className="w-3 h-3 text-amber-300" />
@@ -22757,8 +22815,191 @@ export default function App() {
                               </div>
                             )}
 
-                            {/* BOTTOM SYSTEM MENU — compact icon-only host controls (Solo/PK only; Guest has its own lower navigation) */}
-                            {!userLiveGuestModeActive && (
+                            {/* PK INVITATION DRAWER (BOTTOM 50% OVERLAY) */}
+                            {userLivePkInvitePanelOpen && (
+                              <div className="absolute bottom-0 inset-x-0 h-[50%] bg-[#0f0e15]/98 backdrop-blur-lg rounded-t-3xl border-t border-purple-500/20 z-35 p-4 flex flex-col justify-between animate-slide-up shadow-2xl text-left">
+                                {/* Header */}
+                                <div className="border-b border-white/5 pb-2">
+                                  <div className="flex justify-between items-center bg-transparent">
+                                    <div className="flex items-center space-x-2 bg-transparent">
+                                      <Users className="w-4 h-4 text-purple-400" />
+                                      <h3 className="text-[11.5px] font-black text-white uppercase tracking-wider font-mono">Invite Co-Hosts</h3>
+                                    </div>
+                                    <button 
+                                      onClick={() => {
+                                        setUserLivePkInvitePanelOpen(false);
+                                        setUserLiveInviteSearchQuery("");
+                                      }}
+                                      className="w-5 h-5 rounded-full bg-white/5 text-gray-400 flex items-center justify-center hover:bg-white/10 text-[9.5px] cursor-pointer"
+                                    >
+                                      ✕
+                                    </button>
+                                  </div>
+                                  <p className="text-[8.5px] text-gray-400 mt-1 leading-normal">
+                                    Send a co-host request. Only available Solo Live hosts are shown. Accepted co-hosts join in 1v1 mode.
+                                  </p>
+                                </div>
+
+                                {/* Search Bar */}
+                                <div className="my-2 relative bg-transparent">
+                                  <span className="absolute inset-y-0 left-3 flex items-center pointer-events-none text-gray-400 text-xs">
+                                    🔍
+                                  </span>
+                                  <input
+                                    type="text"
+                                    placeholder="Search host by name or ID..."
+                                    value={userLiveInviteSearchQuery}
+                                    onChange={(e) => setUserLiveInviteSearchQuery(e.target.value)}
+                                    className="w-full bg-white/5 border border-white/10 rounded-xl pl-9 pr-8 py-1.5 text-[9px] text-white focus:outline-none focus:border-purple-500/50 transition-colors font-medium placeholder-gray-500"
+                                  />
+                                  {userLiveInviteSearchQuery && (
+                                    <button
+                                      onClick={() => setUserLiveInviteSearchQuery("")}
+                                      className="absolute inset-y-0 right-3 flex items-center text-gray-400 hover:text-white text-[9px]"
+                                    >
+                                      ✕
+                                    </button>
+                                  )}
+                                </div>
+
+                                {/* Real Outgoing Pending Invite Status Banner for Host A */}
+                                {userLiveInvitedHostId && (
+                                  <div className="my-1 bg-purple-950/40 border border-purple-500/20 p-2.5 rounded-xl flex items-center justify-between animate-fade-in">
+                                    <div className="flex items-center space-x-2 text-left bg-transparent">
+                                      <span className="w-2 h-2 rounded-full bg-purple-400 animate-ping shrink-0" />
+                                      <div className="flex flex-col text-left bg-transparent">
+                                        <span className="text-[9px] font-black text-purple-200">
+                                          Invitation sent to @{userLiveInvitedHostId}
+                                        </span>
+                                        <span className="text-[7.5px] text-gray-400 font-mono">
+                                          Waiting for response... {userLiveInviteCountdown !== null ? `${userLiveInviteCountdown}s` : ""}
+                                        </span>
+                                      </div>
+                                    </div>
+                                    <button
+                                      onClick={async () => {
+                                        if (currentOutgoingInviteId) {
+                                          try {
+                                            await fetch(`/api/v1/pk/invite/${currentOutgoingInviteId}/respond`, {
+                                              method: "POST",
+                                              headers: { "Content-Type": "application/json" },
+                                              body: JSON.stringify({
+                                                action: "cancel",
+                                                username: user.username,
+                                                userId: user.uid || user.username
+                                              })
+                                            });
+                                          } catch (e) {}
+                                        }
+                                        setUserLiveInvitedHostId(null);
+                                        setUserLiveInviteCountdown(null);
+                                        setCurrentOutgoingInviteId(null);
+                                      }}
+                                      className="px-2.5 py-1 bg-white/10 hover:bg-white/20 text-gray-300 rounded-lg text-[8px] font-bold transition-all cursor-pointer"
+                                    >
+                                      Cancel
+                                    </button>
+                                  </div>
+                                )}
+
+                                {/* Host scrollable container */}
+                                <div className="flex-1 overflow-y-auto my-1 pr-1 space-y-2 max-h-[120px] scrollbar-thin">
+                                  {(() => {
+                                    const hostList = (userLiveAvailableHosts || [])
+                                      .map((u: any) => ({
+                                        id: String(u.id || u.userId || u.username),
+                                        username: String(u.username || "User"),
+                                        avatar: String(u.avatar || "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=100&q=80"),
+                                        fans: String(u.fans || "10K fans"),
+                                        level: Number(u.level || 1),
+                                        flag: "🇵🇰",
+                                        inPkBattle: false,
+                                        status: u.status || "🔴 Live Solo"
+                                      }))
+                                      .filter(host => !host.inPkBattle && host.username.toLowerCase() !== user?.username?.toLowerCase() && (
+                                        !userLiveInviteSearchQuery ||
+                                        host.username.toLowerCase().includes(userLiveInviteSearchQuery.toLowerCase()) ||
+                                        host.id.toLowerCase().includes(userLiveInviteSearchQuery.toLowerCase())
+                                      ));
+
+                                    if (hostList.length === 0) {
+                                      return (
+                                        <div className="py-4 text-center text-gray-400 bg-white/3 border border-white/5 rounded-xl space-y-2">
+                                          <p className="text-[9px] font-medium text-gray-300">No active online hosts available for 1v1 right now.</p>
+                                          <button
+                                            onClick={() => {
+                                              setUserLiveInviteSearchQuery("");
+                                              fetch("/api/v1/pk/available-hosts?username=" + encodeURIComponent(user.username))
+                                                .then(r => r.json())
+                                                .then(data => setUserLiveAvailableHosts(Array.isArray(data) ? data : []))
+                                                .catch(() => {});
+                                            }}
+                                            className="px-3 py-1 bg-purple-600/30 hover:bg-purple-600/50 text-purple-200 border border-purple-500/30 rounded-full text-[8px] font-bold transition-all cursor-pointer"
+                                          >
+                                            🔄 Refresh Online Hosts
+                                          </button>
+                                        </div>
+                                      );
+                                    }
+
+                                    return hostList.map((host) => {
+                                      const isInvited = userLiveInvitedHostId === host.username || userLiveInvitedHostId === host.id;
+                                      return (
+                                        <div 
+                                          key={host.id}
+                                          className="flex items-center justify-between bg-white/3 border border-white/5 p-2 rounded-xl animate-fade-in hover:border-purple-500/30 transition-all"
+                                        >
+                                          <div className="flex items-center space-x-2.5 text-left bg-transparent">
+                                            <div className="relative shrink-0">
+                                              <img src={host.avatar || DEFAULT_USER.avatar} className="w-8 h-8 rounded-full object-cover border border-purple-500/30" />
+                                              <span className="absolute bottom-0 right-0 w-2 h-2 bg-green-500 rounded-full border border-black animate-pulse"></span>
+                                            </div>
+                                            <div className="flex flex-col bg-transparent">
+                                              <div className="flex items-center space-x-1 bg-transparent">
+                                                <span className="text-[9px] font-black text-white">{host.username}</span>
+                                                <span className="text-[7px] bg-purple-900/50 text-purple-300 px-1 rounded-full font-mono font-bold">Lvl {host.level}</span>
+                                              </div>
+                                              <span className="text-[7.5px] text-gray-400 font-mono bg-transparent">{host.fans} • {host.status}</span>
+                                            </div>
+                                          </div>
+
+                                          <button
+                                            disabled={userLiveInvitedHostId !== null}
+                                            onClick={() => {
+                                              handleInviteHostTo1v1Match(host);
+                                            }}
+                                            className={`px-3 py-1.5 rounded-full text-[8.5px] font-black uppercase tracking-wider font-mono transition-all cursor-pointer ${
+                                              isInvited
+                                                ? "bg-purple-900/20 text-purple-400 border border-purple-500/20 flex items-center space-x-1"
+                                                : userLiveInvitedHostId !== null
+                                                  ? "bg-gray-800 text-gray-500 border border-white/5 cursor-not-allowed opacity-50"
+                                                  : "bg-gradient-to-r from-[#ff007f] to-[#7b2cbf] text-white hover:scale-105 active:scale-95 shadow-md"
+                                            }`}
+                                          >
+                                            {isInvited ? (
+                                              <>
+                                                <span className="w-1.5 h-1.5 border border-purple-400 border-t-transparent rounded-full animate-spin"></span>
+                                                <span>{userLiveInviteCountdown}s</span>
+                                              </>
+                                            ) : (
+                                              "Invite"
+                                            )}
+                                          </button>
+                                        </div>
+                                      );
+                                    });
+                                  })()}
+                                </div>
+
+                                {/* Footer */}
+                                <div className="border-t border-white/5 pt-2 flex items-center justify-between text-[7.5px] text-gray-500 font-mono">
+                                  <span>📡 Server Ping: 14ms</span>
+                                  <span>Total Online Hosts: 1,420</span>
+                                </div>
+                              </div>
+                            )}
+
+                            {/* BOTTOM SYSTEM MENU — compact icon-only host controls */}
                             <div className="bg-black/95 border-t border-white/10 py-1.5 px-2 z-20 flex items-center justify-between text-center select-none backdrop-blur-md">
                               {[
                                 { id: "mute", title: userLiveMic ? "Mute microphone" : "Unmute microphone", icon: userLiveMic ? <Mic className="w-5 h-5" /> : <MicOff className="w-5 h-5" />, active: userLiveMic },
@@ -22774,7 +23015,7 @@ export default function App() {
                                     if (btn.id === "mute") setUserLiveMic(!userLiveMic);
                                     else if (btn.id === "camera") setUserLiveCam(!userLiveCam);
                                     else if (btn.id === "filters") setUserLiveShowBeautyModal(true);
-                                    else if (btn.id === "music") setUserLiveShowMusicModal(true);
+                                    else if (btn.id === "music") openUserLiveMusicModal();
                                     else if (btn.id === "cohost") setUserLivePkInvitePanelOpen(true);
                                     else if (btn.id === "start-guest") handleStartGuestFromSolo();
                                     else if (btn.id === "more") setUserLiveShowMoreModal(true);
@@ -22786,7 +23027,6 @@ export default function App() {
                                 </button>
                               ))}
                             </div>
-                            )}
 
                             {/* DOUBLE TAP FLOATING HEARTS GENERATOR OVERLAY */}
                             {doubleTapHearts.map(heart => (
