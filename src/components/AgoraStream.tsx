@@ -66,8 +66,14 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
   isCoHostMode = false,
   coHostAvatar = "",
   coHostName = "Co-Host",
-  coHostVipLevel = 0
+  coHostVipLevel = 0,
+  receiveRemoteAudio: receiveRemoteAudioProp = true,
+  excludeRemoteUid = null,
+  remoteVideoLayout = "single"
 }) => {
+  // Normalize the optional prop to a guaranteed local boolean. This avoids any
+  // stale/legacy bundle referring to an undeclared receiveRemoteAudio symbol.
+  const receiveRemoteAudio = receiveRemoteAudioProp !== false;
   // Real Agora States
   const [client, setClient] = useState<IAgoraRTCClient | null>(null);
   const clientRef = useRef<IAgoraRTCClient | null>(null);
