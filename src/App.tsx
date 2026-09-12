@@ -4229,6 +4229,14 @@ export default function App() {
     setPartyMusicVolume(userLiveMusicVolume);
   }, [clientView, userLiveActiveTrack?.id, userLiveMusicPlaying, userLiveMusicVolume]);
 
+  // Keep both music controllers in lock-step for Solo + Guest Room.
+  useEffect(() => {
+    if (clientView !== "user-live") return;
+    if (partyMusicTrack?.id !== userLiveActiveTrack?.id) setUserLiveActiveTrack(partyMusicTrack);
+    if (partyMusicPlaying !== userLiveMusicPlaying) setUserLiveMusicPlaying(partyMusicPlaying);
+    if (Math.abs(partyMusicVolume - userLiveMusicVolume) > 0.001) setUserLiveMusicVolume(partyMusicVolume);
+  }, [clientView, partyMusicTrack?.id, partyMusicPlaying, partyMusicVolume]);
+
   const searchAudiusMusic = async (query: string) => {
     const q = query.trim();
     if (q.length < 2) {
@@ -19534,102 +19542,50 @@ export default function App() {
                                   </div>
                                 </div>
 
-                                {/* LOWER 40%: COMMENTS & CONTROLS */}
-                                <div className="h-[40%] w-full flex bg-[#0c0a12] border-t border-white/5 relative z-10">
-                                  {/* CHAT COMMENTS FEED (60% Width) */}
-                                  <div className="w-[60%] h-full flex flex-col p-2.5 justify-between">
-                                    {/* Scrolling Comments Box */}
-                                    <div className="flex-1 overflow-y-auto space-y-1.5 pr-1 max-h-[140px] flex flex-col justify-end">
+                                {/* LOWER AREA: FULL-WIDTH COMMENTS + LOWER NAVIGATION */}
+                                <div className="h-[40%] w-full flex flex-col bg-[#0c0a12] border-t border-white/5 relative z-10 min-h-0">
+                                  {/* FULL-WIDTH CHAT */}
+                                  <div className="flex-1 min-h-0 flex flex-col px-3 pt-2 pb-1">
+                                    <div className="flex-1 min-h-0 overflow-y-auto space-y-1.5 pr-1 flex flex-col justify-end">
                                       {userLiveMessages.slice(-15).map(msg => (
                                         <div key={msg.id} className="bg-black/35 p-1 rounded-lg text-[9px] text-gray-200">
                                           <div className="flex items-center space-x-1">
-                                            {msg.vipLevel > 0 && (
-                                              <span className="text-[6px] bg-yellow-400 text-black px-0.5 rounded font-black font-mono">VIP</span>
-                                            )}
-                                            <span 
-                                              onClick={() => {
-                                                const targetLvl = msg.userLevel || getHostLevelFromName(msg.username);
-                                                setViewerMenuUser({
-                                                  username: msg.username,
-                                                  userLevel: targetLvl,
-                                                  vipLevel: msg.vipLevel || getVipLevelFromUserLevel(targetLvl)
-                                                });
-                                              }}
-                                              className="font-black text-[#66fcf1] hover:text-[#45a29e] hover:underline cursor-pointer transition-colors"
-                                              title="Tap for host controls"
-                                            >
-                                              {msg.username}
-                                            </span>
+                                            {msg.vipLevel > 0 && <span className="text-[6px] bg-yellow-400 text-black px-0.5 rounded font-black font-mono">VIP</span>}
+                                            <span onClick={() => { const targetLvl = msg.userLevel || getHostLevelFromName(msg.username); setViewerMenuUser({ username: msg.username, userLevel: targetLvl, vipLevel: msg.vipLevel || getVipLevelFromUserLevel(targetLvl) }); }} className="font-black text-[#66fcf1] hover:underline cursor-pointer">{msg.username}</span>
                                           </div>
                                           <p className="text-gray-300 text-[8.5px] font-medium leading-tight mt-0.5">{msg.message}</p>
                                         </div>
                                       ))}
                                     </div>
-
-                                    {/* Message input bar */}
-                                    <form
-                                      onSubmit={(e) => {
-                                        e.preventDefault();
-                                        if (!chatInput.trim()) return;
-                                        setUserLiveMessages(prev => [
-                                          ...prev,
-                                          {
-                                            id: "ul-msg-" + Date.now(),
-                                            username: "You (Host)",
-                                            message: chatInput,
-                                            vipLevel: user.vipLevel,
-                                            userLevel: user.userLevel,
-                                            isSystem: false,
-                                            isFlagged: false,
-                                            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-                                          }
-                                        ]);
-                                        setChatInput("");
-                                      }}
-                                      className="flex items-center space-x-1.5 mt-1 bg-white/5 rounded-full px-2 py-0.5 border border-white/5"
-                                    >
-                                      <input
-                                        type="text"
-                                        placeholder="Comment..."
-                                        value={chatInput}
-                                        onChange={(e) => setChatInput(e.target.value)}
-                                        className="bg-transparent text-[8.5px] text-white flex-1 outline-none h-6 placeholder-gray-500"
-                                      />
-                                      <button type="submit" className="text-purple-400 hover:text-purple-300">
-                                        <Send className="w-3 h-3" />
-                                      </button>
+                                    <form onSubmit={(e) => { e.preventDefault(); if (!chatInput.trim()) return; setUserLiveMessages(prev => [...prev, { id: "ul-msg-" + Date.now(), username: "You (Host)", message: chatInput, vipLevel: user.vipLevel, userLevel: user.userLevel, isSystem: false, isFlagged: false, timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }]); setChatInput(""); }} className="flex items-center gap-1.5 mt-1 bg-white/5 rounded-full px-3 py-1 border border-white/10 w-full shrink-0">
+                                      <input type="text" placeholder="Comment..." value={chatInput} onChange={(e) => setChatInput(e.target.value)} className="bg-transparent text-[9px] text-white flex-1 min-w-0 outline-none h-7 placeholder-gray-500" />
+                                      <button type="submit" className="text-purple-400 hover:text-purple-300 shrink-0"><Send className="w-4 h-4" /></button>
                                     </form>
                                   </div>
 
-                                  {/* INTERACTIVE OPTIONS & GUEST CONTROLS (40% Width) - EXACTLY TWO BUTTONS BELOW */}
-                                  <div className="w-[40%] h-full flex flex-col justify-center space-y-1.5 p-2 border-l border-white/5 bg-[#08070e]">
-                                    <div className="grid grid-cols-2 gap-1.5">
-                                      <button onClick={() => setUserLiveShowMusicModal(true)} className="h-9 rounded-xl bg-amber-500/15 border border-amber-400/30 text-amber-200 flex items-center justify-center" title="Music Player" aria-label="Music Player"><Music className="w-4 h-4" /></button>
-                                      <button onClick={() => { const data = { title: `@${user.username} Guest Room`, text: "Join my Pardais Party Guest Room!", url: window.location.href }; if (navigator.share) navigator.share(data).catch(() => {}); else navigator.clipboard?.writeText(window.location.href); }} className="h-9 rounded-xl bg-cyan-500/15 border border-cyan-400/30 text-cyan-200 flex items-center justify-center" title="Share Guest Room" aria-label="Share Guest Room"><Share2 className="w-4 h-4" /></button>
-                                    </div>
-                                    {/* 1. Gift Box Button (Visible to all users & host) */}
-                                    <button
-                                      onClick={() => setUserLiveShowGiftModal(true)}
-                                      className="w-full bg-gradient-to-r from-pink-600 via-rose-500 to-purple-600 hover:brightness-110 active:scale-95 text-white py-2 px-2 rounded-xl text-[9.5px] font-black uppercase tracking-wider flex items-center justify-center space-x-1.5 transition-all shadow-lg border border-pink-400/30 cursor-pointer"
-                                      title="Open Gift Store & Send Gifts to Host or Viewers/Guests"
-                                    >
-                                      <GiftIcon className="w-3.5 h-3.5 text-yellow-300 animate-bounce" />
-                                      <span>🎁 Gift Box</span>
+                                  {/* LOWER NAVIGATION — controls are actual handlers, comment stays full width above */}
+                                  <div className="w-full shrink-0 border-t border-white/5 bg-black/90 px-2 py-1.5 flex items-center justify-between gap-1.5 safe-area-bottom">
+                                    <button type="button" onClick={() => setUserLiveMic(v => !v)} className={`w-10 h-10 rounded-xl border flex items-center justify-center transition-all active:scale-90 ${userLiveMic ? "bg-emerald-600/30 border-emerald-400/60 text-emerald-300" : "bg-red-600/30 border-red-400/60 text-red-300"}`} title={userLiveMic ? "Mute microphone" : "Unmute microphone"}>
+                                      {userLiveMic ? <Mic className="w-5 h-5" /> : <MicOff className="w-5 h-5" />}
                                     </button>
-
-                                    {/* 2. Requests Button (Host inspects and accepts/rejects requests) */}
-                                    <button
-                                      onClick={() => setShowGuestRequestsModal(true)}
-                                      className="w-full bg-gradient-to-r from-purple-700 via-indigo-600 to-cyan-600 hover:brightness-110 active:scale-95 text-white py-2 px-2 rounded-xl text-[9.5px] font-black uppercase tracking-wider flex items-center justify-center space-x-1.5 transition-all shadow-lg border border-purple-400/30 cursor-pointer relative"
-                                      title="Inspect & Accept/Reject Guest Requests"
-                                    >
-                                      <UserCheck className="w-3.5 h-3.5 text-cyan-300" />
-                                      <span>Requests ({userLiveGuestRequests.length})</span>
-                                      {userLiveGuestRequests.length > 0 && (
-                                        <span className="absolute -top-1 -right-1 w-4.5 h-4.5 bg-red-600 text-white rounded-full text-[8px] font-black flex items-center justify-center shadow animate-bounce border border-white">
-                                          {userLiveGuestRequests.length}
-                                        </span>
-                                      )}
+                                    <button type="button" onClick={() => setUserLiveCam(v => !v)} className={`w-10 h-10 rounded-xl border flex items-center justify-center transition-all active:scale-90 ${userLiveCam ? "bg-pink-600/30 border-pink-400/60 text-pink-300" : "bg-white/5 border-white/10 text-gray-300"}`} title={userLiveCam ? "Turn camera off" : "Turn camera on"}>
+                                      {userLiveCam ? <Camera className="w-5 h-5" /> : <CameraOff className="w-5 h-5" />}
+                                    </button>
+                                    <button type="button" onClick={() => setCameraFacingMode(prev => prev === "user" ? "environment" : "user")} className="w-10 h-10 rounded-xl bg-white/5 border border-white/10 text-cyan-300 flex items-center justify-center transition-all active:scale-90" title="Rotate camera">
+                                      <RotateCw className="w-5 h-5" />
+                                    </button>
+                                    <button type="button" onClick={() => setUserLiveShowMusicModal(true)} className={`w-10 h-10 rounded-xl border flex items-center justify-center transition-all active:scale-90 ${partyMusicPlaying ? "bg-amber-500 text-black border-amber-300" : "bg-amber-500/15 border-amber-400/30 text-amber-300"}`} title="Music Player">
+                                      <Music className="w-5 h-5" />
+                                    </button>
+                                    <button type="button" onClick={() => setUserLiveShowGiftModal(true)} className="w-10 h-10 rounded-xl bg-gradient-to-r from-pink-600 to-purple-600 border border-pink-400/40 text-white flex items-center justify-center transition-all active:scale-90" title="Gift Store">
+                                      <GiftIcon className="w-5 h-5 text-yellow-300" />
+                                    </button>
+                                    <button type="button" onClick={() => { const data = { title: `@${user.username} Guest Room`, text: "Join my Pardais Party Guest Room!", url: window.location.href }; if (navigator.share) navigator.share(data).catch(() => {}); else navigator.clipboard?.writeText(window.location.href); }} className="w-10 h-10 rounded-xl bg-cyan-500/15 border border-cyan-400/30 text-cyan-300 flex items-center justify-center transition-all active:scale-90" title="Share Guest Room">
+                                      <Share2 className="w-5 h-5" />
+                                    </button>
+                                    <button type="button" onClick={() => setShowGuestRequestsModal(true)} className="relative w-10 h-10 rounded-xl bg-purple-600/20 border border-purple-400/40 text-purple-200 flex items-center justify-center transition-all active:scale-90" title="Guest Requests">
+                                      <UserCheck className="w-5 h-5" />
+                                      {userLiveGuestRequests.length > 0 && <span className="absolute -top-1 -right-1 min-w-4 h-4 px-1 bg-red-600 text-white rounded-full text-[7px] font-black flex items-center justify-center border border-black">{userLiveGuestRequests.length}</span>}
                                     </button>
                                   </div>
                                 </div>
@@ -22697,326 +22653,87 @@ export default function App() {
                               </div>
                             )}
 
-                            {/* 🎵 BROADCASTER MUSIC LIBRARY MODAL */}
+                            {/* 🎵 SOLO / GUEST MUSIC LIBRARY — same functional player as Party Music */}
                             {userLiveShowMusicModal && (
-                              <div className="absolute inset-x-4 bottom-20 z-40 bg-black/95 backdrop-blur-md border border-white/10 rounded-3xl p-4.5 space-y-4 shadow-2xl animate-slide-up text-left max-h-[65vh] flex flex-col overflow-hidden">
-                                <div className="flex justify-between items-center border-b border-white/5 pb-2.5 bg-transparent shrink-0">
-                                  <div className="flex items-center space-x-2 bg-transparent">
-                                    <div className="p-1 bg-[#ff007f]/10 rounded-lg">
-                                      <Music className="w-4 h-4 text-[#ff007f] animate-pulse" />
+                              <div className="absolute inset-x-3 bottom-20 z-[70] bg-[#090912]/98 border-2 border-amber-400/50 rounded-3xl p-3.5 shadow-[0_0_35px_rgba(245,158,11,0.28)] backdrop-blur-xl flex flex-col max-h-[72%] animate-slide-up">
+                                <div className="flex items-center justify-between border-b border-white/10 pb-2.5 mb-2.5">
+                                  <div className="flex items-center gap-2 text-left">
+                                    <div className="w-8 h-8 rounded-xl bg-amber-500/15 border border-amber-400/30 flex items-center justify-center">
+                                      <Music className="w-4 h-4 text-amber-300" />
                                     </div>
-                                    <div className="bg-transparent">
-                                      <h5 className="text-[11px]/none font-black text-white uppercase tracking-widest font-mono">PARDAIS Studio Player</h5>
-                                      <p className="text-[8px] text-gray-400 mt-0.5">Background soundtrack audio for your broadcast</p>
+                                    <div>
+                                      <p className="text-[10px] font-black text-white uppercase tracking-widest font-mono">Party Music</p>
+                                      <p className="text-[7.5px] text-gray-400">Search, save and play music in your Live.</p>
                                     </div>
                                   </div>
-                                  <button 
-                                    onClick={() => setUserLiveShowMusicModal(false)} 
-                                    className="text-gray-400 hover:text-white bg-white/5 p-1 rounded-full text-[10px] w-5 h-5 flex items-center justify-center border border-white/5"
-                                  >
-                                    ✕
-                                  </button>
-                                </div>
-
-                                {/* Track list (scrollable) */}
-                                <div className="flex-1 overflow-y-auto pr-1 space-y-2 max-h-[35vh]">
-                                  {musicLibraryTracks.length === 0 ? (
-                                    <div className="py-8 text-center text-[8px] text-gray-500 font-mono">No songs are available yet. Ask an authorized admin to add music.</div>
-                                  ) : musicLibraryTracks.map((track) => {
-                                    const isActive = userLiveActiveTrack?.id === track.id;
-                                    return (
-                                      <div 
-                                        key={track.id}
-                                        onClick={() => {
-                                          setUserLiveActiveTrack(track);
-                                          setUserLiveMusicPlaying(true);
-                                          setPartyMusicTrack(track);
-                                          setPartyMusicPlaying(true);
-                                        }}
-                                        className={`p-2 rounded-xl flex items-center justify-between border cursor-pointer transition-all ${
-                                          isActive 
-                                            ? "bg-gradient-to-r from-purple-950/40 to-pink-950/20 border-[#ff007f]/50 shadow-md" 
-                                            : "bg-white/3 border-white/5 hover:bg-white/5"
-                                        }`}
-                                      >
-                                        <div className="flex items-center space-x-3 min-w-0 bg-transparent">
-                                          <div className="relative shrink-0 bg-transparent">
-                                            <img src={track.cover || "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=100"} className="w-9 h-9 rounded-lg object-cover" alt="cover" />
-                                            {isActive && userLiveMusicPlaying && (
-                                              <div className="absolute inset-0 bg-black/40 rounded-lg flex items-center justify-center">
-                                                <Disc className="w-4 h-4 text-white animate-spin" />
-                                              </div>
-                                            )}
-                                          </div>
-                                          <div className="min-w-0 flex flex-col items-start bg-transparent">
-                                            <p className={`text-[10px] font-black truncate leading-tight ${isActive ? "text-[#ff007f]" : "text-gray-100"}`}>
-                                              {track.title}
-                                            </p>
-                                            <p className="text-[8px] text-gray-400 truncate leading-tight mt-0.5">{track.artist}</p>
-                                            <span className="text-[7px] bg-white/5 px-1 py-0.2 rounded font-mono font-bold text-gray-400 mt-1">{track.category}</span>
-                                          </div>
-                                        </div>
-
-                                        <div className="flex items-center space-x-2 shrink-0 bg-transparent">
-                                          <span className="text-[8px] text-gray-500 font-mono font-bold">{track.duration}</span>
-                                          <span
-                                            className={`p-1.5 rounded-full transition-all ${
-                                              isActive && userLiveMusicPlaying 
-                                                ? "bg-red-500/20 text-red-400" 
-                                                : "bg-[#ff007f]/10 text-[#ff007f] hover:bg-[#ff007f]/20"
-                                            }`}
-                                          >
-                                            {isActive && userLiveMusicPlaying ? <Pause className="w-3 h-3" /> : <Play className="w-3 h-3" />}
-                                          </span>
-                                        </div>
-                                      </div>
-                                    );
-                                  })}
-                                </div>
-
-                                {/* Active Music Controls at bottom */}
-                                {userLiveActiveTrack ? (
-                                  <div className="bg-[#150f24] border border-white/5 rounded-2xl p-3 space-y-2.5 shrink-0 animate-fade-in">
-                                    <div className="flex items-center justify-between bg-transparent">
-                                      <div className="flex items-center space-x-2.5 min-w-0 bg-transparent">
-                                        <img src={userLiveActiveTrack.cover || "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=100"} className="w-8 h-8 rounded-md object-cover border border-white/5" alt="cover" />
-                                        <div className="min-w-0 flex flex-col items-start bg-transparent">
-                                          <span className="text-[7px] text-[#ff007f] font-mono font-bold uppercase tracking-wider">Broadcasting Background</span>
-                                          <p className="text-[9.5px] font-black text-white truncate leading-tight w-36">{userLiveActiveTrack.title}</p>
-                                        </div>
-                                      </div>
-
-                                      <div className="flex items-center space-x-1.5 bg-transparent">
-                                        <button 
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            setUserLiveMusicPlaying(!userLiveMusicPlaying);
-                                          }}
-                                          className="p-1.5 rounded-full bg-[#ff007f] hover:bg-[#e60072] text-white transition-all"
-                                        >
-                                          {userLiveMusicPlaying ? <Pause className="w-3 h-3" /> : <Play className="w-3 h-3" />}
-                                        </button>
-                                        <button 
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            setUserLiveMusicPlaying(false);
-                                            setUserLiveActiveTrack(null);
-                                            setPartyMusicPlaying(false);
-                                            setPartyMusicTrack(null);
-                                          }}
-                                          className="text-[8px] bg-white/5 hover:bg-white/10 text-gray-300 font-bold px-2 py-1 rounded"
-                                        >
-                                          Stop
-                                        </button>
-                                      </div>
-                                    </div>
-
-                                    {/* Volume & progress bar */}
-                                    <div className="space-y-1.5 bg-transparent">
-                                      {/* Progress line */}
-                                      <div className="w-full h-1 bg-white/5 rounded-full overflow-hidden">
-                                        <div 
-                                          className="h-full bg-gradient-to-r from-[#ff007f] to-purple-500 rounded-full transition-all duration-300"
-                                          style={{ width: `${userLiveMusicProgress}%` }}
+                                  <div className="flex items-center gap-1.5">
+                                    {user?.isAdmin === true && (
+                                      <>
+                                        <input
+                                          ref={musicUploadInputRef}
+                                          type="file"
+                                          accept="audio/*,.mp3,.aac,.m4a,.wav,.ogg,.webm,.flac"
+                                          className="hidden"
+                                          onChange={(e) => handleAdminMusicUpload(e.target.files?.[0] || null)}
                                         />
-                                      </div>
-
-                                      {/* Volume controls */}
-                                      <div className="flex items-center justify-between text-[7.5px] text-gray-400 bg-transparent pt-0.5">
-                                        <div className="flex items-center space-x-1.5 bg-transparent">
-                                          <Volume2 className="w-3 h-3 text-gray-400" />
-                                          <input 
-                                            type="range" 
-                                            min="0" 
-                                            max="1" 
-                                            step="0.05"
-                                            value={userLiveMusicVolume}
-                                            onChange={(e) => setUserLiveMusicVolume(parseFloat(e.target.value))}
-                                            className="w-18 accent-[#ff007f] h-0.5 bg-white/20 rounded-lg cursor-pointer"
-                                          />
-                                          <span className="font-mono font-bold text-gray-200">{Math.round(userLiveMusicVolume * 100)}%</span>
-                                        </div>
-                                        <span className="font-mono text-[7px] text-gray-500">Loop Active • Synced</span>
-                                      </div>
-                                    </div>
+                                        <button onClick={() => musicUploadInputRef.current?.click()} disabled={musicUploadBusy} className="px-2 py-1.5 rounded-xl bg-amber-500 text-black text-[7px] font-black uppercase disabled:opacity-50 cursor-pointer">
+                                          {musicUploadBusy ? "Uploading…" : "+ Add Song"}
+                                        </button>
+                                      </>
+                                    )}
+                                    <button onClick={() => setUserLiveShowMusicModal(false)} className="w-6 h-6 rounded-full bg-white/5 text-gray-400 hover:text-white flex items-center justify-center cursor-pointer">✕</button>
                                   </div>
-                                ) : (
-                                  <div className="p-3.5 bg-white/3 rounded-xl text-center shrink-0 border border-white/5">
-                                    <p className="text-[8.5px] text-gray-400">No background soundtrack is currently playing. Start one to entertain your audience!</p>
-                                  </div>
-                                )}
-                              </div>
-                            )}
-
-                            {/* PK INVITATION DRAWER (BOTTOM 50% OVERLAY) */}
-                            {userLivePkInvitePanelOpen && (
-                              <div className="absolute bottom-0 inset-x-0 h-[50%] bg-[#0f0e15]/98 backdrop-blur-lg rounded-t-3xl border-t border-purple-500/20 z-35 p-4 flex flex-col justify-between animate-slide-up shadow-2xl text-left">
-                                {/* Header */}
-                                <div className="border-b border-white/5 pb-2">
-                                  <div className="flex justify-between items-center bg-transparent">
-                                    <div className="flex items-center space-x-2 bg-transparent">
-                                      <Users className="w-4 h-4 text-purple-400" />
-                                      <h3 className="text-[11.5px] font-black text-white uppercase tracking-wider font-mono">Invite Co-Hosts</h3>
-                                    </div>
-                                    <button 
-                                      onClick={() => {
-                                        setUserLivePkInvitePanelOpen(false);
-                                        setUserLiveInviteSearchQuery("");
-                                      }}
-                                      className="w-5 h-5 rounded-full bg-white/5 text-gray-400 flex items-center justify-center hover:bg-white/10 text-[9.5px] cursor-pointer"
-                                    >
-                                      ✕
-                                    </button>
-                                  </div>
-                                  <p className="text-[8.5px] text-gray-400 mt-1 leading-normal">
-                                    Send a co-host request. Only available Solo Live hosts are shown. Accepted co-hosts join in 1v1 mode.
-                                  </p>
                                 </div>
 
-                                {/* Search Bar */}
-                                <div className="my-2 relative bg-transparent">
-                                  <span className="absolute inset-y-0 left-3 flex items-center pointer-events-none text-gray-400 text-xs">
-                                    🔍
-                                  </span>
-                                  <input
-                                    type="text"
-                                    placeholder="Search host by name or ID..."
-                                    value={userLiveInviteSearchQuery}
-                                    onChange={(e) => setUserLiveInviteSearchQuery(e.target.value)}
-                                    className="w-full bg-white/5 border border-white/10 rounded-xl pl-9 pr-8 py-1.5 text-[9px] text-white focus:outline-none focus:border-purple-500/50 transition-colors font-medium placeholder-gray-500"
-                                  />
-                                  {userLiveInviteSearchQuery && (
-                                    <button
-                                      onClick={() => setUserLiveInviteSearchQuery("")}
-                                      className="absolute inset-y-0 right-3 flex items-center text-gray-400 hover:text-white text-[9px]"
-                                    >
-                                      ✕
+                                <div className="grid grid-cols-3 gap-1.5 mb-2.5">
+                                  {[["library", "Library"], ["audius", "🔎 Search"], ["saved", "📌 Saved"]].map(([key, label]) => (
+                                    <button key={key} onClick={() => setMusicSource(key as "library" | "audius" | "saved")} className={`py-1.5 rounded-xl text-[7.5px] font-black uppercase tracking-wide border cursor-pointer ${musicSource === key ? "bg-amber-500 text-black border-amber-300" : "bg-white/[0.03] text-gray-400 border-white/10"}`}>
+                                      {label}
                                     </button>
+                                  ))}
+                                </div>
+
+                                <div className="flex items-center gap-2 mb-2.5">
+                                  <div className="flex-1 flex items-center gap-1.5 bg-black/50 border border-white/10 rounded-xl px-2.5 py-1.5">
+                                    <Search className="w-3 h-3 text-gray-500" />
+                                    <input value={partyMusicSearch} onChange={(e) => setPartyMusicSearch(e.target.value)} placeholder={musicSource === "audius" ? "Search Audius songs / artists..." : musicSource === "saved" ? "Search saved songs..." : "Search Party library..."} className="flex-1 bg-transparent text-[9px] text-white placeholder-gray-600 focus:outline-none" />
+                                  </div>
+                                  {partyMusicTrack && (
+                                    <button onClick={() => { setPartyMusicPlaying(false); setPartyMusicTrack(null); setUserLiveMusicPlaying(false); setUserLiveActiveTrack(null); }} className="px-2.5 py-1.5 rounded-xl bg-red-500/10 border border-red-500/30 text-red-300 text-[8px] font-black cursor-pointer">STOP</button>
                                   )}
                                 </div>
 
-                                {/* Real Outgoing Pending Invite Status Banner for Host A */}
-                                {userLiveInvitedHostId && (
-                                  <div className="my-1 bg-purple-950/40 border border-purple-500/20 p-2.5 rounded-xl flex items-center justify-between animate-fade-in">
-                                    <div className="flex items-center space-x-2 text-left bg-transparent">
-                                      <span className="w-2 h-2 rounded-full bg-purple-400 animate-ping shrink-0" />
-                                      <div className="flex flex-col text-left bg-transparent">
-                                        <span className="text-[9px] font-black text-purple-200">
-                                          Invitation sent to @{userLiveInvitedHostId}
-                                        </span>
-                                        <span className="text-[7.5px] text-gray-400 font-mono">
-                                          Waiting for response... {userLiveInviteCountdown !== null ? `${userLiveInviteCountdown}s` : ""}
-                                        </span>
-                                      </div>
-                                    </div>
-                                    <button
-                                      onClick={async () => {
-                                        if (currentOutgoingInviteId) {
-                                          try {
-                                            await fetch(`/api/v1/pk/invite/${currentOutgoingInviteId}/respond`, {
-                                              method: "POST",
-                                              headers: { "Content-Type": "application/json" },
-                                              body: JSON.stringify({
-                                                action: "cancel",
-                                                username: user.username,
-                                                userId: user.uid || user.username
-                                              })
-                                            });
-                                          } catch (e) {}
-                                        }
-                                        setUserLiveInvitedHostId(null);
-                                        setUserLiveInviteCountdown(null);
-                                        setCurrentOutgoingInviteId(null);
-                                      }}
-                                      className="px-2.5 py-1 bg-white/10 hover:bg-white/20 text-gray-300 rounded-lg text-[8px] font-bold transition-all cursor-pointer"
-                                    >
-                                      Cancel
-                                    </button>
-                                  </div>
-                                )}
-
-                                {/* Host scrollable container */}
-                                <div className="flex-1 overflow-y-auto my-1 pr-1 space-y-2 max-h-[120px] scrollbar-thin">
-                                  {(() => {
-                                    const hostList = (userLiveAvailableHosts || [])
-                                      .map((u: any) => ({
-                                        id: String(u.id || u.userId || u.username),
-                                        username: String(u.username || "User"),
-                                        avatar: String(u.avatar || "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=100&q=80"),
-                                        fans: String(u.fans || "10K fans"),
-                                        level: Number(u.level || 1),
-                                        flag: "🇵🇰",
-                                        inPkBattle: false,
-                                        status: u.status || "🔴 Live Solo"
-                                      }))
-                                      .filter(host => !host.inPkBattle && host.username.toLowerCase() !== user?.username?.toLowerCase() && (
-                                        !userLiveInviteSearchQuery ||
-                                        host.username.toLowerCase().includes(userLiveInviteSearchQuery.toLowerCase()) ||
-                                        host.id.toLowerCase().includes(userLiveInviteSearchQuery.toLowerCase())
-                                      ));
-
-                                    if (hostList.length === 0) {
+                                <div className="flex-1 overflow-y-auto space-y-1.5 pr-1">
+                                  {musicSource === "audius" && audiusSearchLoading ? (
+                                    <div className="py-8 text-center text-[8px] text-gray-500 font-mono">Searching Audius…</div>
+                                  ) : musicSource === "saved" && savedMusicLoading ? (
+                                    <div className="py-8 text-center text-[8px] text-gray-500 font-mono">Loading your Saved Songs…</div>
+                                  ) : (() => {
+                                    const sourceTracks = musicSource === "audius" ? audiusSearchResults : musicSource === "saved" ? savedMusicTracks : musicLibraryTracks;
+                                    const q = partyMusicSearch.trim().toLowerCase();
+                                    const tracks = sourceTracks.filter((track) => !q || `${track.title} ${track.artist} ${track.category}`.toLowerCase().includes(q));
+                                    if (musicSource === "audius" && q.length < 2) return <div className="py-8 text-center text-[8px] text-gray-500 font-mono">Type at least 2 letters to search Audius.</div>;
+                                    if (tracks.length === 0) return <div className="py-8 text-center text-[8px] text-gray-500 font-mono">{musicSource === "saved" ? "No saved songs yet. Search Audius and tap 📌 Save." : musicSource === "audius" ? "No Audius songs found." : "No songs added yet. Authorized admin can use + Add Song."}</div>;
+                                    return tracks.map(track => {
+                                      const active = partyMusicTrack?.id === track.id;
+                                      const saved = isMusicSaved(track);
+                                      const providerId = String(track.providerTrackId || track.id);
                                       return (
-                                        <div className="py-4 text-center text-gray-400 bg-white/3 border border-white/5 rounded-xl space-y-2">
-                                          <p className="text-[9px] font-medium text-gray-300">No active online hosts available for 1v1 right now.</p>
-                                          <button
-                                            onClick={() => {
-                                              setUserLiveInviteSearchQuery("");
-                                              fetch("/api/v1/pk/available-hosts?username=" + encodeURIComponent(user.username))
-                                                .then(r => r.json())
-                                                .then(data => setUserLiveAvailableHosts(Array.isArray(data) ? data : []))
-                                                .catch(() => {});
-                                            }}
-                                            className="px-3 py-1 bg-purple-600/30 hover:bg-purple-600/50 text-purple-200 border border-purple-500/30 rounded-full text-[8px] font-bold transition-all cursor-pointer"
-                                          >
-                                            🔄 Refresh Online Hosts
+                                        <div key={track.id} className={`w-full flex items-center gap-2.5 p-2 rounded-xl border text-left transition-all ${active ? "bg-amber-500/10 border-amber-400/50" : "bg-white/[0.02] border-white/5 hover:bg-white/5"}`}>
+                                          <button onClick={() => { setPartyMusicTrack(track); setPartyMusicPlaying(true); setUserLiveActiveTrack(track); setUserLiveMusicPlaying(true); }} className="w-9 h-9 rounded-lg overflow-hidden shrink-0 border border-white/10 cursor-pointer">
+                                            <img src={track.cover || "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=100"} className="w-full h-full object-cover" alt="" />
                                           </button>
-                                        </div>
-                                      );
-                                    }
-
-                                    return hostList.map((host) => {
-                                      const isInvited = userLiveInvitedHostId === host.username || userLiveInvitedHostId === host.id;
-                                      return (
-                                        <div 
-                                          key={host.id}
-                                          className="flex items-center justify-between bg-white/3 border border-white/5 p-2 rounded-xl animate-fade-in hover:border-purple-500/30 transition-all"
-                                        >
-                                          <div className="flex items-center space-x-2.5 text-left bg-transparent">
-                                            <div className="relative shrink-0">
-                                              <img src={host.avatar || DEFAULT_USER.avatar} className="w-8 h-8 rounded-full object-cover border border-purple-500/30" />
-                                              <span className="absolute bottom-0 right-0 w-2 h-2 bg-green-500 rounded-full border border-black animate-pulse"></span>
-                                            </div>
-                                            <div className="flex flex-col bg-transparent">
-                                              <div className="flex items-center space-x-1 bg-transparent">
-                                                <span className="text-[9px] font-black text-white">{host.username}</span>
-                                                <span className="text-[7px] bg-purple-900/50 text-purple-300 px-1 rounded-full font-mono font-bold">Lvl {host.level}</span>
-                                              </div>
-                                              <span className="text-[7.5px] text-gray-400 font-mono bg-transparent">{host.fans} • {host.status}</span>
-                                            </div>
-                                          </div>
-
-                                          <button
-                                            disabled={userLiveInvitedHostId !== null}
-                                            onClick={() => {
-                                              handleInviteHostTo1v1Match(host);
-                                            }}
-                                            className={`px-3 py-1.5 rounded-full text-[8.5px] font-black uppercase tracking-wider font-mono transition-all cursor-pointer ${
-                                              isInvited
-                                                ? "bg-purple-900/20 text-purple-400 border border-purple-500/20 flex items-center space-x-1"
-                                                : userLiveInvitedHostId !== null
-                                                  ? "bg-gray-800 text-gray-500 border border-white/5 cursor-not-allowed opacity-50"
-                                                  : "bg-gradient-to-r from-[#ff007f] to-[#7b2cbf] text-white hover:scale-105 active:scale-95 shadow-md"
-                                            }`}
-                                          >
-                                            {isInvited ? (
-                                              <>
-                                                <span className="w-1.5 h-1.5 border border-purple-400 border-t-transparent rounded-full animate-spin"></span>
-                                                <span>{userLiveInviteCountdown}s</span>
-                                              </>
-                                            ) : (
-                                              "Invite"
-                                            )}
+                                          <button onClick={() => { setPartyMusicTrack(track); setPartyMusicPlaying(true); setUserLiveActiveTrack(track); setUserLiveMusicPlaying(true); }} className="min-w-0 flex-1 text-left cursor-pointer">
+                                            <span className={`block text-[9px] font-black truncate ${active ? "text-amber-300" : "text-white"}`}>{track.title}</span>
+                                            <span className="block text-[7px] text-gray-400 truncate">{track.artist} • {track.category}{track.source ? ` • ${track.source}` : ""}</span>
+                                          </button>
+                                          {track.provider === "audius" && (
+                                            <button onClick={() => toggleMusicSaved(track)} disabled={savingMusicIds.has(providerId)} title={saved ? "Remove from Saved Songs" : "Save Song"} className={`w-7 h-7 rounded-lg border flex items-center justify-center text-[11px] cursor-pointer disabled:opacity-50 ${saved ? "bg-amber-500/15 border-amber-400/50 text-amber-300" : "bg-white/5 border-white/10 text-gray-400"}`}>
+                                              {savingMusicIds.has(providerId) ? "…" : saved ? "📌" : "☆"}
+                                            </button>
+                                          )}
+                                          <button onClick={() => { if (active) { const next = !partyMusicPlaying; setPartyMusicPlaying(next); setUserLiveMusicPlaying(next); } else { setPartyMusicTrack(track); setPartyMusicPlaying(true); setUserLiveActiveTrack(track); setUserLiveMusicPlaying(true); } }} className="w-7 h-7 rounded-lg bg-amber-500/10 border border-amber-400/20 text-[10px] text-amber-300 cursor-pointer">
+                                            {active && partyMusicPlaying ? "⏸" : "▶"}
                                           </button>
                                         </div>
                                       );
@@ -23024,15 +22741,24 @@ export default function App() {
                                   })()}
                                 </div>
 
-                                {/* Footer */}
-                                <div className="border-t border-white/5 pt-2 flex items-center justify-between text-[7.5px] text-gray-500 font-mono">
-                                  <span>📡 Server Ping: 14ms</span>
-                                  <span>Total Online Hosts: 1,420</span>
-                                </div>
+                                {partyMusicTrack && (
+                                  <div className="mt-2.5 pt-2.5 border-t border-white/10">
+                                    <div className="flex items-center justify-between gap-2 mb-1.5">
+                                      <span className="text-[8px] text-amber-300 font-black truncate">🎵 {partyMusicTrack.title}</span>
+                                      <button onClick={() => { const next = !partyMusicPlaying; setPartyMusicPlaying(next); setUserLiveMusicPlaying(next); setUserLiveActiveTrack(partyMusicTrack); }} className="text-[8px] px-2 py-1 rounded-lg bg-amber-500 text-black font-black cursor-pointer">{partyMusicPlaying ? "PAUSE" : "PLAY"}</button>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                      <Volume2 className="w-3 h-3 text-amber-300" />
+                                      <input type="range" min="0" max="1" step="0.05" value={partyMusicVolume} onChange={(e) => { const v = parseFloat(e.target.value); setPartyMusicVolume(v); setUserLiveMusicVolume(v); }} className="flex-1 accent-amber-400" />
+                                      <span className="text-[7px] text-gray-300 font-mono w-7 text-right">{Math.round(partyMusicVolume * 100)}%</span>
+                                    </div>
+                                  </div>
+                                )}
                               </div>
                             )}
 
-                            {/* BOTTOM SYSTEM MENU — compact icon-only host controls */}
+                            {/* BOTTOM SYSTEM MENU — compact icon-only host controls (Solo/PK only; Guest has its own lower navigation) */}
+                            {!userLiveGuestModeActive && (
                             <div className="bg-black/95 border-t border-white/10 py-1.5 px-2 z-20 flex items-center justify-between text-center select-none backdrop-blur-md">
                               {[
                                 { id: "mute", title: userLiveMic ? "Mute microphone" : "Unmute microphone", icon: userLiveMic ? <Mic className="w-5 h-5" /> : <MicOff className="w-5 h-5" />, active: userLiveMic },
@@ -23060,6 +22786,7 @@ export default function App() {
                                 </button>
                               ))}
                             </div>
+                            )}
 
                             {/* DOUBLE TAP FLOATING HEARTS GENERATOR OVERLAY */}
                             {doubleTapHearts.map(heart => (
