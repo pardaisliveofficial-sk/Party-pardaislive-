@@ -4113,6 +4113,11 @@ export default function App() {
   const [users, setUsers] = useState<any[]>([]);
   const [csWhatsapp, setCsWhatsapp] = useState<string>("");
   const [userLiveBeauty, setUserLiveBeauty] = useState({ smooth: 70, brightness: 80, whitening: 50 });
+  const [userLiveFilter, setUserLiveFilter] = useState<string>("Original");
+  const userLiveFilterCss: Record<string, string> = {
+    "Original": "none", "Natural": "brightness(1.04) saturate(1.06) contrast(1.02)", "Glow": "brightness(1.08) saturate(1.10) contrast(1.01)",
+    "Fresh": "brightness(1.05) saturate(1.14) hue-rotate(-3deg)", "Cool": "brightness(1.02) saturate(1.08) hue-rotate(8deg)", "Warm": "brightness(1.05) saturate(1.12) sepia(0.08) hue-rotate(-8deg)"
+  };
   const [userLiveMic, setUserLiveMic] = useState<boolean>(true);
   const [userLiveCam, setUserLiveCam] = useState<boolean>(true);
   const [userLiveCamRotation, setUserLiveCamRotation] = useState<number>(0);
@@ -4215,6 +4220,14 @@ export default function App() {
   useEffect(() => {
     loadSavedMusic();
   }, [user?.uid, user?.username, user?.uniqueId]);
+
+  // Keep the Solo/Guest/PK music source unified.
+  useEffect(() => {
+    if (clientView !== "user-live") return;
+    setPartyMusicTrack(userLiveActiveTrack);
+    setPartyMusicPlaying(Boolean(userLiveActiveTrack && userLiveMusicPlaying));
+    setPartyMusicVolume(userLiveMusicVolume);
+  }, [clientView, userLiveActiveTrack?.id, userLiveMusicPlaying, userLiveMusicVolume]);
 
   const searchAudiusMusic = async (query: string) => {
     const q = query.trim();
@@ -4470,6 +4483,7 @@ export default function App() {
   const [incomingPkBattleChallenge, setIncomingPkBattleChallenge] = useState<any>(null);
   const [realActivePkMatches, setRealActivePkMatches] = useState<Array<any>>([]);
   const [userLivePkChannelName, setUserLivePkChannelName] = useState<string>("");
+  const [userLiveHostAgoraUid, setUserLiveHostAgoraUid] = useState<number | null>(null);
   const [incoming1v1Invite, setIncoming1v1Invite] = useState<any>(null);
   const [userLivePkTimer, setUserLivePkTimer] = useState<number>(300); // 5 minutes default (300 seconds)
   const [userLivePkScoreMy, setUserLivePkScoreMy] = useState<number>(0);
@@ -7579,6 +7593,7 @@ export default function App() {
     setUserLivePkConnected(false);
     setUserLiveCoHost(null);
     setUserLivePkChannelName("");
+    setUserLiveHostAgoraUid(null);
     setUserLivePkScoreMy(0);
     setUserLivePkScoreOther(0);
     setUserLivePkTimer(300);
@@ -7711,6 +7726,7 @@ export default function App() {
 
   const handleHostPublishSuccess = (info: { channelName: string; uid: number }) => {
     console.log("[LIVE HOST PUBLISHED SUCCESS]", info);
+    setUserLiveHostAgoraUid(Number(info.uid));
     const token = localStorage.getItem("pardais_auth_token");
     const hostId = `h-${user.uniqueId || user.username || "pardais_1001"}`;
     const hostChannelName = info.channelName || userLivePkChannelName || `room_${user.uniqueId || user.username || "pardais_1001"}`;
@@ -12619,13 +12635,7 @@ export default function App() {
                                   } else {
                                     return (
                                       <div className="w-full h-full relative flex items-center justify-center bg-[#0d0a16]">
-                                        {(activeHost.showCoverPhoto !== false && (activeHost.coverPhoto || userLiveCoverPhoto)) ? (
-                                          <img
-                                            src={activeHost.coverPhoto || userLiveCoverPhoto || DEFAULT_USER.coverPhoto}
-                                            className="w-full h-full object-cover transition-all duration-300"
-                                            alt="Host Frame Photo"
-                                          />
-                                        ) : cameraActive ? (
+                                        {cameraActive ? (
                                           <img
                                             src={activeHost.avatar || liveBroadcasterAvatar || DEFAULT_USER.avatar}
                                             style={{ transform: `rotate(${hostCamRotation}deg)`, transition: "transform 0.3s ease" }}
@@ -12680,67 +12690,17 @@ export default function App() {
                                     key={seat.id}
                                     onClick={() => {
                                       if (!seat.name) {
-                                        const joinChoice = window.confirm(`Guest Seat #${seat.id} is vacant!\n\n- Click OK to JOIN IMMEDIATELY as a Guest.\n- Click Cancel to send an application request to the Host's requests queue.`);
-                                        if (joinChoice) {
-                                          // Seat user immediately
-                                          const updatedSeats = viewerLiveGuestSeats.map(s => {
-                                            if (s.id === seat.id) {
-                                              return {
-                                                ...s,
-                                                name: user.username,
-                                                avatar: user.avatar,
-                                                diamonds: "0.0K",
-                                                isMuted: false,
-                                                isCamMuted: false,
-                                                isBigFrame: false
-                                              };
-                                            }
-                                            return s;
+                                        if (!activeHost?.id || !user?.username) { alert("Please login to join as a guest."); return; }
+                                        try {
+                                          const res = await fetch(`/api/v1/hosts/${activeHost.id}/guest-requests`, {
+                                            method: "POST", headers: { "Content-Type": "application/json" },
+                                            body: JSON.stringify({ username: user.username, avatar: user.avatar, seatId: seat.id, vipLevel: user.vipLevel || 0, level: user.userLevel || 1 })
                                           });
-                                          triggerJoinNotif(user.username, user.userLevel || user.level || 1, user.vipLevel || 0);
-                                          setViewerLiveGuestSeats(updatedSeats);
-                                          setViewerRequestStatus("accepted");
-                                          setChatMessages(prev => [
-                                            ...prev,
-                                            {
-                                              id: "msg-join-" + Date.now(),
-                                              username: "System 🎙️",
-                                              message: `🎉 @${user.username} has joined Guest Seat #${seat.id}!`,
-                                              vipLevel: 0,
-                                              userLevel: 0,
-                                              isSystem: true,
-                                              isFlagged: false,
-                                              timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-                                            }
-                                          ]);
-                                          alert(`🎉 You have successfully joined Guest Seat #${seat.id}! Click on your seat to open controls.`);
-                                        } else {
-                                          setUserLiveGuestRequests(prev => [
-                                            ...prev,
-                                            {
-                                              id: "req-" + Date.now(),
-                                              username: user.username,
-                                              avatar: user.avatar,
-                                              seatId: seat.id,
-                                              vipLevel: user.vipLevel,
-                                              coins: user.coins
-                                            }
-                                          ]);
-                                          // Also send system message
-                                          setChatMessages(prev => [
-                                            ...prev,
-                                            {
-                                              id: "msg-req-" + Date.now(),
-                                              username: "System 🎙️",
-                                              message: `${user.username} applied to join Seat ${seat.id}! Approval pending...`,
-                                              vipLevel: 0,
-                                              userLevel: 0,
-                                              isSystem: true,
-                                              isFlagged: false,
-                                              timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-                                            }
-                                          ]);
-                                          alert("🎙️ Application request sent to the Host's dashboard! (You can view and approve this request by switching to the 'Host Live' stream simulator).");
+                                          if (!res.ok) throw new Error("Request failed");
+                                          setViewerRequestStatus("pending");
+                                          alert(`📨 Guest request sent to @${activeHost.name || activeHost.username || "Host"}. Wait for approval.`);
+                                        } catch {
+                                          alert("❌ Could not send guest request. Please try again.");
                                         }
                                       } else {
                                         setShowGuestSeatActionModal({ seatId: seat.id, isUserLive: false });
@@ -12829,9 +12789,8 @@ export default function App() {
                                     ) : (
                                       <div className="flex flex-col items-center justify-center h-full w-full p-1 group cursor-pointer select-none">
                                         <div className="relative flex items-center justify-center">
-                                          {/* Small representation of a person's head */}
-                                          <div className="w-6 h-6 rounded-full bg-purple-950/40 border border-purple-400/30 flex items-center justify-center text-purple-300 group-hover:border-purple-400 transition-all shadow-inner">
-                                            <User className="w-3.5 h-3.5 text-purple-200" />
+                                          <div className="w-9 h-9 rounded-xl bg-gradient-to-b from-purple-900/50 to-black border border-purple-400/30 flex items-center justify-center group-hover:border-pink-400 group-hover:scale-105 transition-all shadow-inner animate-pulse">
+                                            <span className="text-xl leading-none">🪑</span>
                                           </div>
                                           {/* Plus sign badge */}
                                           <div className="absolute -bottom-1 -right-1 w-3.5 h-3.5 rounded-full bg-gradient-to-tr from-pink-500 to-purple-600 text-white flex items-center justify-center text-[9px] font-bold shadow-md group-hover:scale-110 transition-transform border border-black">
@@ -12917,6 +12876,10 @@ export default function App() {
 
                               {/* INTERACTIVE OPTIONS & GUEST CONTROLS (40% Width) */}
                               <div className="w-[40%] h-full flex flex-col justify-between p-2.5 border-l border-white/5">
+                                <div className="grid grid-cols-2 gap-1.5 mb-1.5">
+                                  <button onClick={() => setLiveRoomShowMusicToast(true)} className="h-8 rounded-xl bg-amber-500/15 border border-amber-400/30 text-amber-200 flex items-center justify-center" title="Room Music" aria-label="Room Music"><Music className="w-4 h-4" /></button>
+                                  <button onClick={() => { const data = { title: `@${activeHost?.name || activeHost?.username || "Host"} Guest Room`, text: "Join this Pardais Party Guest Room!", url: window.location.href }; if (navigator.share) navigator.share(data).catch(() => {}); else navigator.clipboard?.writeText(window.location.href); }} className="h-8 rounded-xl bg-cyan-500/15 border border-cyan-400/30 text-cyan-200 flex items-center justify-center" title="Share Guest Room" aria-label="Share Guest Room"><Share2 className="w-4 h-4" /></button>
+                                </div>
                                 <div className="space-y-1.5">
                                   {/* Send Join Request Trigger */}
                                   <button
@@ -19081,6 +19044,7 @@ export default function App() {
                             {!(userLivePkActive || userLivePkConnected || userLiveCoHost) && (
                               <div className="absolute inset-0 z-0 bg-black flex pointer-events-none">
                                 <div className="w-full h-full relative overflow-hidden pointer-events-auto">
+                                  <div className="absolute inset-0 transition-all duration-300" style={{ filter: userLiveFilterCss[userLiveFilter] || "none" }}>
                                   <AgoraStream
                                     channelName={userLivePkChannelName || `room_${user.uniqueId || user.username || "pardais_1001"}`}
                                     role="publisher"
@@ -19102,6 +19066,7 @@ export default function App() {
                                     coHostVideoMuted={userLiveCoHost?.isCamOff}
                                     onPublishSuccess={handleHostPublishSuccess}
                                   />
+                                  </div>
                                 </div>
                                 <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/15 to-black/60 pointer-events-none"></div>
                               </div>
@@ -19401,7 +19366,23 @@ export default function App() {
                                   </div>
 
                                   {/* RIGHT: 8 GUEST SEATS GRID (50% Width) */}
-                                  <div className="w-1/2 h-full grid grid-cols-2 grid-rows-4 gap-1.5">
+                                  <div className="w-1/2 h-full relative">
+                                    {userLiveGuestSeats.some(s => s.name && s.canUseCamera && !s.isCamMuted) && (
+                                      <div className="absolute inset-0 z-5 pointer-events-none overflow-hidden rounded-xl">
+                                        <AgoraStream
+                                          channelName={userLivePkChannelName || `room_${user.uniqueId || user.username || "pardais_1001"}`}
+                                          role="subscriber"
+                                          userId={`${user.username || user.uniqueId || "host"}-guest-monitor`}
+                                          receiveRemoteAudio={false}
+                                          excludeRemoteUid={userLiveHostAgoraUid}
+                                          remoteVideoLayout="grid"
+                                          hostAvatar={user.avatar || DEFAULT_USER.avatar}
+                                          hostName="Guest Video Monitor"
+                                          showCoverPhoto={false}
+                                        />
+                                      </div>
+                                    )}
+                                    <div className="relative z-10 w-full h-full grid grid-cols-2 grid-rows-4 gap-1.5">
                                     {userLiveGuestSeats.map(seat => (
                                       <div
                                         key={seat.id}
@@ -19424,7 +19405,7 @@ export default function App() {
                                         {seat.name ? (
                                           <>
                                             {/* Guest Avatar/Portrait background - shown only if camera is enabled */}
-                                            {!seat.isCamMuted ? (
+                                            {!seat.isCamMuted && !seat.canUseCamera ? (
                                               <>
                                                 <img 
                                                   src={seat.avatar || DEFAULT_USER.avatar} 
@@ -19447,9 +19428,15 @@ export default function App() {
                                                 })()}
                                               </>
                                             ) : (
-                                              <div className="absolute inset-0 bg-[#0c0919] flex flex-col items-center justify-center space-y-1">
-                                                <CameraOff className="w-4 h-4 text-gray-600" />
-                                                <span className="text-[6px] text-gray-600 font-mono uppercase tracking-widest scale-90">Cam Muted</span>
+                                              <div className={`absolute inset-0 flex flex-col items-center justify-center space-y-1 ${seat.canUseCamera && !seat.isCamMuted ? "bg-black/10" : "bg-[#0c0919]"}`}>
+                                                {seat.canUseCamera && !seat.isCamMuted ? (
+                                                  <span className="absolute top-1 right-1 text-[6px] bg-emerald-500/80 text-white px-1 rounded-full font-black z-10">LIVE CAM</span>
+                                                ) : (
+                                                  <>
+                                                    <CameraOff className="w-4 h-4 text-gray-600" />
+                                                    <span className="text-[6px] text-gray-600 font-mono uppercase tracking-widest scale-90">Cam Off</span>
+                                                  </>
+                                                )}
                                               </div>
                                             )}
                                             
@@ -19528,9 +19515,8 @@ export default function App() {
                                         ) : (
                                           <div className="flex flex-col items-center justify-center h-full w-full p-1 group cursor-pointer select-none">
                                             <div className="relative flex items-center justify-center">
-                                              {/* Small representation of a person's head */}
-                                              <div className="w-6 h-6 rounded-full bg-purple-950/40 border border-purple-400/30 flex items-center justify-center text-purple-300 group-hover:border-purple-400 transition-all shadow-inner">
-                                                <User className="w-3.5 h-3.5 text-purple-200" />
+                                              <div className="w-9 h-9 rounded-xl bg-gradient-to-b from-purple-900/50 to-black border border-purple-400/30 flex items-center justify-center group-hover:border-pink-400 group-hover:scale-105 transition-all shadow-inner animate-pulse">
+                                                <span className="text-xl leading-none">🪑</span>
                                               </div>
                                               {/* Plus sign badge */}
                                               <div className="absolute -bottom-1 -right-1 w-3.5 h-3.5 rounded-full bg-gradient-to-tr from-pink-500 to-purple-600 text-white flex items-center justify-center text-[9px] font-bold shadow-md group-hover:scale-110 transition-transform border border-black">
@@ -19544,6 +19530,7 @@ export default function App() {
                                         )}
                                       </div>
                                     ))}
+                                  </div>
                                   </div>
                                 </div>
 
@@ -19615,7 +19602,11 @@ export default function App() {
                                   </div>
 
                                   {/* INTERACTIVE OPTIONS & GUEST CONTROLS (40% Width) - EXACTLY TWO BUTTONS BELOW */}
-                                  <div className="w-[40%] h-full flex flex-col justify-center space-y-2 p-2 border-l border-white/5 bg-[#08070e]">
+                                  <div className="w-[40%] h-full flex flex-col justify-center space-y-1.5 p-2 border-l border-white/5 bg-[#08070e]">
+                                    <div className="grid grid-cols-2 gap-1.5">
+                                      <button onClick={() => setUserLiveShowMusicModal(true)} className="h-9 rounded-xl bg-amber-500/15 border border-amber-400/30 text-amber-200 flex items-center justify-center" title="Music Player" aria-label="Music Player"><Music className="w-4 h-4" /></button>
+                                      <button onClick={() => { const data = { title: `@${user.username} Guest Room`, text: "Join my Pardais Party Guest Room!", url: window.location.href }; if (navigator.share) navigator.share(data).catch(() => {}); else navigator.clipboard?.writeText(window.location.href); }} className="h-9 rounded-xl bg-cyan-500/15 border border-cyan-400/30 text-cyan-200 flex items-center justify-center" title="Share Guest Room" aria-label="Share Guest Room"><Share2 className="w-4 h-4" /></button>
+                                    </div>
                                     {/* 1. Gift Box Button (Visible to all users & host) */}
                                     <button
                                       onClick={() => setUserLiveShowGiftModal(true)}
@@ -20435,17 +20426,6 @@ export default function App() {
                             ) : null}
 
                             
-                            {/* Shared music control for Video Guest and PK host screens. */}
-                            {(userLiveGuestModeActive || userLivePkActive || userLivePkConnected) && (
-                              <button
-                                onClick={() => setShowPartyMusicLibrary(true)}
-                                className="absolute right-3 top-20 z-45 w-9 h-9 rounded-full bg-black/65 backdrop-blur-md border border-amber-400/40 text-amber-300 flex items-center justify-center shadow-lg active:scale-95"
-                                title="Music Player"
-                              >
-                                <Music className="w-4 h-4" />
-                              </button>
-                            )}
-
                             {/* BACKGROUND GRADIENT OVERLAY */}
                             <div className="absolute inset-0 z-0 bg-gradient-to-t from-black/90 via-black/15 to-black/60 pointer-events-none"></div>
 
@@ -20558,21 +20538,6 @@ export default function App() {
                                 </span>
                               </div>
 
-                              {/* Ranking 🔥 Button in Solo Live sub-header area */}
-                              <button
-                                onClick={() => {
-                                  setRankingType("host");
-                                  setRankingPeriod("hourly");
-                                  setRankingSearchQuery("");
-                                  setShowRankingModal(true);
-                                }}
-                                className="bg-gradient-to-r from-orange-500 via-red-500 to-pink-600 hover:brightness-110 active:scale-95 text-white text-[7.5px] font-black px-2 py-0.5 rounded-full flex items-center space-x-1 shadow-lg border border-yellow-400/20 transition-all cursor-pointer select-none"
-                                title="Open Rankings"
-                              >
-                                <Flame className="w-2.5 h-2.5 text-yellow-300 fill-yellow-300 animate-pulse" />
-                                <span>Ranking 🔥</span>
-                              </button>
-
                               <button
                                 onClick={() => setUserLiveShowFanClubModal(true)}
                                 className="text-[7.5px] font-black text-pink-400 hover:text-pink-300 flex items-center space-x-1 uppercase tracking-wider font-mono bg-black/40 backdrop-blur-md px-2 py-0.5 rounded-full border border-white/5"
@@ -20614,7 +20579,8 @@ export default function App() {
                                         avatar: req.avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&h=150&q=80",
                                         diamonds: "1.2K",
                                         isMuted: false,
-                                        isCamMuted: false,
+                                        isCamMuted: true,
+                                        canUseCamera: false,
                                         isBigFrame: false
                                       };
                                       setUserLiveGuestSeats(updated);
@@ -21365,6 +21331,14 @@ export default function App() {
                                   <button onClick={() => setUserLiveShowBeautyModal(false)} className="text-gray-400 hover:text-white text-xs">✕</button>
                                 </div>
                                 <div className="space-y-3 text-[9px] bg-transparent">
+                                  <div className="space-y-1.5 bg-transparent">
+                                    <div className="text-[8px] text-gray-400 font-black uppercase tracking-wider">Camera Filter</div>
+                                    <div className="grid grid-cols-3 gap-1.5">
+                                      {["Original", "Natural", "Glow", "Fresh", "Cool", "Warm"].map((filterName) => (
+                                        <button key={filterName} type="button" onClick={() => setUserLiveFilter(filterName)} className={`py-1.5 rounded-lg border text-[7.5px] font-black transition-all ${userLiveFilter === filterName ? "bg-pink-600/30 border-pink-400 text-pink-200" : "bg-white/5 border-white/10 text-gray-400 hover:text-white"}`}>{filterName}</button>
+                                      ))}
+                                    </div>
+                                  </div>
                                   <div className="space-y-1 bg-transparent">
                                     <div className="flex justify-between text-gray-300 bg-transparent">
                                       <span>Smooth Skin Filter</span>
@@ -22184,6 +22158,18 @@ export default function App() {
                                         </button>
 
 
+
+                                        {/* Camera permission is controlled by Host. */}
+                                        <button onClick={() => {
+                                          const nextCamera = Boolean(!seat.canUseCamera || seat.isCamMuted);
+                                          updateSeatProperty("canUseCamera", nextCamera);
+                                          updateSeatProperty("isCamMuted", !nextCamera);
+                                          if (isUserLive) fetch(`/api/v1/hosts/${encodeURIComponent(`h-${user.uniqueId || user.username}`)}/guest-seats/control`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ seatId: seat.id, action: nextCamera ? "camera_on" : "camera_off" }) }).then(r => r.json()).then(d => Array.isArray(d.guestSeats) && setUserLiveGuestSeats(d.guestSeats)).catch(() => {});
+                                          addSystemMessage(`📹 Guest @${seat.name} camera ${nextCamera ? "enabled" : "disabled"} by Host.`);
+                                        }} className={`p-2 rounded-xl border flex items-center justify-center space-x-1.5 font-bold transition-all ${seat.canUseCamera && !seat.isCamMuted ? "bg-emerald-600/20 border-emerald-500/40 text-emerald-300" : "bg-white/5 border-white/5 text-gray-200 hover:bg-white/10"}`}>
+                                          {seat.canUseCamera && !seat.isCamMuted ? <Camera className="w-3.5 h-3.5" /> : <CameraOff className="w-3.5 h-3.5" />}
+                                          <span>{seat.canUseCamera && !seat.isCamMuted ? "Camera Off" : "Allow Camera"}</span>
+                                        </button>
 
                                         {/* Share Big Frame (Spotlight Pinning) */}
                                         <button
@@ -23046,44 +23032,34 @@ export default function App() {
                               </div>
                             )}
 
-                            {/* BOTTOM SYSTEM MENU (BLACK NAVIGATION RAIL) */}
-                            <div className="bg-black border-t border-white/5 py-1 px-4 z-10 flex items-center justify-between text-center select-none">
+                            {/* BOTTOM SYSTEM MENU — compact icon-only host controls */}
+                            <div className="bg-black/95 border-t border-white/10 py-1.5 px-2 z-20 flex items-center justify-between text-center select-none backdrop-blur-md">
                               {[
-                                { id: "mute", label: userLiveMic ? "Mute" : "Unmute", icon: userLiveMic ? "🔇" : "🎙️" },
-                                { id: "cover", label: "Cover", icon: "🖼️" },
-                                { id: "cohost", label: "Invite Host", icon: "👥", primary: true },
-                                { id: "start-guest", label: "Start Guest", icon: "🎙️", primary: true },
-                                { id: "more", label: "More", icon: "•••" }
+                                { id: "mute", title: userLiveMic ? "Mute microphone" : "Unmute microphone", icon: userLiveMic ? <Mic className="w-5 h-5" /> : <MicOff className="w-5 h-5" />, active: userLiveMic },
+                                { id: "camera", title: userLiveCam ? "Turn camera off" : "Turn camera on", icon: userLiveCam ? <Camera className="w-5 h-5" /> : <CameraOff className="w-5 h-5" />, active: userLiveCam },
+                                { id: "filters", title: "Beauty & Filters", icon: <Sparkles className="w-5 h-5" />, active: userLiveFilter !== "Original" },
+                                { id: "music", title: "Music Player", icon: <Music className="w-5 h-5" />, active: Boolean(userLiveMusicPlaying), primary: true },
+                                { id: "cohost", title: "Invite Host / PK", icon: <Users className="w-5 h-5" />, primary: true },
+                                { id: "start-guest", title: "Video Guest", icon: <Video className="w-5 h-5" />, primary: true },
+                                { id: "more", title: "More", icon: <MoreVertical className="w-5 h-5" /> }
                               ].map((btn) => (
-                                <button
-                                  key={btn.id}
+                                <button key={btn.id} title={btn.title} aria-label={btn.title}
                                   onClick={() => {
-                                    if (btn.id === "mute") {
-                                      setUserLiveMic(!userLiveMic);
-                                      alert(userLiveMic ? "🎙️ Broadcast Mic is now MUTED" : "🎙️ Broadcast Mic is now LIVE / UNMUTED");
-                                    } else if (btn.id === "cover") {
-                                      setUserLiveShowCoverModal(true);
-                                    } else if (btn.id === "cohost") {
-                                      setUserLivePkInvitePanelOpen(true);
-                                    } else if (btn.id === "start-guest") {
-                                      handleStartGuestFromSolo();
-                                    } else if (btn.id === "more") {
-                                      setUserLiveShowMoreModal(true);
-                                    }
+                                    if (btn.id === "mute") setUserLiveMic(!userLiveMic);
+                                    else if (btn.id === "camera") setUserLiveCam(!userLiveCam);
+                                    else if (btn.id === "filters") setUserLiveShowBeautyModal(true);
+                                    else if (btn.id === "music") setUserLiveShowMusicModal(true);
+                                    else if (btn.id === "cohost") setUserLivePkInvitePanelOpen(true);
+                                    else if (btn.id === "start-guest") handleStartGuestFromSolo();
+                                    else if (btn.id === "more") setUserLiveShowMoreModal(true);
                                   }}
-                                  className={`flex flex-col items-center justify-center transition-all ${
-                                    btn.primary
-                                      ? "w-10 h-10 -mt-3 bg-gradient-to-tr from-[#ff007f] to-purple-600 rounded-full border border-pink-400/40 shadow-lg scale-105 z-20 hover:scale-115 flex items-center justify-center text-white cursor-pointer"
-                                      : "hover:bg-white/5 p-1 rounded-lg cursor-pointer"
-                                  }`}
-                                >
-                                  <span className={btn.primary ? "text-sm text-white font-bold" : "text-sm text-gray-200"}>{btn.icon}</span>
-                                  <span className="text-[7px] text-gray-300 font-bold tracking-wider mt-0.5">{btn.label}</span>
+                                  className={`relative flex items-center justify-center w-10 h-10 rounded-xl border transition-all active:scale-90 cursor-pointer ${btn.primary ? "bg-gradient-to-tr from-[#ff007f] to-purple-600 border-pink-400/40 shadow-lg" : btn.active ? "bg-emerald-600/25 border-emerald-400/50 text-emerald-300" : "bg-white/5 border-white/10 text-gray-200 hover:bg-white/10"}`}>
+                                  {btn.icon}
+                                  {(btn.id === "camera" || btn.id === "mute") && <span className={`absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full border border-black ${(btn.id === "camera" ? userLiveCam : userLiveMic) ? "bg-emerald-400" : "bg-red-500"}`} />}
+                                  {btn.id === "filters" && userLiveFilter !== "Original" && <span className="absolute -top-1 -right-1 text-[6px] bg-pink-500 text-white rounded-full px-1 font-black">ON</span>}
                                 </button>
                               ))}
                             </div>
-
-
 
                             {/* DOUBLE TAP FLOATING HEARTS GENERATOR OVERLAY */}
                             {doubleTapHearts.map(heart => (

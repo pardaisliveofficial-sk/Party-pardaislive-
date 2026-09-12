@@ -32,6 +32,9 @@ interface AgoraStreamProps {
   coHostName?: string;
   coHostVipLevel?: number;
   coHostVideoMuted?: boolean;
+  receiveRemoteAudio?: boolean;
+  excludeRemoteUid?: number | null;
+  remoteVideoLayout?: "single" | "grid";
 }
 
 const sanitizeChannel = (ch: string) => {
@@ -441,6 +444,7 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
           console.log("[AGORA EVENT: USER-PUBLISHED]", { remoteUid: user.uid, mediaType, hasAudio: user.hasAudio, hasVideo: user.hasVideo });
           try {
             if (mediaType === "audio") {
+              if (!receiveRemoteAudio) return;
               if (!user.audioTrack) {
                 console.log("[AGORA EVENT: SUBSCRIBE START]", { remoteUid: user.uid, mediaType: "audio" });
                 try {
@@ -497,6 +501,7 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
           if (isUnmounted || !agoraClient || agoraClient.connectionState !== "CONNECTED") return;
           agoraClient.remoteUsers.forEach(async (u) => {
             try {
+              if (!receiveRemoteAudio) return;
               if (u.hasAudio && !u.audioTrack) {
                 console.log("[AGORA EVENT: SUBSCRIBE START (WATCHER)]", { remoteUid: u.uid });
                 await agoraClient.subscribe(u, "audio");
@@ -613,6 +618,7 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
 
           for (const user of agoraClient.remoteUsers) {
             try {
+              if (!receiveRemoteAudio) break;
               if (!user.audioTrack) {
                 console.log("[AGORA EVENT: SUBSCRIBE START (REMOTE USER IN HOST)]", { remoteUid: user.uid });
                 await agoraClient.subscribe(user, "audio");
@@ -632,6 +638,7 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
 
           for (const user of agoraClient.remoteUsers) {
             try {
+              if (!receiveRemoteAudio) break;
               if (!user.audioTrack) {
                 console.log("[AGORA EVENT: SUBSCRIBE START (VIEWER)]", { remoteUid: user.uid });
                 await agoraClient.subscribe(user, "audio");
@@ -683,7 +690,7 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
       setRemoteUsersList([]);
       setLocalVideoTrack(null);
     };
-  }, [channelName, role, isCoHostMode]);
+  }, [channelName, role, isCoHostMode, receiveRemoteAudio]);
 
   // 1v1 PK BATTLE AUDIO STAGE
   if (isCoHostMode) {
@@ -848,13 +855,13 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
         )
       ) : (
         <div className="absolute inset-0 z-0 bg-black">
-          {remoteUsersList.filter(u => u.videoTrack).length > 0 ? (
-            <div className="w-full h-full relative">
-              {remoteUsersList.filter(u => u.videoTrack).map((remote, index) => (
+          {remoteUsersList.filter(u => u.videoTrack && (excludeRemoteUid == null || Number(u.uid) !== Number(excludeRemoteUid))).length > 0 ? (
+            <div className={remoteVideoLayout === "grid" ? "w-full h-full grid grid-cols-2 grid-rows-4 gap-1.5 p-0.5" : "w-full h-full relative"}>
+              {remoteUsersList.filter(u => u.videoTrack && (excludeRemoteUid == null || Number(u.uid) !== Number(excludeRemoteUid))).map((remote, index) => (
                 <div
                   key={String(remote.uid)}
                   ref={(el) => { remoteVideoRefs.current[String(remote.uid)] = el; }}
-                  className={`absolute inset-0 bg-black ${index === 0 ? "block" : "hidden"}`}
+                  className={remoteVideoLayout === "grid" ? "relative min-h-0 min-w-0 overflow-hidden rounded-xl bg-black" : `absolute inset-0 bg-black ${index === 0 ? "block" : "hidden"}`}
                 />
               ))}
             </div>

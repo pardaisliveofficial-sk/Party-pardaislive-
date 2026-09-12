@@ -4405,7 +4405,8 @@ app.post("/api/v1/hosts/:id/guest-requests/:reqId/respond", (req, res) => {
               avatar: match.avatar,
               diamonds: "0.0K",
               isMuted: false,
-              isCamMuted: false,
+              isCamMuted: true,
+              canUseCamera: false,
               isBigFrame: false
             };
           }
@@ -4532,7 +4533,8 @@ app.post("/api/v1/hosts/:id/invites/:username/respond", (req, res) => {
                 avatar: avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&h=150&q=80",
                 diamonds: "0.0K",
                 isMuted: false,
-                isCamMuted: false,
+                isCamMuted: true,
+                canUseCamera: false,
                 isBigFrame: false
               };
             }
