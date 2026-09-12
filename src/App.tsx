@@ -2674,6 +2674,7 @@ export default function App() {
     diamonds?: string | null;
     isMuted: boolean;
     isCamMuted: boolean;
+    canUseCamera?: boolean;
     isBigFrame: boolean;
     isModerator?: boolean;
     rotation?: number;
@@ -3089,6 +3090,7 @@ export default function App() {
     diamonds: string | null;
     isMuted: boolean;
     isCamMuted: boolean;
+    canUseCamera?: boolean;
     isBigFrame: boolean;
     isModerator?: boolean;
   }>>([
@@ -4621,6 +4623,29 @@ export default function App() {
     const interval = setInterval(fetchAvailableHosts, 2000);
     return () => clearInterval(interval);
   }, [userLivePkInvitePanelOpen, user.username]);
+
+  // Production guest request polling: requests are stored on the host record and
+  // must reach the host even when the viewer is on a different device.
+  useEffect(() => {
+    if (clientView !== "user-live" || !user?.username || !userLiveGuestModeActive) return;
+    const hostId = `h-${user.uniqueId || user.username}`;
+    const poll = async () => {
+      try {
+        const res = await fetch(`/api/v1/hosts/${encodeURIComponent(hostId)}/guest-requests`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (Array.isArray(data.guestRequests)) {
+          setUserLiveGuestRequests(data.guestRequests.map((r:any) => ({
+            id: String(r.id), username: r.username, avatar: r.avatar || "", level: Number(r.level || r.userLevel || 1)
+          })));
+        }
+        if (Array.isArray(data.guestSeats)) setUserLiveGuestSeats(data.guestSeats);
+      } catch {}
+    };
+    poll();
+    const timer = window.setInterval(poll, 1200);
+    return () => window.clearInterval(timer);
+  }, [clientView, user?.username, user?.uniqueId, userLiveGuestModeActive]);
 
   const missedActiveSessionCountRef = useRef<number>(0);
 
@@ -12895,43 +12920,19 @@ export default function App() {
                                 <div className="space-y-1.5">
                                   {/* Send Join Request Trigger */}
                                   <button
-                                    onClick={() => {
+                                    onClick={async () => {
                                       const emptySeat = viewerLiveGuestSeats.find(s => s.name === null);
-                                      if (emptySeat) {
-                                        const updatedSeats = viewerLiveGuestSeats.map(s => {
-                                          if (s.id === emptySeat.id) {
-                                            return {
-                                              ...s,
-                                              name: user.username,
-                                              avatar: user.avatar,
-                                              diamonds: "0.0K",
-                                              isMuted: false,
-                                              isCamMuted: false,
-                                              isBigFrame: false
-                                            };
-                                          }
-                                          return s;
+                                      if (!emptySeat || !activeHost?.id || !user?.username) { alert("❌ No guest seat is available right now."); return; }
+                                      try {
+                                        const res = await fetch(`/api/v1/hosts/${activeHost.id}/guest-requests`, {
+                                          method: "POST", headers: { "Content-Type": "application/json" },
+                                          body: JSON.stringify({ username: user.username, avatar: user.avatar, seatId: emptySeat.id, vipLevel: user.vipLevel || 0, level: user.userLevel || 1 })
                                         });
+                                        if (!res.ok) throw new Error("Request failed");
+                                        setViewerRequestStatus("pending");
                                         triggerJoinNotif(user.username, user.userLevel || user.level || 1, user.vipLevel || 0);
-                                        setViewerLiveGuestSeats(updatedSeats);
-                                        setViewerRequestStatus("accepted");
-                                        setChatMessages(prev => [
-                                          ...prev,
-                                          {
-                                            id: "msg-join-" + Date.now(),
-                                            username: "System 🎙️",
-                                            message: `🎉 @${user.username} has joined Guest Seat #${emptySeat.id}!`,
-                                            vipLevel: 0,
-                                            userLevel: 0,
-                                            isSystem: true,
-                                            isFlagged: false,
-                                            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-                                          }
-                                        ]);
-                                        alert(`🎉 You have successfully joined Guest Seat #${emptySeat.id}! Click on your seat in the grid to open your controls.`);
-                                      } else {
-                                        alert("❌ All guest seats are currently full!");
-                                      }
+                                        alert(`📨 Guest request sent to @${activeHost.name || activeHost.username || "Host"}. Wait for the host to accept you.`);
+                                      } catch { alert("❌ Could not send guest request. Please try again."); }
                                     }}
                                     className="w-full bg-purple-600 hover:bg-purple-500 text-white py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider flex items-center justify-center space-x-1 transition-all shadow-md active:scale-95 cursor-pointer"
                                   >
@@ -13597,7 +13598,7 @@ export default function App() {
                                   }
                                   role={isViewerOnGuestSeat ? "publisher" : "subscriber"}
                                   userId={user.username || user.uniqueId || "viewer_101"}
-                                  publishCameraTrack={false}
+                                  publishCameraTrack={isViewerOnGuestSeat && Boolean(viewerGuestSeatObj?.canUseCamera) && !Boolean(viewerGuestSeatObj?.isCamMuted)}
                                   publishMicrophoneTrack={isViewerOnGuestSeat && !isViewerGuestSeatMuted}
                                   muted={isViewerOnGuestSeat ? isViewerGuestSeatMuted : false}
                                   videoMuted={activeHost.category === "audio" || activeHost.cameraEnabled === false || activeHost.isCamOff === true || activeHost.cameraMuted === true}
@@ -19060,6 +19061,22 @@ export default function App() {
                             className="flex-1 flex flex-col justify-between h-full relative overflow-hidden"
                             onClick={handleScreenClickOrTouch}
                           >
+                            {/* Shared music publisher: the same Agora channel carries music in Solo, Video Guest and PK. */}
+                            <div className="absolute w-0 h-0 overflow-hidden pointer-events-none opacity-0">
+                              <AgoraPartyAudio
+                                partyId={`live-${user.uniqueId || user.username || "host"}`}
+                                channelName={userLivePkChannelName || `room_${user.uniqueId || user.username || "pardais_1001"}`}
+                                userRole="host"
+                                isMuted={true}
+                                publishMicrophoneTrack={false}
+                                username={`${user.username || "host"}-music`}
+                                avatar={user.avatar || DEFAULT_USER.avatar}
+                                musicTrack={partyMusicTrack}
+                                musicPlaying={partyMusicPlaying}
+                                musicVolume={partyMusicVolume}
+                              />
+                            </div>
+
                             {/* Persistent Root WebRTC Stream Engine for Host (Active in Solo & Guest modes; disabled during 1v1 PK mode) */}
                             {!(userLivePkActive || userLivePkConnected || userLiveCoHost) && (
                               <div className="absolute inset-0 z-0 bg-black flex pointer-events-none">
@@ -20418,6 +20435,17 @@ export default function App() {
                             ) : null}
 
                             
+                            {/* Shared music control for Video Guest and PK host screens. */}
+                            {(userLiveGuestModeActive || userLivePkActive || userLivePkConnected) && (
+                              <button
+                                onClick={() => setShowPartyMusicLibrary(true)}
+                                className="absolute right-3 top-20 z-45 w-9 h-9 rounded-full bg-black/65 backdrop-blur-md border border-amber-400/40 text-amber-300 flex items-center justify-center shadow-lg active:scale-95"
+                                title="Music Player"
+                              >
+                                <Music className="w-4 h-4" />
+                              </button>
+                            )}
+
                             {/* BACKGROUND GRADIENT OVERLAY */}
                             <div className="absolute inset-0 z-0 bg-gradient-to-t from-black/90 via-black/15 to-black/60 pointer-events-none"></div>
 
@@ -20573,6 +20601,7 @@ export default function App() {
                                   <button
                                     onClick={() => {
                                       const req = userLiveGuestRequests[0];
+                                      const hostId = `h-${user.uniqueId || user.username}`;
                                       const emptySeatIdx = userLiveGuestSeats.findIndex(s => s.name === null);
                                       if (emptySeatIdx === -1) {
                                         alert("All 8 guest seats on screen are occupied! Remove a guest first.");
@@ -20589,6 +20618,7 @@ export default function App() {
                                         isBigFrame: false
                                       };
                                       setUserLiveGuestSeats(updated);
+                                      fetch(`/api/v1/hosts/${hostId}/guest-requests/${encodeURIComponent(req.id)}/respond`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "accept", seatId: updated[emptySeatIdx].id }) }).then(r => r.json()).then(d => { if (Array.isArray(d.guestSeats)) setUserLiveGuestSeats(d.guestSeats); }).catch(() => {});
                                       setUserLiveGuestRequests(prev => prev.filter(r => r.id !== req.id));
                                       triggerJoinNotif(req.username, req.level || 1, (req as any).vipLevel || 0);
                                       setUserLiveMessages(prev => [
@@ -22141,6 +22171,7 @@ export default function App() {
                                           onClick={() => {
                                             const nextMute = !seat.isMuted;
                                             updateSeatProperty("isMuted", nextMute);
+                                            if (isUserLive) fetch(`/api/v1/hosts/${encodeURIComponent(`h-${user.uniqueId || user.username}`)}/guest-seats/control`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ seatId: seat.id, action: nextMute ? "mic_mute" : "mic_unmute" }) }).then(r => r.json()).then(d => Array.isArray(d.guestSeats) && setUserLiveGuestSeats(d.guestSeats)).catch(() => {});
                                             addSystemMessage(`🎙️ @${seat.name} was ${nextMute ? 'MUTED' : 'UNMUTED'} by Host.`);
                                           }}
                                           className={`p-2 rounded-xl border flex items-center justify-center space-x-1.5 font-bold transition-all ${
@@ -22309,7 +22340,9 @@ export default function App() {
                                           name: user.username || "You (Guest)",
                                           avatar: user.avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=100&q=80",
                                           diamonds: "0.0K",
-                                          isMuted: false
+                                          isMuted: false,
+                                          isCamMuted: true,
+                                          canUseCamera: false
                                         };
                                         setViewerLiveGuestSeats(updatedSeats);
                                       }
@@ -22711,6 +22744,8 @@ export default function App() {
                                         onClick={() => {
                                           setUserLiveActiveTrack(track);
                                           setUserLiveMusicPlaying(true);
+                                          setPartyMusicTrack(track);
+                                          setPartyMusicPlaying(true);
                                         }}
                                         className={`p-2 rounded-xl flex items-center justify-between border cursor-pointer transition-all ${
                                           isActive 
@@ -22780,6 +22815,8 @@ export default function App() {
                                             e.stopPropagation();
                                             setUserLiveMusicPlaying(false);
                                             setUserLiveActiveTrack(null);
+                                            setPartyMusicPlaying(false);
+                                            setPartyMusicTrack(null);
                                           }}
                                           className="text-[8px] bg-white/5 hover:bg-white/10 text-gray-300 font-bold px-2 py-1 rounded"
                                         >

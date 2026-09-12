@@ -35,6 +35,7 @@ interface AgoraPartyAudioProps {
   musicTrack?: MusicTrack | null;
   musicPlaying?: boolean;
   musicVolume?: number;
+  publishMicrophoneTrack?: boolean;
   reactionEvent?: { id: string; sound: PartyReactionSoundId } | null;
   onStatusChange?: (status: "idle" | "connecting" | "connected" | "error", details?: string) => void;
 }
@@ -60,6 +61,7 @@ export const AgoraPartyAudio: React.FC<AgoraPartyAudioProps> = ({
   musicTrack = null,
   musicPlaying = false,
   musicVolume = 0.45,
+  publishMicrophoneTrack = true,
   reactionEvent = null,
   onStatusChange
 }) => {
@@ -336,7 +338,7 @@ export const AgoraPartyAudio: React.FC<AgoraPartyAudioProps> = ({
 
           // 2. Host/Speaker Mic Publication Health Check (Ensures host mic NEVER drops out silently)
           const currentRole = userRoleRef.current;
-          if (currentRole === "host" || currentRole === "speaker") {
+          if (publishMicrophoneTrack && (currentRole === "host" || currentRole === "speaker")) {
             const track = localAudioTrackRef.current;
             if (track) {
               const isAlreadyPublished = agoraClient.localTracks.some(t => t === track);
@@ -456,7 +458,7 @@ export const AgoraPartyAudio: React.FC<AgoraPartyAudioProps> = ({
 
     const syncRoleAndMic = async () => {
       try {
-        if (userRole === "host" || userRole === "speaker") {
+        if ((userRole === "host" || userRole === "speaker") && publishMicrophoneTrack) {
           // 1. Upgrade client role to "host" (broadcaster)
           await agoraClient.setClientRole("host");
 
@@ -487,6 +489,9 @@ export const AgoraPartyAudio: React.FC<AgoraPartyAudioProps> = ({
             await agoraClient.publish([track]);
             console.log("[AgoraPartyAudio] Microphone publish SUCCESSFUL!");
           }
+        } else if (!publishMicrophoneTrack) {
+          // Music-only publisher: remain a broadcaster but do not create/publish a microphone.
+          await agoraClient.setClientRole("host");
         } else {
           // Downgrade client role to "audience" (listener)
           console.log("[AgoraPartyAudio] Downgrading role to listener...");
@@ -517,7 +522,7 @@ export const AgoraPartyAudio: React.FC<AgoraPartyAudioProps> = ({
     return () => {
       isCancelled = true;
     };
-  }, [userRole, client, status]);
+  }, [userRole, publishMicrophoneTrack, client, status]);
 
   // 🎵 Publish background music as a second audio source. The microphone remains
   // published separately, so music never replaces or mutes the live voices.

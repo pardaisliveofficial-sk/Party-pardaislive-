@@ -4394,7 +4394,7 @@ app.post("/api/v1/hosts/:id/guest-requests/:reqId/respond", (req, res) => {
         const targetSeatId = seatId || match.seatId || 1;
         if (!Array.isArray(host.guestSeats)) {
           host.guestSeats = [1, 2, 3, 4, 5, 6, 7, 8].map(sId => ({
-            id: sId, name: null, avatar: null, diamonds: null, isMuted: false, isCamMuted: false, isBigFrame: false
+            id: sId, name: null, avatar: null, diamonds: null, isMuted: false, isCamMuted: true, canUseCamera: false, isBigFrame: false
           }));
         }
         host.guestSeats = host.guestSeats.map((s: any) => {
@@ -4420,6 +4420,28 @@ app.post("/api/v1/hosts/:id/guest-requests/:reqId/respond", (req, res) => {
   } else {
     res.status(404).json({ error: "Host not found" });
   }
+});
+
+app.put("/api/v1/hosts/:id/guest-seats/control", (req, res) => {
+  const { id } = req.params;
+  const { seatId, action } = req.body || {};
+  const index = findHostIndex(id);
+  if (index === -1) return res.status(404).json({ error: "Host not found" });
+  const host = dbData.hosts[index];
+  if (!Array.isArray(host.guestSeats)) host.guestSeats = [];
+  const sid = Number(seatId);
+  const seat = host.guestSeats.find((x: any) => Number(x.id) === sid);
+  if (!seat || !seat.name) return res.status(404).json({ error: "Guest seat not occupied" });
+  if (action === "camera_on") { seat.canUseCamera = true; seat.isCamMuted = false; }
+  else if (action === "camera_off") { seat.isCamMuted = true; }
+  else if (action === "mic_mute") { seat.isMuted = true; }
+  else if (action === "mic_unmute") { seat.isMuted = false; }
+  else if (action === "remove") {
+    host.guestSeats = host.guestSeats.map((x: any) => Number(x.id) === sid ? { id: x.id, name: null, avatar: null, diamonds: null, isMuted: false, isCamMuted: true, canUseCamera: false, isBigFrame: false } : x);
+  }
+  else return res.status(400).json({ error: "Unknown guest control action" });
+  saveDatabase(); syncDocument("hosts", host.id, host);
+  res.json({ success: true, guestSeats: host.guestSeats });
 });
 
 app.put("/api/v1/hosts/:id/guest-seats", (req, res) => {
@@ -4499,7 +4521,7 @@ app.post("/api/v1/hosts/:id/invites/:username/respond", (req, res) => {
           const targetSeatId = Number(match.seatId) || 1;
           if (!Array.isArray(host.guestSeats)) {
             host.guestSeats = [1, 2, 3, 4, 5, 6, 7, 8].map(sId => ({
-              id: sId, name: null, avatar: null, diamonds: null, isMuted: false, isCamMuted: false, isBigFrame: false
+              id: sId, name: null, avatar: null, diamonds: null, isMuted: false, isCamMuted: true, canUseCamera: false, isBigFrame: false
             }));
           }
           host.guestSeats = host.guestSeats.map((s: any) => {
