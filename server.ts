@@ -4405,8 +4405,8 @@ app.post("/api/v1/hosts/:id/guest-requests/:reqId/respond", (req, res) => {
               avatar: match.avatar,
               diamonds: "0.0K",
               isMuted: false,
-              isCamMuted: true,
-              canUseCamera: false,
+              isCamMuted: false,
+              canUseCamera: true,
               isBigFrame: false
             };
           }

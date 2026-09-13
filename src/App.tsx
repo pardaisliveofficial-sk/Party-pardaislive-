@@ -2666,6 +2666,7 @@ export default function App() {
 
   // Video Guest Room States (matching the image)
   const [userLiveGuestModeActive, setUserLiveGuestModeActive] = useState<boolean>(false);
+  const hostGuestVideoMountRef = useRef<HTMLDivElement | null>(null);
   const [userLiveGuestSeats, setUserLiveGuestSeats] = useState<Array<{
     id: number;
     name: string | null;
@@ -4690,6 +4691,46 @@ export default function App() {
     const timer = window.setInterval(poll, 1200);
     return () => window.clearInterval(timer);
   }, [clientView, user?.username, user?.uniqueId, userLiveGuestModeActive]);
+
+  // Viewer-side Guest Room sync: keep seat acceptance/rejection and camera permission
+  // in sync with the host device. This is the production source of truth for guest seats.
+  useEffect(() => {
+    if (clientView !== "live-room" || !viewerLiveGuestModeActive || !activeHost?.id) return;
+    const hostId = activeHost.id;
+    let wasPending = viewerRequestStatus === "pending";
+    const pollGuestState = async () => {
+      try {
+        const res = await fetch(`/api/v1/hosts/${encodeURIComponent(hostId)}/guest-requests`, { cache: "no-store" });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (Array.isArray(data.guestSeats)) {
+          setViewerLiveGuestSeats(data.guestSeats);
+          const mySeat = data.guestSeats.find((seat: any) =>
+            seat.name && String(seat.name).toLowerCase() === String(user?.username || "").toLowerCase()
+          );
+          if (mySeat) {
+            setViewerRequestStatus("accepted");
+            wasPending = false;
+          } else if (wasPending && !(data.guestRequests || []).some((r: any) =>
+            String(r.username).toLowerCase() === String(user?.username || "").toLowerCase()
+          )) {
+            // Request disappeared without a seat assignment => host rejected it.
+            setViewerRequestStatus("none");
+            wasPending = false;
+          }
+        }
+        if (Array.isArray(data.guestRequests) && data.guestRequests.some((r: any) =>
+          String(r.username).toLowerCase() === String(user?.username || "").toLowerCase()
+        )) {
+          setViewerRequestStatus("pending");
+          wasPending = true;
+        }
+      } catch {}
+    };
+    pollGuestState();
+    const timer = window.setInterval(pollGuestState, 1000);
+    return () => window.clearInterval(timer);
+  }, [clientView, viewerLiveGuestModeActive, activeHost?.id, user?.username, viewerRequestStatus]);
 
   const missedActiveSessionCountRef = useRef<number>(0);
 
@@ -12819,10 +12860,9 @@ export default function App() {
                                       </>
                                     ) : (
                                       <div className="flex flex-col items-center justify-center h-full w-full p-1 group cursor-pointer select-none">
-                                        <div className="relative flex items-center justify-center">
-                                          <div className="w-9 h-9 rounded-xl bg-gradient-to-b from-purple-900/50 to-black border border-purple-400/30 flex items-center justify-center group-hover:border-pink-400 group-hover:scale-105 transition-all shadow-inner animate-pulse">
-                                            <span className="text-xl leading-none">🪑</span>
-                                          </div>
+                                        <div className="relative flex items-center justify-center w-full h-full min-h-[74px]">
+                                          <div className="absolute inset-1 rounded-2xl bg-gradient-to-b from-[#261044]/70 via-[#0c0817]/80 to-black/90 border border-yellow-500/20 shadow-[0_0_18px_rgba(168,85,247,0.18)] group-hover:border-yellow-400/50 group-hover:shadow-[0_0_22px_rgba(250,204,21,0.22)] transition-all" />
+                                          <img src="/assets/royal-guest-throne.svg" alt="Royal guest throne" className="relative z-10 w-[82%] h-[82%] object-contain drop-shadow-[0_0_12px_rgba(250,204,21,0.28)] group-hover:scale-105 transition-transform" />
                                           {/* Plus sign badge */}
                                           <div className="absolute -bottom-1 -right-1 w-3.5 h-3.5 rounded-full bg-gradient-to-tr from-pink-500 to-purple-600 text-white flex items-center justify-center text-[9px] font-bold shadow-md group-hover:scale-110 transition-transform border border-black">
                                             +
@@ -12838,147 +12878,87 @@ export default function App() {
                               </div>
                             </div>
 
-                            {/* LOWER 40%: COMMENTS & CONTROLS */}
-                            <div className="h-[40%] w-full flex bg-[#0c0a12] border-t border-white/5 relative z-10">
-                              {/* CHAT COMMENTS FEED (60% Width) */}
-                              <div className="w-[60%] h-full flex flex-col p-2.5 justify-between">
-                                {/* Scrolling Comments Box */}
-                                <div className="flex-1 overflow-y-auto space-y-1.5 pr-1 max-h-[140px] flex flex-col justify-end">
-                                  {chatMessages.slice(-15).map(msg => (
-                                    <div key={msg.id} className="bg-black/35 p-1 rounded-lg text-[9px] text-gray-200">
-                                      <div className="flex items-center space-x-1">
-                                        {msg.vipLevel > 0 && (
-                                          <span className="text-[6px] bg-yellow-400 text-black px-0.5 rounded font-black font-mono">VIP</span>
-                                        )}
-                                        <span 
-                                          onClick={() => {
-                                            const targetLvl = msg.userLevel || getHostLevelFromName(msg.username);
-                                            setViewerMenuUser({
-                                              username: msg.username,
-                                              userLevel: targetLvl,
-                                              vipLevel: msg.vipLevel || getVipLevelFromUserLevel(targetLvl)
-                                            });
-                                          }}
-                                          className="font-black text-[#66fcf1] hover:text-[#45a29e] hover:underline cursor-pointer transition-colors"
-                                          title="Tap for host controls"
-                                        >
-                                          {msg.username}
-                                        </span>
-                                      </div>
-                                      <p className="text-gray-300 text-[8.5px] font-medium leading-tight mt-0.5">{msg.message}</p>
+                            {/* LOWER 40%: FULL-WIDTH COMMENTS + LOWER NAVIGATION */}
+                            <div className="h-[40%] w-full flex flex-col bg-[#0c0a12] border-t border-white/5 relative z-10 min-h-0">
+                              {/* Comments stay visible and scroll upward; they are not deleted after 15/20 messages. */}
+                              <div className="flex-1 min-h-0 overflow-y-auto px-3 pt-2 pb-1 space-y-1.5 text-left no-scrollbar flex flex-col justify-end">
+                                {chatMessages.map(msg => (
+                                  <div key={msg.id} className="bg-black/35 p-1.5 rounded-lg text-[9px] text-gray-200 shrink-0">
+                                    <div className="flex items-center space-x-1">
+                                      {msg.vipLevel > 0 && <span className="text-[6px] bg-yellow-400 text-black px-0.5 rounded font-black font-mono">VIP</span>}
+                                      <span
+                                        onClick={() => {
+                                          const targetLvl = msg.userLevel || getHostLevelFromName(msg.username);
+                                          setViewerMenuUser({ username: msg.username, userLevel: targetLvl, vipLevel: msg.vipLevel || getVipLevelFromUserLevel(targetLvl) });
+                                        }}
+                                        className="font-black text-[#66fcf1] hover:underline cursor-pointer"
+                                      >{msg.username}</span>
                                     </div>
-                                  ))}
-                                </div>
-
-                                {/* Message input bar */}
-                                <form
-                                  onSubmit={(e) => {
-                                    e.preventDefault();
-                                    if (!chatInput.trim()) return;
-                                    setChatMessages(prev => [
-                                      ...prev,
-                                      {
-                                        id: "viewer-msg-" + Date.now(),
-                                        username: user.username,
-                                        message: chatInput,
-                                        vipLevel: user.vipLevel,
-                                        userLevel: user.userLevel,
-                                        isSystem: false,
-                                        isFlagged: false,
-                                        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-                                      }
-                                    ]);
-                                    setChatInput("");
-                                  }}
-                                  className="flex items-center space-x-1.5 mt-1 bg-white/5 rounded-full px-2 py-0.5 border border-white/5"
-                                >
-                                  <input
-                                    type="text"
-                                    placeholder="Comment..."
-                                    value={chatInput}
-                                    onChange={(e) => setChatInput(e.target.value)}
-                                    className="bg-transparent text-[8.5px] text-white flex-1 outline-none h-6 placeholder-gray-500"
-                                  />
-                                  <button type="submit" className="text-purple-400 hover:text-purple-300">
-                                    <Send className="w-3 h-3" />
-                                  </button>
-                                </form>
+                                    <p className="text-gray-300 text-[8.5px] font-medium leading-tight mt-0.5">{msg.message}</p>
+                                  </div>
+                                ))}
+                                <div ref={chatEndRef} />
                               </div>
 
-                              {/* INTERACTIVE OPTIONS & GUEST CONTROLS (40% Width) */}
-                              <div className="w-[40%] h-full flex flex-col justify-between p-2.5 border-l border-white/5">
-                                <div className="grid grid-cols-2 gap-1.5 mb-1.5">
-                                  <button onClick={() => setLiveRoomShowMusicToast(true)} className="h-8 rounded-xl bg-amber-500/15 border border-amber-400/30 text-amber-200 flex items-center justify-center" title="Room Music" aria-label="Room Music"><Music className="w-4 h-4" /></button>
-                                  <button onClick={() => { const data = { title: `@${activeHost?.name || activeHost?.username || "Host"} Guest Room`, text: "Join this Pardais Party Guest Room!", url: window.location.href }; if (navigator.share) navigator.share(data).catch(() => {}); else navigator.clipboard?.writeText(window.location.href); }} className="h-8 rounded-xl bg-cyan-500/15 border border-cyan-400/30 text-cyan-200 flex items-center justify-center" title="Share Guest Room" aria-label="Share Guest Room"><Share2 className="w-4 h-4" /></button>
-                                </div>
-                                <div className="space-y-1.5">
-                                  {/* Send Join Request Trigger */}
-                                  <button
-                                    onClick={async () => {
-                                      const emptySeat = viewerLiveGuestSeats.find(s => s.name === null);
-                                      if (!emptySeat || !activeHost?.id || !user?.username) { alert("❌ No guest seat is available right now."); return; }
-                                      try {
-                                        const res = await fetch(`/api/v1/hosts/${activeHost.id}/guest-requests`, {
-                                          method: "POST", headers: { "Content-Type": "application/json" },
-                                          body: JSON.stringify({ username: user.username, avatar: user.avatar, seatId: emptySeat.id, vipLevel: user.vipLevel || 0, level: user.userLevel || 1 })
-                                        });
-                                        if (!res.ok) throw new Error("Request failed");
-                                        setViewerRequestStatus("pending");
-                                        triggerJoinNotif(user.username, user.userLevel || user.level || 1, user.vipLevel || 0);
-                                        alert(`📨 Guest request sent to @${activeHost.name || activeHost.username || "Host"}. Wait for the host to accept you.`);
-                                      } catch { alert("❌ Could not send guest request. Please try again."); }
-                                    }}
-                                    className="w-full bg-purple-600 hover:bg-purple-500 text-white py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider flex items-center justify-center space-x-1 transition-all shadow-md active:scale-95 cursor-pointer"
-                                  >
-                                    <Mic className="w-3 h-3" />
-                                    <span>Join Guest Seat</span>
-                                  </button>
+                              {/* Full-width comment input ABOVE the navigation buttons */}
+                              <form
+                                onSubmit={(e) => {
+                                  e.preventDefault();
+                                  if (!chatInput.trim()) return;
+                                  setChatMessages(prev => [...prev, {
+                                    id: "viewer-msg-" + Date.now(),
+                                    username: user.username,
+                                    message: chatInput,
+                                    vipLevel: user.vipLevel,
+                                    userLevel: user.userLevel,
+                                    isSystem: false,
+                                    isFlagged: false,
+                                    timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                                  }]);
+                                  setChatInput("");
+                                }}
+                                className="mx-3 mb-1 flex items-center bg-white/5 rounded-full px-3 py-1 border border-white/10 shrink-0"
+                              >
+                                <input type="text" placeholder="Comment..." value={chatInput} onChange={(e) => setChatInput(e.target.value)} className="bg-transparent text-[9px] text-white flex-1 min-w-0 outline-none h-7 placeholder-gray-500" />
+                                <button type="submit" className="text-purple-400 hover:text-purple-300 shrink-0"><Send className="w-4 h-4" /></button>
+                              </form>
 
-                                  {/* Send Virtual Gift Button */}
-                                  <button
-                                    onClick={() => {
-                                      setViewerGiftDrawerOpen(true);
-                                    }}
-                                    className="w-full bg-yellow-500 hover:bg-yellow-400 text-black py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider flex items-center justify-center space-x-1 transition-all shadow-md active:scale-95 cursor-pointer"
-                                  >
-                                    <span>🎁 Gift Store</span>
-                                  </button>
-                                </div>
-
-                                <div className="space-y-1.5">
-                                  {/* Floating Hearts Generator */}
-                                  <button
-                                    onClick={() => {
-                                      const id = "heart-" + Date.now();
-                                      setActiveHearts(prev => [...prev, { id, left: Math.random() * 80 + 10 }]);
-                                      setTimeout(() => {
-                                        setActiveHearts(prev => prev.filter(h => h.id !== id));
-                                      }, 2000);
-                                    }}
-                                    className="w-full bg-pink-600/25 border border-pink-500/40 hover:bg-pink-600/40 text-pink-300 py-1.5 rounded-lg text-[8px] font-black uppercase tracking-wider flex items-center justify-center space-x-1 transition-all active:scale-95"
-                                  >
-                                    <Heart className="w-3 h-3 fill-pink-500 text-pink-500 animate-pulse" />
-                                    <span>Tap to Send Hearts</span>
-                                  </button>
-
-                                  {/* Exit Broadcast */}
-                                  <button
-                                    onClick={() => {
-                                      setViewerLiveGuestSeats(prev => prev.map(s => {
-                                        if (s.name === user.username || s.name === user.fullName) {
-                                          return { ...s, name: null, avatar: null, diamonds: null, isMuted: false, isCamMuted: false, isBigFrame: false };
-                                        }
-                                        return s;
-                                      }));
-                                      setViewerRequestStatus("none");
-                                      setViewerLiveGuestModeActive(false);
-                                      setClientView("feed");
-                                    }}
-                                    className="w-full bg-red-600/90 hover:bg-red-600 text-white py-1.5 rounded-lg text-[8px] font-black uppercase tracking-wider flex items-center justify-center space-x-1 transition-all cursor-pointer active:scale-95"
-                                  >
-                                    <span>🚪 Exit Stream & Go to Feed</span>
-                                  </button>
-                                </div>
+                              {/* LOWER NAVIGATION: Mic / Camera / Rotate / Music / Gift / Share / Requests */}
+                              <div className="w-full shrink-0 border-t border-white/5 bg-black/90 px-2 py-1.5 flex items-center justify-between gap-1.5 safe-area-bottom">
+                                <button type="button" onClick={() => {
+                                  setViewerLiveGuestSeats(prev => prev.map(s => {
+                                    if (s.name && String(s.name).toLowerCase() === String(user.username || "").toLowerCase()) return { ...s, isMuted: !s.isMuted };
+                                    return s;
+                                  }));
+                                }} className="w-10 h-10 rounded-xl bg-emerald-600/20 border border-emerald-400/40 text-emerald-300 flex items-center justify-center active:scale-90" title="Guest microphone">
+                                  {viewerLiveGuestSeats.some(s => s.name && String(s.name).toLowerCase() === String(user.username || "").toLowerCase() && !s.isMuted) ? <Mic className="w-5 h-5" /> : <MicOff className="w-5 h-5" />}
+                                </button>
+                                <button type="button" onClick={() => {
+                                  setViewerLiveGuestSeats(prev => prev.map(s => {
+                                    if (s.name && String(s.name).toLowerCase() === String(user.username || "").toLowerCase()) return { ...s, isCamMuted: !s.isCamMuted, canUseCamera: true };
+                                    return s;
+                                  }));
+                                }} className="w-10 h-10 rounded-xl bg-pink-600/20 border border-pink-400/40 text-pink-300 flex items-center justify-center active:scale-90" title="Guest camera">
+                                  {viewerLiveGuestSeats.some(s => s.name && String(s.name).toLowerCase() === String(user.username || "").toLowerCase() && !s.isCamMuted) ? <Camera className="w-5 h-5" /> : <CameraOff className="w-5 h-5" />}
+                                </button>
+                                <button type="button" onClick={() => setCameraFacingMode(prev => prev === "user" ? "environment" : "user")} className="w-10 h-10 rounded-xl bg-white/5 border border-white/10 text-cyan-300 flex items-center justify-center active:scale-90" title="Rotate camera"><RotateCw className="w-5 h-5" /></button>
+                                <button type="button" onClick={() => openUserLiveMusicModal()} className={`w-10 h-10 rounded-xl border flex items-center justify-center active:scale-90 ${partyMusicPlaying ? "bg-amber-500 text-black border-amber-300" : "bg-amber-500/15 border-amber-400/30 text-amber-300"}`} title="Music Player"><Music className="w-5 h-5" /></button>
+                                <button type="button" onClick={() => setViewerGiftDrawerOpen(true)} className="w-10 h-10 rounded-xl bg-gradient-to-r from-pink-600 to-purple-600 border border-pink-400/40 text-white flex items-center justify-center active:scale-90" title="Gift Store"><GiftIcon className="w-5 h-5 text-yellow-300" /></button>
+                                <button type="button" onClick={() => { const data = { title: `@${activeHost?.name || activeHost?.username || "Host"} Guest Room`, text: "Join this Pardais Party Guest Room!", url: window.location.href }; if (navigator.share) navigator.share(data).catch(() => {}); else navigator.clipboard?.writeText(window.location.href); }} className="w-10 h-10 rounded-xl bg-cyan-500/15 border border-cyan-400/30 text-cyan-300 flex items-center justify-center active:scale-90" title="Share Guest Room"><Share2 className="w-5 h-5" /></button>
+                                <button type="button" onClick={async () => {
+                                  const emptySeat = viewerLiveGuestSeats.find(s => s.name === null);
+                                  if (!emptySeat || !activeHost?.id || !user?.username) { alert("❌ No guest seat is available right now."); return; }
+                                  if (viewerRequestStatus === "pending") return;
+                                  try {
+                                    const res = await fetch(`/api/v1/hosts/${activeHost.id}/guest-requests`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username: user.username, avatar: user.avatar, seatId: emptySeat.id, vipLevel: user.vipLevel || 0, level: user.userLevel || 1 }) });
+                                    if (!res.ok) throw new Error("Request failed");
+                                    setViewerRequestStatus("pending");
+                                    triggerJoinNotif(user.username, user.userLevel || user.level || 1, user.vipLevel || 0);
+                                  } catch { alert("❌ Could not send guest request. Please try again."); }
+                                }} className="relative w-10 h-10 rounded-xl bg-purple-600/20 border border-purple-400/40 text-purple-200 flex items-center justify-center active:scale-90" title="Guest Join Requests">
+                                  <UserCheck className="w-5 h-5" />
+                                  {viewerRequestStatus === "pending" && <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-600 text-white rounded-full text-[7px] font-black flex items-center justify-center">1</span>}
+                                </button>
                               </div>
                             </div>
 
@@ -19096,6 +19076,7 @@ export default function App() {
                                     coHostName={userLiveCoHost?.username}
                                     coHostVideoMuted={userLiveCoHost?.isCamOff}
                                     onPublishSuccess={handleHostPublishSuccess}
+                                    localVideoMountRef={hostGuestVideoMountRef}
                                   />
                                   </div>
                                 </div>
@@ -19312,21 +19293,13 @@ export default function App() {
                                       } else {
                                         return (
                                           <div className="w-full h-full relative flex items-center justify-center bg-[#0d0918]">
-                                            {userLiveShowCoverPhoto && userLiveCoverPhoto ? (
+                                            {userLiveCam ? (
+                                              <div ref={hostGuestVideoMountRef} className="absolute inset-0 w-full h-full bg-black" />
+                                            ) : userLiveShowCoverPhoto && userLiveCoverPhoto ? (
                                               <img
                                                 src={userLiveCoverPhoto || DEFAULT_USER.coverPhoto}
                                                 className="w-full h-full object-cover transition-all duration-300"
                                                 alt="Host Frame Photo"
-                                              />
-                                            ) : userLiveCam ? (
-                                              <img
-                                                src={user.avatar || liveBroadcasterAvatar || DEFAULT_USER.avatar}
-                                                className="w-full h-full object-cover transition-all duration-300"
-                                                alt="Host screen"
-                                                style={{
-                                                  filter: `brightness(${userLiveBeauty.brightness}%) contrast(105%) saturate(110%)`,
-                                                  transform: `scaleX(${userLiveCamFlipped ? -1 : 1}) rotate(${userLiveCamRotation}deg)`
-                                                }}
                                               />
                                             ) : (
                                               <div className="relative w-full h-full flex flex-col items-center justify-center bg-gradient-to-b from-[#181328] via-[#0d0918] to-[#181328] overflow-hidden select-none">
@@ -19545,10 +19518,9 @@ export default function App() {
                                           </>
                                         ) : (
                                           <div className="flex flex-col items-center justify-center h-full w-full p-1 group cursor-pointer select-none">
-                                            <div className="relative flex items-center justify-center">
-                                              <div className="w-9 h-9 rounded-xl bg-gradient-to-b from-purple-900/50 to-black border border-purple-400/30 flex items-center justify-center group-hover:border-pink-400 group-hover:scale-105 transition-all shadow-inner animate-pulse">
-                                                <span className="text-xl leading-none">🪑</span>
-                                              </div>
+                                            <div className="relative flex items-center justify-center w-full h-full min-h-[74px]">
+                                              <div className="absolute inset-1 rounded-2xl bg-gradient-to-b from-[#261044]/70 via-[#0c0817]/80 to-black/90 border border-yellow-500/20 shadow-[0_0_18px_rgba(168,85,247,0.18)] group-hover:border-yellow-400/50 group-hover:shadow-[0_0_22px_rgba(250,204,21,0.22)] transition-all" />
+                                              <img src="/assets/royal-guest-throne.svg" alt="Royal guest throne" className="relative z-10 w-[82%] h-[82%] object-contain drop-shadow-[0_0_12px_rgba(250,204,21,0.28)] group-hover:scale-105 transition-transform" />
                                               {/* Plus sign badge */}
                                               <div className="absolute -bottom-1 -right-1 w-3.5 h-3.5 rounded-full bg-gradient-to-tr from-pink-500 to-purple-600 text-white flex items-center justify-center text-[9px] font-bold shadow-md group-hover:scale-110 transition-transform border border-black">
                                                 +
@@ -19571,7 +19543,7 @@ export default function App() {
                                   <div className="w-[60%] h-full flex flex-col p-2.5 justify-between">
                                     {/* Scrolling Comments Box */}
                                     <div className="flex-1 overflow-y-auto space-y-1.5 pr-1 max-h-[140px] flex flex-col justify-end">
-                                      {userLiveMessages.slice(-15).map(msg => (
+                                      {userLiveMessages.map(msg => (
                                         <div key={msg.id} className="bg-black/35 p-1 rounded-lg text-[9px] text-gray-200">
                                           <div className="flex items-center space-x-1">
                                             {msg.vipLevel > 0 && (
@@ -20627,8 +20599,8 @@ export default function App() {
                                         avatar: req.avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&h=150&q=80",
                                         diamonds: "1.2K",
                                         isMuted: false,
-                                        isCamMuted: true,
-                                        canUseCamera: false,
+                                        isCamMuted: false,
+                                        canUseCamera: true,
                                         isBigFrame: false
                                       };
                                       setUserLiveGuestSeats(updated);
@@ -20656,6 +20628,8 @@ export default function App() {
                                   <button
                                     onClick={() => {
                                       const reqId = userLiveGuestRequests[0].id;
+                                      const hostId = `h-${user.uniqueId || user.username}`;
+                                      fetch(`/api/v1/hosts/${encodeURIComponent(hostId)}/guest-requests/${encodeURIComponent(reqId)}/respond`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "reject" }) }).catch(() => {});
                                       setUserLiveGuestRequests(prev => prev.filter(r => r.id !== reqId));
                                     }}
                                     className="bg-red-600/80 hover:bg-red-600 text-white font-bold text-[8.5px] px-2 py-1 rounded-xl shadow border border-red-400/30 cursor-pointer active:scale-95 transition-all"
@@ -21846,6 +21820,7 @@ export default function App() {
                                           <button
                                             onClick={() => {
                                               // ACCEPT REQUEST
+                                              const hostId = `h-${user.uniqueId || user.username}`;
                                               const emptySeatIdx = userLiveGuestSeats.findIndex(s => s.name === null);
                                               if (emptySeatIdx === -1) {
                                                 alert("All guest seats are currently full! Remove a guest first.");
@@ -21860,9 +21835,11 @@ export default function App() {
                                                 diamonds: "10.0K",
                                                 isMuted: false,
                                                 isCamMuted: false,
+                                                canUseCamera: true,
                                                 isBigFrame: false
                                               };
                                               setUserLiveGuestSeats(updatedSeats);
+                                              fetch(`/api/v1/hosts/${encodeURIComponent(hostId)}/guest-requests/${encodeURIComponent(req.id)}/respond`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "accept", seatId: updatedSeats[emptySeatIdx].id }) }).then(r => r.json()).then(d => { if (Array.isArray(d.guestSeats)) setUserLiveGuestSeats(d.guestSeats); }).catch(() => {});
                                               setUserLiveGuestRequests(prev => prev.filter(r => r.id !== req.id));
                                               setUserLiveMessages(prev => [
                                                 ...prev,
@@ -21885,6 +21862,8 @@ export default function App() {
                                           </button>
                                           <button
                                             onClick={() => {
+                                              const hostId = `h-${user.uniqueId || user.username}`;
+                                              fetch(`/api/v1/hosts/${encodeURIComponent(hostId)}/guest-requests/${encodeURIComponent(req.id)}/respond`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "reject" }) }).catch(() => {});
                                               setUserLiveGuestRequests(prev => prev.filter(r => r.id !== req.id));
                                               alert(`Rejected request from ${req.username}.`);
                                             }}

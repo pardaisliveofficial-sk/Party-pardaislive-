@@ -35,6 +35,7 @@ interface AgoraStreamProps {
   receiveRemoteAudio?: boolean;
   excludeRemoteUid?: number | null;
   remoteVideoLayout?: "single" | "grid";
+  localVideoMountRef?: React.RefObject<HTMLDivElement | null>;
 }
 
 const sanitizeChannel = (ch: string) => {
@@ -69,7 +70,8 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
   coHostVipLevel = 0,
   receiveRemoteAudio: receiveRemoteAudioProp = true,
   excludeRemoteUid = null,
-  remoteVideoLayout = "single"
+  remoteVideoLayout = "single",
+  localVideoMountRef
 }) => {
   // Normalize the optional prop to a guaranteed local boolean. This avoids any
   // stale/legacy bundle referring to an undeclared receiveRemoteAudio symbol.
@@ -273,9 +275,25 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
       try {
         const agoraModule = await import("agora-rtc-sdk-ng");
         const AgoraRTC = (agoraModule as any).default || agoraModule;
+        let selectedCameraId: string | undefined;
+        try {
+          const cameras = await AgoraRTC.getCameras();
+          if (Array.isArray(cameras) && cameras.length > 0) {
+            const wantedBack = facingMode === "environment";
+            const preferred = cameras.find((c: any) => {
+              const label = String(c.label || "").toLowerCase();
+              return wantedBack
+                ? /(back|rear|environment|world)/i.test(label)
+                : /(front|facetime|user|selfie)/i.test(label);
+            });
+            selectedCameraId = (preferred || cameras[0])?.deviceId;
+          }
+        } catch (deviceErr) {
+          console.warn("[AGORA VIDEO] Camera device enumeration note:", deviceErr);
+        }
         track = await AgoraRTC.createCameraVideoTrack({
           encoderConfig: "720p_1",
-          cameraId: undefined
+          cameraId: selectedCameraId
         });
         if (cancelled) {
           track.stop(); track.close();
@@ -287,8 +305,9 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
           await track.setEnabled(false);
         }
         requestAnimationFrame(() => {
-          if (localVideoContainerRef.current && track) {
-            try { track.play(localVideoContainerRef.current, { fit: "cover", mirror: facingMode === "user" }); } catch (e) {}
+          const target = localVideoMountRef?.current || localVideoContainerRef.current;
+          if (target && track) {
+            try { track.play(target, { fit: "cover", mirror: facingMode === "user" }); } catch (e) {}
           }
         });
       } catch (err) {
@@ -314,8 +333,11 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
     localVideoTrack.setEnabled(Boolean(publishCameraTrack && !videoMuted)).catch((err) => {
       console.error("[AGORA VIDEO] Camera toggle failed", err);
     });
-    if (publishCameraTrack && localVideoContainerRef.current) {
-      try { localVideoTrack.play(localVideoContainerRef.current, { fit: "cover", mirror: facingMode === "user" }); } catch (e) {}
+    if (publishCameraTrack) {
+      const target = localVideoMountRef?.current || localVideoContainerRef.current;
+      if (target) {
+        try { localVideoTrack.play(target, { fit: "cover", mirror: facingMode === "user" }); } catch (e) {}
+      }
     }
   }, [publishCameraTrack, videoMuted, localVideoTrack, facingMode, role]);
 
@@ -848,7 +870,11 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
     <div className="w-full h-full relative overflow-hidden bg-black flex flex-col items-center justify-center select-none">
       {role === "publisher" ? (
         publishCameraTrack && !videoMuted ? (
-          <div ref={localVideoContainerRef} className="absolute inset-0 z-0 bg-black" />
+          localVideoMountRef ? (
+            <div ref={localVideoContainerRef} className="absolute w-0 h-0 overflow-hidden pointer-events-none opacity-0" />
+          ) : (
+            <div ref={localVideoContainerRef} className="absolute inset-0 z-0 bg-black" />
+          )
         ) : (
           <div className="absolute inset-0 z-0 bg-gradient-to-b from-[#1c0d38] via-[#120e2e] to-[#2b0c36]">
             {showCoverPhoto && coverPhoto ? (

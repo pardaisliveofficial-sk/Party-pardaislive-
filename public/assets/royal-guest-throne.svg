@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 360">
+<defs>
+  <linearGradient id="gold" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#fff2a1"/><stop offset=".22" stop-color="#f7c62b"/><stop offset=".55" stop-color="#a96b00"/><stop offset=".8" stop-color="#ffd84a"/><stop offset="1" stop-color="#8b5200"/></linearGradient>
+  <linearGradient id="velvet" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#30164c"/><stop offset=".55" stop-color="#160d2b"/><stop offset="1" stop-color="#080611"/></linearGradient>
+  <radialGradient id="glow"><stop stop-color="#ffd94d" stop-opacity=".42"/><stop offset="1" stop-color="#7b2cff" stop-opacity="0"/></radialGradient>
+  <filter id="shadow"><feGaussianBlur stdDeviation="5"/></filter>
+</defs>
+<ellipse cx="150" cy="334" rx="118" ry="18" fill="#ffca28" opacity=".25" filter="url(#shadow)"/>
+<ellipse cx="150" cy="326" rx="108" ry="18" fill="url(#glow)"/>
+<!-- crown -->
+<path d="M103 67 L112 28 L133 49 L150 14 L167 49 L188 28 L197 67 Z" fill="url(#gold)" stroke="#fff0a0" stroke-width="3"/>
+<circle cx="150" cy="14" r="5" fill="#ffec70"/>
+<!-- tall back -->
+<path d="M83 69 Q150 43 217 69 L232 245 Q225 276 205 291 L95 291 Q75 276 68 245 Z" fill="url(#velvet)" stroke="url(#gold)" stroke-width="8"/>
+<!-- ornate top -->
+<path d="M75 86 Q90 62 110 76 Q150 53 190 76 Q210 62 225 86" fill="none" stroke="url(#gold)" stroke-width="8" stroke-linecap="round"/>
+<circle cx="150" cy="84" r="15" fill="#6d1c9b" stroke="url(#gold)" stroke-width="5"/>
+<!-- arms -->
+<path d="M75 183 Q46 183 39 210 Q35 229 54 242 L85 251 L96 225 L67 218 Q62 216 67 209 L91 204 Z" fill="url(#velvet)" stroke="url(#gold)" stroke-width="8"/>
+<path d="M225 183 Q254 183 261 210 Q265 229 246 242 L215 251 L204 225 L233 218 Q238 216 233 209 L209 204 Z" fill="url(#velvet)" stroke="url(#gold)" stroke-width="8"/>
+<!-- seat -->
+<path d="M84 217 Q150 201 216 217 L207 288 Q150 305 93 288 Z" fill="url(#velvet)" stroke="url(#gold)" stroke-width="8"/>
+<!-- jewels -->
+<circle cx="106" cy="102" r="6" fill="#ff2fa6" stroke="#ffe879" stroke-width="2"/>
+<circle cx="194" cy="102" r="6" fill="#37d9ff" stroke="#ffe879" stroke-width="2"/>
+<circle cx="150" cy="235" r="8" fill="#ff2fa6" stroke="#ffe879" stroke-width="3"/>
+<!-- feet -->
+<path d="M92 282 L72 326 L105 326 L119 288 Z" fill="url(#gold)"/>
+<path d="M208 282 L228 326 L195 326 L181 288 Z" fill="url(#gold)"/>
+<!-- base -->
+<path d="M55 324 Q150 302 245 324 L251 344 Q150 362 49 344 Z" fill="url(#gold)" stroke="#fff0a0" stroke-width="3"/>
+<text x="150" y="344" text-anchor="middle" font-family="Arial,sans-serif" font-size="14" font-weight="900" fill="#1a0b00">ROYAL</text>
+</svg>
