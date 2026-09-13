@@ -36,6 +36,9 @@ interface AgoraStreamProps {
   excludeRemoteUid?: number | null;
   remoteVideoLayout?: "single" | "grid";
   localVideoMountRef?: React.RefObject<HTMLDivElement | null>;
+  /** When a guest is a broadcaster, keep the same Agora client and render subscribed remote video as the room background. */
+  renderRemoteVideoWhenPublisher?: boolean;
+  suppressStatusOverlay?: boolean;
 }
 
 const sanitizeChannel = (ch: string) => {
@@ -71,7 +74,9 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
   receiveRemoteAudio: receiveRemoteAudioProp = true,
   excludeRemoteUid = null,
   remoteVideoLayout = "single",
-  localVideoMountRef
+  localVideoMountRef,
+  renderRemoteVideoWhenPublisher = false,
+  suppressStatusOverlay = false
 }) => {
   // Normalize the optional prop to a guaranteed local boolean. This avoids any
   // stale/legacy bundle referring to an undeclared receiveRemoteAudio symbol.
@@ -182,80 +187,6 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
     }
   }, [muted, publishMicrophoneTrack, localAudioTrack, role]);
 
-  // Ambient Live Stream Voice Engine for Viewers (ensures viewers always receive clear live audio & voice greetings)
-  useEffect(() => {
-    if (role !== "subscriber") return;
-
-    let synthInterval: any = null;
-    let audioCtx: AudioContext | null = null;
-    let osc1: OscillatorNode | null = null;
-    let gainNode: GainNode | null = null;
-
-    const startAmbientAudio = () => {
-      try {
-        const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-        if (!AudioContextClass) return;
-        
-        audioCtx = new AudioContextClass();
-        if (audioCtx.state === "suspended") {
-          audioCtx.resume().catch(() => {});
-        }
-
-        // Create warm studio room ambient sound (soft harmonic hum)
-        osc1 = audioCtx.createOscillator();
-        const osc2 = audioCtx.createOscillator();
-        gainNode = audioCtx.createGain();
-
-        osc1.type = "sine";
-        osc1.frequency.setValueAtTime(140, audioCtx.currentTime); // Low warm tone
-
-        osc2.type = "triangle";
-        osc2.frequency.setValueAtTime(210, audioCtx.currentTime); // Soft harmonic
-
-        gainNode.gain.setValueAtTime(0.015, audioCtx.currentTime); // Gentle background volume
-
-        osc1.connect(gainNode);
-        osc2.connect(gainNode);
-        gainNode.connect(audioCtx.destination);
-
-        osc1.start();
-        osc2.start();
-      } catch (e) {
-        console.warn("[AgoraStream] Ambient audio engine init note:", e);
-      }
-    };
-
-    const speakHostGreeting = () => {
-      if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
-      if (remoteUsersList.length > 0) return; // If real human host audio track is active, don't interrupt
-
-      try {
-        window.speechSynthesis.cancel();
-        const greetings = [
-          `Welcome to ${hostName}'s live stream on Pardais Live!`,
-          `Hey everyone! Enjoying the stream with ${hostName}? Send a gift or comment in chat!`,
-          `Live voice broadcast active. Thanks for tuning in to ${hostName}!`,
-          `Welcome to Pardais Live! Keep chatting and sending roses to ${hostName}!`
-        ];
-        const text = greetings[Math.floor(Math.random() * greetings.length)];
-        const utterance = new SpeechSynthesisUtterance(text);
-        utterance.rate = 0.95;
-        utterance.pitch = 1.05;
-        utterance.volume = 0.85;
-        window.speechSynthesis.speak(utterance);
-      } catch (e) {
-        console.warn("[AgoraStream] Host speech synthesis note:", e);
-      }
-    };
-
-    startAmbientAudio();
-
-    return () => {
-      if (osc1) { try { osc1.stop(); } catch (e) {} }
-      if (audioCtx) { try { audioCtx.close(); } catch (e) {} }
-    };
-  }, [role, hostName, remoteUsersList.length]);
-
   // Real camera/video publisher layer. This is intentionally separate from the
   // audio engine so camera ON/OFF never tears down the live audio session.
   useEffect(() => {
@@ -291,10 +222,9 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
         } catch (deviceErr) {
           console.warn("[AGORA VIDEO] Camera device enumeration note:", deviceErr);
         }
-        track = await AgoraRTC.createCameraVideoTrack({
-          encoderConfig: "720p_1",
-          cameraId: selectedCameraId
-        });
+        const cameraOptions: any = { encoderConfig: "720p_1" };
+        if (selectedCameraId) cameraOptions.cameraId = selectedCameraId;
+        track = await AgoraRTC.createCameraVideoTrack(cameraOptions);
         if (cancelled) {
           track.stop(); track.close();
           return;
@@ -367,7 +297,7 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
 
   // Render remote live video tracks for viewers.
   useEffect(() => {
-    if (role !== "subscriber") return;
+    if (role !== "subscriber" && !renderRemoteVideoWhenPublisher) return;
     remoteUsersList.forEach((remote) => {
       if (remote.videoTrack) {
         const el = remoteVideoRefs.current[String(remote.uid)];
@@ -579,31 +509,10 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
           await agoraClient.join(targetAppId, targetChannel, targetToken, targetUid);
           console.log("[AGORA EVENT: JOIN SUCCESS]", { channel: targetChannel, uid: targetUid });
         } catch (joinErr: any) {
-          console.warn("[AGORA EVENT: JOIN FAILURE - Falling back to Direct WebRTC Pipeline]", joinErr);
-          
-          if (isPublisher) {
-            try {
-              const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-              setStatus("connected");
-              setStatusDetails("Broadcasting Audio Live via Direct WebRTC Pipeline");
-              if (onPublishSuccess) {
-                onPublishSuccess({ channelName: targetChannel, uid: targetUid });
-              }
-              return;
-            } catch (mediaErr) {
-              console.warn("[AgoraStream] Direct mic capture fallback note:", mediaErr);
-              setStatus("connected");
-              setStatusDetails("Broadcasting Audio Live (Simulation Mode)");
-              if (onPublishSuccess) {
-                onPublishSuccess({ channelName: targetChannel, uid: targetUid });
-              }
-              return;
-            }
-          } else {
-            setStatus("connected");
-            setStatusDetails("Connected to Audio Stream (Direct WebRTC Pipeline)");
-            return;
-          }
+          console.error("[AGORA EVENT: JOIN FAILURE]", joinErr);
+          setStatus("error");
+          setStatusDetails("Agora channel join failed: " + ((joinErr as any)?.message || String(joinErr)));
+          return;
         }
         
         if (isUnmounted) {
@@ -893,7 +802,26 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
   return (
     <div className="w-full h-full relative overflow-hidden bg-black flex flex-col items-center justify-center select-none">
       {role === "publisher" ? (
-        publishCameraTrack && !videoMuted ? (
+        renderRemoteVideoWhenPublisher ? (
+          <div className="absolute inset-0 z-0 bg-black">
+            {remoteUsersList.filter(u => u.videoTrack && (excludeRemoteUid == null || Number(u.uid) !== Number(excludeRemoteUid))).length > 0 ? (
+              <div className="w-full h-full relative">
+                {remoteUsersList.filter(u => u.videoTrack && (excludeRemoteUid == null || Number(u.uid) !== Number(excludeRemoteUid))).map((remote, index) => (
+                  <div
+                    key={String(remote.uid)}
+                    ref={(el) => { remoteVideoRefs.current[String(remote.uid)] = el; }}
+                    className={`absolute inset-0 bg-black ${index === 0 ? "block" : "hidden"}`}
+                  />
+                ))}
+              </div>
+            ) : (
+              <div className="absolute inset-0 bg-gradient-to-b from-[#1c0d38] via-[#120e2e] to-[#2b0c36]">
+                {showCoverPhoto && coverPhoto ? <img src={coverPhoto} alt="Stream Cover" className="w-full h-full object-cover opacity-80" /> : <img src={avatarUrl} alt={hostName} className="w-full h-full object-cover blur-2xl opacity-35 scale-125" />}
+                <div className="absolute inset-0 bg-black/55" />
+              </div>
+            )}
+          </div>
+        ) : publishCameraTrack && !videoMuted ? (
           localVideoMountRef ? (
             <div ref={localVideoContainerRef} className="absolute w-0 h-0 overflow-hidden pointer-events-none opacity-0" />
           ) : (
@@ -930,7 +858,7 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
         </div>
       )}
       {/* 2. CENTRAL HOST STATUS OVERLAY */}
-      <div className={`relative z-10 flex flex-col items-center text-center space-y-4 max-w-xs mx-auto animate-scale-up ${((role === "publisher" && publishCameraTrack && !videoMuted) || (role === "subscriber" && remoteUsersList.some(u => u.videoTrack))) ? "opacity-0 pointer-events-none" : ""}`}>
+      {!suppressStatusOverlay && <div className={`relative z-10 flex flex-col items-center text-center space-y-4 max-w-xs mx-auto animate-scale-up ${((role === "publisher" && (publishCameraTrack && !videoMuted || renderRemoteVideoWhenPublisher && remoteUsersList.some(u => u.videoTrack))) || (role === "subscriber" && remoteUsersList.some(u => u.videoTrack))) ? "opacity-0 pointer-events-none" : ""}`}>
         {/* Host status/avatar remains as a lightweight overlay when video is unavailable. */}
         <div className="relative group">
           <div className="absolute -inset-4 rounded-full bg-gradient-to-r from-pink-500 via-purple-500 to-cyan-400 opacity-60 blur-lg group-hover:opacity-100 transition duration-1000 animate-pulse" />
@@ -981,7 +909,7 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
           <span className="w-1.5 bg-emerald-400 rounded-full animate-[bounce_1s_infinite_400ms] h-2/4" />
           <span className="w-1.5 bg-amber-400 rounded-full animate-[bounce_1s_infinite_250ms] h-4/5" />
         </div>
-      </div>
+      </div>}
 
       {/* 3. UNMUTE AUDIO OVERLAY IF AUTOPLAY IS BLOCKED */}
       {audioBlocked && (

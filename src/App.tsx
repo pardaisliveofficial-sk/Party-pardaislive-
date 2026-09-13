@@ -2651,14 +2651,14 @@ export default function App() {
 
   // Audio Room State (10 Seat Grid)
   const [audioSeats, setAudioSeats] = useState<Array<{ id: number; name: string | null; avatar: string | null; isMuted: boolean; isLocked: boolean }>>([
-    { id: 1, name: "Host Mehak 🎙️", avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&h=150&q=80", isMuted: false, isLocked: false },
-    { id: 2, name: "VIP Prince_Pardais", avatar: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80", isMuted: false, isLocked: false },
+    { id: 1, name: null, avatar: null, isMuted: false, isLocked: false },
+    { id: 2, name: null, avatar: null, isMuted: false, isLocked: false },
     { id: 3, name: null, avatar: null, isMuted: false, isLocked: false },
-    { id: 4, name: "Ali_99", avatar: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=100&h=100&q=80", isMuted: true, isLocked: false },
+    { id: 4, name: null, avatar: null, isMuted: false, isLocked: false },
     { id: 5, name: null, avatar: null, isMuted: false, isLocked: true },
-    { id: 6, name: "Sana_Khan", avatar: "https://images.unsplash.com/photo-1517841905240-472988babdf9?auto=format&fit=crop&w=100&h=100&q=80", isMuted: false, isLocked: false },
+    { id: 6, name: null, avatar: null, isMuted: false, isLocked: false },
     { id: 7, name: null, avatar: null, isMuted: false, isLocked: false },
-    { id: 8, name: "DJ_Sam", avatar: "https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?auto=format&fit=crop&w=100&h=100&q=80", isMuted: false, isLocked: false },
+    { id: 8, name: null, avatar: null, isMuted: false, isLocked: false },
     { id: 9, name: null, avatar: null, isMuted: false, isLocked: false },
     { id: 10, name: null, avatar: null, isMuted: false, isLocked: true }
   ]);
@@ -3080,6 +3080,11 @@ export default function App() {
 
   // Viewer live guest states
   const [viewerLiveGuestModeActive, setViewerLiveGuestModeActive] = useState<boolean>(false);
+  // External mount for the current viewer/guest camera so the same Agora client can render local video inside their seat.
+  const viewerGuestLocalVideoMountRef = useRef<HTMLDivElement | null>(null);
+  const currentViewerGuestSeat = viewerLiveGuestSeats.find(s => s.name && String(s.name).toLowerCase() === String(user?.username || "").toLowerCase()) || null;
+  const currentViewerIsGuest = Boolean(currentViewerGuestSeat && viewerLiveGuestModeActive);
+  const currentViewerGuestMuted = Boolean(currentViewerGuestSeat?.isMuted);
   const [viewerRequestStatus, setViewerRequestStatus] = useState<"none" | "pending" | "accepted">("none");
   const [viewerGiftDrawerOpen, setViewerGiftDrawerOpen] = useState<boolean>(false);
   const [viewerLiveGiftRecipient, setViewerLiveGiftRecipient] = useState<string>("Host");
@@ -3107,11 +3112,7 @@ export default function App() {
 
   // Live Chat Messages
   const [chatInput, setChatInput] = useState<string>("");
-  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
-    { id: "1", username: "System", message: "✨ Welcome to Pardais Party! Please keep chat respectful and follow community guidelines. ✨", vipLevel: 0, userLevel: 0, isSystem: true, isFlagged: false, timestamp: "02:17" },
-    { id: "2", username: "Alina_Malik", message: "Sahar api, appki voice bohot pyaari hai! 😍🎸", vipLevel: 1, userLevel: 15, isSystem: false, isFlagged: false, timestamp: "02:18" },
-    { id: "3", username: "Siddique_bhai", message: "Aadaab! Greetings from Lahore! 🇵🇰❤️", vipLevel: 0, userLevel: 8, isSystem: false, isFlagged: false, timestamp: "02:18" }
-  ]);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
 
   // Comment moderation and interaction states
   const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
@@ -5844,9 +5845,14 @@ export default function App() {
     };
   }, [clientView, activeHost?.id, user?.username, user?.avatar, user?.uniqueId, user?.userLevel, user?.vipLevel]);
 
-  // Auto scroll chat
+  // Auto-scroll only when the reader is already near the newest message.
+  // If they scroll upward, incoming comments remain readable instead of forcibly jumping back down.
   useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    const end = chatEndRef.current;
+    const container = end?.parentElement as HTMLElement | null;
+    if (!end || !container) return;
+    const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+    if (distanceFromBottom <= 140) end.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }, [chatMessages]);
 
   // Request notifications permission on app launch
@@ -7709,28 +7715,12 @@ export default function App() {
       ]);
       alert(`🎙️ Guest started! @${topReq.username} connected directly from Solo Live.`);
     } else {
-      setUserLiveGuestSeats(prevSeats => {
-        const copy = [...prevSeats];
-        if (!copy[0] || !copy[0].name) {
-          copy[0] = {
-            id: 1,
-            name: "Alex (Guest)",
-            avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&h=150&q=80",
-            vipLevel: 0,
-            isMuted: false,
-            isCamMuted: false,
-            isModerator: false,
-            isBigFrame: false
-          };
-        }
-        return copy;
-      });
       setUserLiveMessages(prev => [
         ...prev,
         {
-          id: "ul-guest-start-" + Date.now(),
+          id: "ul-guest-mode-" + Date.now(),
           username: "System 🎙️",
-          message: `Host ${user.username || "Host"} started Guest Mode! Guest connected directly.`,
+          message: `Host ${user.username || "Host"} opened Guest Mode. Waiting for a real guest request or invitation.`,
           vipLevel: 0,
           userLevel: 0,
           isSystem: true,
@@ -7738,7 +7728,7 @@ export default function App() {
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
         }
       ]);
-      alert("🎙️ Guest Mode initialized! Guest connected directly from Solo Live.");
+      alert("🎙️ Guest Mode initialized. Waiting for a real guest request or invitation.");
     }
   };
 
@@ -7999,33 +7989,6 @@ export default function App() {
       })
       .catch(err => console.error("Error posting host comment to backend room:", err));
 
-    // Setup a nice interactive response from viewers in Roman Urdu/Urdu
-    setTimeout(() => {
-      const responsePool = [
-        "Aapki awaz bohot pyaari hai host! 😍",
-        "Wao host replied! Thank you!",
-        "Boht khushi hui apka jawab dekh kar.",
-        "MashaAllah host superb dynamic personality!",
-        "Support standard maximum! Syed team!"
-      ];
-      const randomResponse = responsePool[Math.floor(Math.random() * responsePool.length)];
-      const randomUsers = ["Sana_Khan", "Alina_Malik", "Karachi_King", "Siddique_bhai"];
-      const randomUser = randomUsers[Math.floor(Math.random() * randomUsers.length)];
-
-      setUserLiveMessages(prev => [
-        ...prev,
-        {
-          id: "ul-viewer-reply-" + Date.now(),
-          username: randomUser,
-          message: randomResponse,
-          userLevel: getHostLevelFromName(randomUser),
-          vipLevel: getVipLevelFromUserLevel(getHostLevelFromName(randomUser)),
-          isSystem: false,
-          isFlagged: false,
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-        }
-      ]);
-    }, 1500);
   };
 
   const handleEndUserLive = () => {
@@ -12596,31 +12559,6 @@ export default function App() {
                                   <Flame className="w-2.5 h-2.5 text-yellow-300 fill-yellow-300 animate-pulse" />
                                   <span>Ranking 🔥</span>
                                 </button>
-                                <button
-                                  onClick={() => {
-                                    const nextState = !isUserModerator;
-                                    setIsUserModerator(nextState);
-                                    alert(nextState 
-                                      ? "🛡️ Simulating: Moderator (You now have permission to make/remove moderators, block users, kick users, clear comments, and mute chat!)" 
-                                      : "👤 Simulating: Standard Viewer (Administrative buttons will show as locked)"
-                                    );
-                                  }}
-                                  className={`text-[8px] font-black px-2 py-1 rounded-full border transition-all cursor-pointer flex items-center space-x-1 ${
-                                    isUserModerator 
-                                      ? "bg-teal-600 hover:bg-teal-500 text-white border-teal-400 animate-pulse" 
-                                      : "bg-gray-800 hover:bg-gray-700 text-gray-300 border-gray-700"
-                                  }`}
-                                  title="Click to toggle between standard viewer and moderator permission states!"
-                                >
-                                  <span>{isUserModerator ? "🛡️ Mod" : "👤 View"}</span>
-                                </button>
-                                <button
-                                  onClick={() => setContextActionsUser(activeHost.name)}
-                                  className="w-6 h-6 rounded-full bg-orange-600 hover:bg-orange-700 flex items-center justify-center text-white shadow-md cursor-pointer"
-                                  title="Report or Block Streamer"
-                                >
-                                  <ShieldAlert className="w-3.5 h-3.5" />
-                                </button>
                                 <div 
                                   onClick={() => setShowActiveViewersModal(true)}
                                   className="bg-black/45 backdrop-blur-md px-2 py-1 rounded-full border border-white/5 hover:border-pink-500/50 flex items-center space-x-1 text-[9px] font-black text-white font-mono shadow-md cursor-pointer transition-all active:scale-95"
@@ -12630,10 +12568,14 @@ export default function App() {
                                   <span>{viewersCount}</span>
                                 </div>
                                 <button
-                                  onClick={() => {
+                                  onClick={async () => {
+                                    const mySeat = viewerLiveGuestSeats.find(s => s.name && String(s.name).toLowerCase() === String(user.username || "").toLowerCase());
+                                    if (activeHost?.id && mySeat?.id) {
+                                      fetch(`/api/v1/hosts/${encodeURIComponent(activeHost.id)}/guest-seats/control`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ seatId: mySeat.id, action: "remove" }) }).catch(() => {});
+                                    }
                                     setViewerLiveGuestSeats(prev => prev.map(s => {
                                       if (s.name === user.username || s.name === user.fullName) {
-                                        return { ...s, name: null, avatar: null, diamonds: null, isMuted: false, isCamMuted: false, isBigFrame: false };
+                                        return { ...s, name: null, avatar: null, diamonds: null, isMuted: false, isCamMuted: true, canUseCamera: false, isBigFrame: false };
                                       }
                                       return s;
                                     }));
@@ -12747,7 +12689,7 @@ export default function App() {
                                         {/* Host Diamond Score Overlay */}
                                         <div className="absolute top-2.5 left-2.5 bg-yellow-500/80 backdrop-blur-sm text-black px-2 py-0.5 rounded-full text-[7.5px] font-black flex items-center space-x-1 shadow z-10">
                                           <span>💎</span>
-                                          <span>145.8K</span>
+                                          <span>{userLiveCoinsEarned >= 1000 ? `${(userLiveCoinsEarned / 1000).toFixed(1)}K` : userLiveCoinsEarned}</span>
                                         </div>
                                       </div>
                                     );
@@ -12789,8 +12731,12 @@ export default function App() {
                                   >
                                     {seat.name ? (
                                       <>
-                                        {/* Guest Avatar/Portrait background - shown only if camera is enabled */}
-                                        {!seat.isCamMuted ? (
+                                        {/* Current Guest's real Agora camera target. Remote guests are rendered by the shared subscriber layer. */}
+                                        {String(seat.name).toLowerCase() === String(user.username || "").toLowerCase() && !seat.isCamMuted && seat.canUseCamera && (currentViewerIsGuest || viewerRequestStatus === "accepted") && (
+                                          <div ref={viewerGuestLocalVideoMountRef} className="absolute inset-0 z-20 bg-black" />
+                                        )}
+                                        {/* Guest Avatar/Portrait background - used as the camera-off fallback */}
+                                        {!seat.isCamMuted && !(String(seat.name).toLowerCase() === String(user.username || "").toLowerCase() && seat.canUseCamera && (currentViewerIsGuest || viewerRequestStatus === "accepted")) ? (
                                           <>
                                             <img 
                                               src={seat.avatar || DEFAULT_USER.avatar} 
@@ -12923,42 +12869,37 @@ export default function App() {
                                 <button type="submit" className="text-purple-400 hover:text-purple-300 shrink-0"><Send className="w-4 h-4" /></button>
                               </form>
 
-                              {/* LOWER NAVIGATION: Mic / Camera / Rotate / Music / Gift / Share / Requests */}
-                              <div className="w-full shrink-0 border-t border-white/5 bg-black/90 px-2 py-1.5 grid grid-cols-7 gap-1 safe-area-bottom">
-                                <button type="button" onClick={() => {
-                                  setViewerLiveGuestSeats(prev => prev.map(s => {
-                                    if (s.name && String(s.name).toLowerCase() === String(user.username || "").toLowerCase()) return { ...s, isMuted: !s.isMuted };
-                                    return s;
-                                  }));
-                                }} className="w-full min-w-0 h-10 rounded-xl bg-emerald-600/20 border border-emerald-400/40 text-emerald-300 flex items-center justify-center active:scale-90" title="Guest microphone">
-                                  {viewerLiveGuestSeats.some(s => s.name && String(s.name).toLowerCase() === String(user.username || "").toLowerCase() && !s.isMuted) ? <Mic className="w-5 h-5" /> : <MicOff className="w-5 h-5" />}
-                                </button>
-                                <button type="button" onClick={() => {
-                                  setViewerLiveGuestSeats(prev => prev.map(s => {
-                                    if (s.name && String(s.name).toLowerCase() === String(user.username || "").toLowerCase()) return { ...s, isCamMuted: !s.isCamMuted, canUseCamera: true };
-                                    return s;
-                                  }));
-                                }} className="w-full min-w-0 h-10 rounded-xl bg-pink-600/20 border border-pink-400/40 text-pink-300 flex items-center justify-center active:scale-90" title="Guest camera">
-                                  {viewerLiveGuestSeats.some(s => s.name && String(s.name).toLowerCase() === String(user.username || "").toLowerCase() && !s.isCamMuted) ? <Camera className="w-5 h-5" /> : <CameraOff className="w-5 h-5" />}
-                                </button>
-                                <button type="button" onClick={() => setCameraFacingMode(prev => prev === "user" ? "environment" : "user")} className="w-full min-w-0 h-10 rounded-xl bg-white/5 border border-white/10 text-cyan-300 flex items-center justify-center active:scale-90" title="Rotate camera"><RotateCw className="w-5 h-5" /></button>
-                                <button type="button" onClick={() => openUserLiveMusicModal()} className={`w-10 h-10 rounded-xl border flex items-center justify-center active:scale-90 ${partyMusicPlaying ? "bg-amber-500 text-black border-amber-300" : "bg-amber-500/15 border-amber-400/30 text-amber-300"}`} title="Music Player"><Music className="w-5 h-5" /></button>
-                                <button type="button" onClick={() => setViewerGiftDrawerOpen(true)} className="w-10 h-10 rounded-xl bg-gradient-to-r from-pink-600 to-purple-600 border border-pink-400/40 text-white flex items-center justify-center active:scale-90" title="Gift Store"><GiftIcon className="w-5 h-5 text-yellow-300" /></button>
-                                <button type="button" onClick={() => { const data = { title: `@${activeHost?.name || activeHost?.username || "Host"} Guest Room`, text: "Join this Pardais Party Guest Room!", url: window.location.href }; if (navigator.share) navigator.share(data).catch(() => {}); else navigator.clipboard?.writeText(window.location.href); }} className="w-10 h-10 rounded-xl bg-cyan-500/15 border border-cyan-400/30 text-cyan-300 flex items-center justify-center active:scale-90" title="Share Guest Room"><Share2 className="w-5 h-5" /></button>
+                              {/* LOWER NAVIGATION: Guest-only controls. Host/moderator controls are intentionally excluded. */}
+                              <div className="w-full shrink-0 border-t border-white/5 bg-black/90 px-2 py-1.5 flex items-center justify-center gap-2 safe-area-bottom">
                                 <button type="button" onClick={async () => {
-                                  const emptySeat = viewerLiveGuestSeats.find(s => s.name === null);
-                                  if (!emptySeat || !activeHost?.id || !user?.username) { alert("❌ No guest seat is available right now."); return; }
-                                  if (viewerRequestStatus === "pending") return;
-                                  try {
-                                    const res = await fetch(`/api/v1/hosts/${activeHost.id}/guest-requests`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username: user.username, avatar: user.avatar, seatId: emptySeat.id, vipLevel: user.vipLevel || 0, level: user.userLevel || 1 }) });
-                                    if (!res.ok) throw new Error("Request failed");
-                                    setViewerRequestStatus("pending");
-                                    triggerJoinNotif(user.username, user.userLevel || user.level || 1, user.vipLevel || 0);
-                                  } catch { alert("❌ Could not send guest request. Please try again."); }
-                                }} className="relative w-10 h-10 rounded-xl bg-purple-600/20 border border-purple-400/40 text-purple-200 flex items-center justify-center active:scale-90" title="Guest Join Requests">
-                                  <UserCheck className="w-5 h-5" />
-                                  {viewerRequestStatus === "pending" && <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-600 text-white rounded-full text-[7px] font-black flex items-center justify-center">1</span>}
+                                  const nextMuted = !currentViewerGuestMuted;
+                                  setViewerLiveGuestSeats(prev => prev.map(s => {
+                                    if (s.name && String(s.name).toLowerCase() === String(user.username || "").toLowerCase()) return { ...s, isMuted: nextMuted };
+                                    return s;
+                                  }));
+                                  const hostId = activeHost?.id;
+                                  if (hostId && currentViewerGuestSeat?.id) {
+                                    fetch(`/api/v1/hosts/${encodeURIComponent(hostId)}/guest-seats/control`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ seatId: currentViewerGuestSeat.id, action: nextMuted ? "mic_mute" : "mic_unmute" }) }).catch(() => {});
+                                  }
+                                }} className={`w-12 h-11 rounded-xl border flex items-center justify-center active:scale-90 ${currentViewerGuestMuted ? "bg-red-600/25 border-red-400/50 text-red-300" : "bg-emerald-600/20 border-emerald-400/40 text-emerald-300"}`} title={currentViewerGuestMuted ? "Unmute microphone" : "Mute microphone"}>
+                                  {currentViewerGuestMuted ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
                                 </button>
+                                <button type="button" onClick={async () => {
+                                  const current = currentViewerGuestSeat;
+                                  if (!current) return;
+                                  const nextCamMuted = !current.isCamMuted;
+                                  setViewerLiveGuestSeats(prev => prev.map(s => {
+                                    if (s.name && String(s.name).toLowerCase() === String(user.username || "").toLowerCase()) return { ...s, isCamMuted: nextCamMuted, canUseCamera: true };
+                                    return s;
+                                  }));
+                                  if (activeHost?.id && current.id) {
+                                    fetch(`/api/v1/hosts/${encodeURIComponent(activeHost.id)}/guest-seats/control`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ seatId: current.id, action: nextCamMuted ? "camera_off" : "camera_on" }) }).catch(() => {});
+                                  }
+                                }} className={`w-12 h-11 rounded-xl border flex items-center justify-center active:scale-90 ${currentViewerGuestSeat && !currentViewerGuestSeat.isCamMuted ? "bg-pink-600/20 border-pink-400/40 text-pink-300" : "bg-white/5 border-white/10 text-gray-300"}`} title={currentViewerGuestSeat && !currentViewerGuestSeat.isCamMuted ? "Turn camera off" : "Turn camera on"}>
+                                  {currentViewerGuestSeat && !currentViewerGuestSeat.isCamMuted ? <Camera className="w-5 h-5" /> : <CameraOff className="w-5 h-5" />}
+                                </button>
+                                <button type="button" onClick={() => { const data = { title: `@${activeHost?.name || activeHost?.username || "Host"} Guest Room`, text: "Join this Pardais Party Guest Room!", url: window.location.href }; if (navigator.share) navigator.share(data).catch(() => {}); else navigator.clipboard?.writeText(window.location.href); }} className="w-12 h-11 rounded-xl bg-cyan-500/15 border border-cyan-400/30 text-cyan-300 flex items-center justify-center active:scale-90" title="Share Guest Room"><Share2 className="w-5 h-5" /></button>
+                                <button type="button" onClick={() => setViewerGiftDrawerOpen(true)} className="w-12 h-11 rounded-xl bg-gradient-to-r from-pink-600 to-purple-600 border border-pink-400/40 text-white flex items-center justify-center active:scale-90" title="Gift Store"><GiftIcon className="w-5 h-5 text-yellow-300" /></button>
                               </div>
                             </div>
 
@@ -13532,7 +13473,7 @@ export default function App() {
                                 (user.name && s.name.toLowerCase() === user.name.toLowerCase())
                               ));
 
-                              const viewerGuestSeatObj = viewerLiveGuestSeats.find(s => s.name && (
+                              const currentViewerGuestSeat = viewerLiveGuestSeats.find(s => s.name && (
                                 s.name === user.username ||
                                 s.name === "You (Guest)" ||
                                 (user.username && s.name.toLowerCase() === user.username.toLowerCase()) ||
@@ -13551,8 +13492,8 @@ export default function App() {
                                 (user.name && s.name.toLowerCase() === user.name.toLowerCase())
                               ));
 
-                              const isViewerOnGuestSeat = isSeatedInViewerGuestSeats || isSeatedInAudioSeats;
-                              const isViewerGuestSeatMuted = viewerGuestSeatObj ? viewerGuestSeatObj.isMuted : (audioSeatObj ? audioSeatObj.isMuted : false);
+                              const currentViewerIsGuest = isSeatedInViewerGuestSeats || isSeatedInAudioSeats;
+                              const currentViewerGuestMuted = currentViewerGuestSeat ? currentViewerGuestSeat.isMuted : (audioSeatObj ? audioSeatObj.isMuted : false);
 
                               return (
                                 <div
@@ -13570,12 +13511,16 @@ export default function App() {
                                       return activeHost.channelName || (activeHost.uniqueId ? `room_${activeHost.uniqueId}` : (activeHost.username ? `room_${activeHost.username}` : (activeHost.hostUsername ? `room_${activeHost.hostUsername}` : (activeHost.id ? `room_${activeHost.id.replace(/^h-/, '')}` : `room_${activeHost.name}`))));
                                     })()
                                   }
-                                  role={isViewerOnGuestSeat ? "publisher" : "subscriber"}
+                                  role={currentViewerIsGuest ? "publisher" : "subscriber"}
                                   userId={user.username || user.uniqueId || "viewer_101"}
-                                  publishCameraTrack={isViewerOnGuestSeat && Boolean(viewerGuestSeatObj?.canUseCamera) && !Boolean(viewerGuestSeatObj?.isCamMuted)}
-                                  publishMicrophoneTrack={isViewerOnGuestSeat && !isViewerGuestSeatMuted}
-                                  muted={isViewerOnGuestSeat ? isViewerGuestSeatMuted : false}
-                                  videoMuted={activeHost.category === "audio" || activeHost.cameraEnabled === false || activeHost.isCamOff === true || activeHost.cameraMuted === true}
+                                  publishCameraTrack={currentViewerIsGuest && Boolean(currentViewerGuestSeat?.canUseCamera) && !Boolean(currentViewerGuestSeat?.isCamMuted)}
+                                  localVideoMountRef={currentViewerIsGuest ? viewerGuestLocalVideoMountRef : undefined}
+                                  renderRemoteVideoWhenPublisher={currentViewerIsGuest}
+                                  publishMicrophoneTrack={currentViewerIsGuest && !currentViewerGuestMuted}
+                                  muted={currentViewerIsGuest ? currentViewerGuestMuted : false}
+                                  videoMuted={currentViewerIsGuest
+                                    ? Boolean(currentViewerGuestSeat?.isCamMuted)
+                                    : (activeHost.category === "audio" || activeHost.cameraEnabled === false || activeHost.isCamOff === true || activeHost.cameraMuted === true)}
                                   hostAvatar={activeHost.avatar || activeHost.hostAvatar || liveBroadcasterAvatar}
                                   hostName={activeHost.name || activeHost.hostUsername || liveBroadcasterName}
                                   vipLevel={Number(activeHost.vipLevel || 0)}
@@ -19363,7 +19308,7 @@ export default function App() {
                                             {/* Host Diamond Score Overlay */}
                                             <div className="absolute top-2.5 left-2.5 bg-yellow-500/80 backdrop-blur-sm text-black px-2 py-0.5 rounded-full text-[7.5px] font-black flex items-center space-x-1 shadow z-10">
                                               <span>💎</span>
-                                              <span>145.8K</span>
+                                              <span>{userLiveCoinsEarned >= 1000 ? `${(userLiveCoinsEarned / 1000).toFixed(1)}K` : userLiveCoinsEarned}</span>
                                             </div>
                                           </div>
                                         );
@@ -19383,8 +19328,9 @@ export default function App() {
                                           excludeRemoteUid={userLiveHostAgoraUid}
                                           remoteVideoLayout="grid"
                                           hostAvatar={user.avatar || DEFAULT_USER.avatar}
-                                          hostName="Guest Video Monitor"
+                                          hostName=""
                                           showCoverPhoto={false}
+                                          suppressStatusOverlay={true}
                                         />
                                       </div>
                                     )}
@@ -19691,8 +19637,9 @@ export default function App() {
                                   <div className="flex items-center space-x-1.5">
                                     {/* Top contributors */}
                                     <div className="flex items-center -space-x-1 shrink-0">
-                                      <img src="https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=50&q=80" className="w-5.5 h-5.5 rounded-full border border-white/10 object-cover" />
-                                      <img src="https://images.unsplash.com/photo-1570295999919-56ceb5ecca61?auto=format&fit=crop&w=50&q=80" className="w-5.5 h-5.5 rounded-full border border-white/10 object-cover" />
+                                      {liveRoomTopGifters.slice(0, 3).map((viewer, idx) => (
+                                        <img key={viewer.id || idx} src={viewer.avatar || DEFAULT_USER.avatar} className="w-5.5 h-5.5 rounded-full border border-white/10 object-cover" alt={viewer.username || "viewer"} />
+                                      ))}
                                     </div>
                                     {/* Viewers count */}
                                     <div className="bg-black/45 px-1.5 py-0.5 rounded border border-white/5 text-[7.5px] text-white font-mono font-black flex items-center space-x-0.5">
@@ -21687,10 +21634,7 @@ export default function App() {
                                 <div className="space-y-2.5 text-[9px] bg-transparent">
                                   <p className="text-gray-400 font-medium">Currently requesting viewers to join audio/video slots:</p>
                                   <div className="space-y-2 bg-transparent">
-                                    {[
-                                      { username: "Zain_Fan_99", avatar: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=50&q=80", type: "Audio seat" },
-                                      { username: "Alina_Malik", avatar: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=50&q=80", type: "Video seat" }
-                                    ].map((req, idx) => (
+                                    {userLiveGuestRequests.map((req) => (
                                       <div key={idx} className="flex justify-between items-center bg-white/5 p-2 rounded-lg border border-white/5">
                                         <div className="flex items-center space-x-1.5 bg-transparent">
                                           <img src={req.avatar || DEFAULT_USER.avatar} className="w-5 h-5 rounded-full object-cover shrink-0" />
@@ -21702,8 +21646,16 @@ export default function App() {
                                         <div className="flex space-x-1 bg-transparent">
                                           <button
                                             onClick={() => {
+                                              const hostId = `h-${user.uniqueId || user.username}`;
+                                              const emptySeatIdx = userLiveGuestSeats.findIndex(s => s.name === null);
+                                              if (emptySeatIdx === -1) { alert("All guest seats are full."); return; }
+                                              const targetSeatId = userLiveGuestSeats[emptySeatIdx].id;
+                                              fetch(`/api/v1/hosts/${encodeURIComponent(hostId)}/guest-requests/${encodeURIComponent(req.id)}/respond`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "accept", seatId: targetSeatId }) })
+                                                .then(r => r.json())
+                                                .then(d => { if (Array.isArray(d.guestSeats)) setUserLiveGuestSeats(d.guestSeats); })
+                                                .catch(() => {});
+                                              setUserLiveGuestRequests(prev => prev.filter(r => r.id !== req.id));
                                               setUserLiveShowJoinRequestModal(false);
-                                              alert(`Accepted ${req.username}'s seat request! They will join co-hosting in 3 seconds.`);
                                             }}
                                             className="bg-green-600 hover:bg-green-500 text-white text-[7.5px] px-2 py-1 rounded font-bold"
                                           >
@@ -21711,7 +21663,9 @@ export default function App() {
                                           </button>
                                           <button
                                             onClick={() => {
-                                              alert(`Declined ${req.username}'s request.`);
+                                              const hostId = `h-${user.uniqueId || user.username}`;
+                                              fetch(`/api/v1/hosts/${encodeURIComponent(hostId)}/guest-requests/${encodeURIComponent(req.id)}/respond`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "reject" }) }).catch(() => {});
+                                              setUserLiveGuestRequests(prev => prev.filter(r => r.id !== req.id));
                                             }}
                                             className="bg-red-600 hover:bg-red-500 text-white text-[7.5px] px-2 py-1 rounded font-bold"
                                           >
@@ -21766,7 +21720,7 @@ export default function App() {
                                                 name: req.username,
                                                 avatar: req.avatar,
                                                 vipLevel: req.vipLevel || 0,
-                                                diamonds: "10.0K",
+                                                diamonds: "0",
                                                 isMuted: false,
                                                 isCamMuted: false,
                                                 canUseCamera: true,

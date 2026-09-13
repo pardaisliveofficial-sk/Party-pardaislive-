@@ -4391,7 +4391,7 @@ app.post("/api/v1/hosts/:id/guest-requests/:reqId/respond", (req, res) => {
     if (Array.isArray(host.guestRequests)) {
       const match = host.guestRequests.find((r: any) => r.id === reqId || r.username === reqId);
       if (match && action === "accept") {
-        const targetSeatId = seatId || match.seatId || 1;
+        const targetSeatId = Number(seatId || match.seatId || 1);
         if (!Array.isArray(host.guestSeats)) {
           host.guestSeats = [1, 2, 3, 4, 5, 6, 7, 8].map(sId => ({
             id: sId, name: null, avatar: null, diamonds: null, isMuted: false, isCamMuted: true, canUseCamera: false, isBigFrame: false
@@ -4549,6 +4549,10 @@ app.post("/api/v1/hosts/:id/invites/:username/respond", (req, res) => {
             isSystem: true,
             timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
           });
+        }
+        // Both reject/decline simply consume the invitation and leave the viewer as audience.
+        if (action !== "accept" && action !== "reject" && action !== "decline") {
+          return res.status(400).json({ error: "Unknown invite response action" });
         }
         host.pendingInvites = host.pendingInvites.filter((i: any) => String(i.targetUsername).toLowerCase() !== String(username).toLowerCase());
       }
