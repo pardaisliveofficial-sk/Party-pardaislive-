@@ -4377,7 +4377,7 @@ app.get("/api/v1/hosts/:id/guest-requests", (req, res) => {
   const index = findHostIndex(id);
   if (index !== -1) {
     const host = dbData.hosts[index];
-    return res.json({ guestRequests: host.guestRequests || [], guestSeats: host.guestSeats || [] });
+    return res.json({ guestRequests: host.guestRequests || [], guestSeats: host.guestSeats || [], guestSeatCapacity: Number(host.guestSeatCapacity || ((host.guestSeats || []).length >= 15 ? 16 : 8)) });
   }
   res.status(404).json({ error: "Host not found" });
 });
@@ -4447,17 +4447,18 @@ app.put("/api/v1/hosts/:id/guest-seats/control", (req, res) => {
 
 app.put("/api/v1/hosts/:id/guest-seats", (req, res) => {
   const { id } = req.params;
-  const { guestSeats } = req.body || {};
+  const { guestSeats, guestSeatCapacity } = req.body || {};
   const index = findHostIndex(id);
   if (index !== -1) {
     const host = dbData.hosts[index];
     if (Array.isArray(guestSeats)) {
       host.guestSeats = guestSeats;
+      host.guestSeatCapacity = Number(guestSeatCapacity) === 16 ? 16 : 8;
       host.guestModeActive = true;
     }
     saveDatabase();
     syncDocument("hosts", host.id, host);
-    res.json({ success: true, guestSeats: host.guestSeats });
+    res.json({ success: true, guestSeats: host.guestSeats, guestSeatCapacity: Number(host.guestSeatCapacity || ((host.guestSeats || []).length >= 15 ? 16 : 8)) });
   } else {
     res.status(404).json({ error: "Host not found" });
   }

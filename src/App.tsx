@@ -2669,7 +2669,8 @@ export default function App() {
   const [userLiveGuestSeatCapacity, setUserLiveGuestSeatCapacity] = useState<8 | 16>(8);
   const [showGuestSeatModePicker, setShowGuestSeatModePicker] = useState<boolean>(false);
   const hostGuestVideoMountRef = useRef<HTMLDivElement | null>(null);
-  const createGuestSeats = (count: 8 | 16) => Array.from({ length: count }, (_, i) => ({
+  // 16-person room = Host + 15 Guest seats (5×3). The 8-person room remains 8 Guest seats (2×4).
+  const createGuestSeats = (count: 8 | 16) => Array.from({ length: count === 16 ? 15 : 8 }, (_, i) => ({
     id: i + 1, name: null, avatar: null, diamonds: null, isMuted: false, isCamMuted: false, isBigFrame: false
   }));
   const [userLiveGuestSeats, setUserLiveGuestSeats] = useState<Array<{
@@ -4686,7 +4687,9 @@ export default function App() {
         }
         if (Array.isArray(data.guestSeats)) {
           setUserLiveGuestSeats(data.guestSeats);
-          setUserLiveGuestSeatCapacity(data.guestSeats.length >= 16 ? 16 : 8);
+          // A 16-person room is Host + 15 Guest seats (5×3). Prefer the persisted capacity;
+          // fall back to the 15-seat guest array shape when older records do not have it.
+          setUserLiveGuestSeatCapacity((Number(data.guestSeatCapacity) === 16 || data.guestSeats.length >= 15) ? 16 : 8);
         }
       } catch {}
     };
@@ -19147,9 +19150,21 @@ export default function App() {
                                 )}
 
                                 {/* UPPER 60%: GUEST ROOMS GRID AND HOST SEAT */}
-                                <div className="h-[60%] w-full flex p-2 gap-2 bg-black/10 shrink-0 relative">
-                                  {/* LEFT: MAIN HOST OR PINNED GUEST SCREEN (50% Width) */}
-                                  <div className="w-1/2 h-full rounded-2xl overflow-hidden relative border border-pink-500/30 bg-[#0e0c15] shadow-lg flex items-center justify-center">
+                                <div className={`h-[60%] w-full p-2 gap-2 bg-black/10 shrink-0 relative ${userLiveGuestSeatCapacity === 16 ? "flex flex-col" : "flex"}`}>
+                                  {/* HOST / PINNED GUEST SCREEN — 8-seat layout stays unchanged; 16-person room uses Host on top. */}
+                                  <div className={`${userLiveGuestSeatCapacity === 16 ? "w-full h-[34%] shrink-0" : "w-1/2 h-full"} rounded-2xl overflow-hidden relative border border-pink-500/30 bg-[#0e0c15] shadow-lg flex items-center justify-center`}>
+                                    {userLiveGuestSeatCapacity === 16 && (
+                                      <div className="absolute inset-x-1 top-1/2 -translate-y-1/2 pointer-events-none z-[1] flex items-center justify-between opacity-70">
+                                        <svg viewBox="0 0 120 80" className="w-20 h-14 sm:w-28 sm:h-16 text-amber-300 drop-shadow-[0_0_12px_rgba(250,204,21,0.55)]" aria-hidden="true">
+                                          <path d="M112 12C83 10 55 22 18 8c13 16 24 27 44 31-17 2-32 9-49 25 29-5 49-11 64-24 12-10 21-18 35-28z" fill="currentColor" opacity=".9"/>
+                                          <path d="M100 22C76 22 54 31 31 20c10 11 21 19 37 22-12 2-22 7-34 16 20-4 35-8 47-18 8-6 13-11 19-18z" fill="#7c2d12" opacity=".28"/>
+                                        </svg>
+                                        <svg viewBox="0 0 120 80" className="w-20 h-14 sm:w-28 sm:h-16 text-amber-300 scale-x-[-1] drop-shadow-[0_0_12px_rgba(250,204,21,0.55)]" aria-hidden="true">
+                                          <path d="M112 12C83 10 55 22 18 8c13 16 24 27 44 31-17 2-32 9-49 25 29-5 49-11 64-24 12-10 21-18 35-28z" fill="currentColor" opacity=".9"/>
+                                          <path d="M100 22C76 22 54 31 31 20c10 11 21 19 37 22-12 2-22 7-34 16 20-4 35-8 47-18 8-6 13-11 19-18z" fill="#7c2d12" opacity=".28"/>
+                                        </svg>
+                                      </div>
+                                    )}
                                     {(() => {
                                       const pinnedGuest = userLiveGuestSeats.find(s => s.name !== null && s.isBigFrame);
                                       if (pinnedGuest) {
@@ -19304,8 +19319,8 @@ export default function App() {
                                     })()}
                                   </div>
 
-                                  {/* RIGHT: 8 GUEST SEATS GRID (50% Width) */}
-                                  <div className="w-1/2 h-full relative">
+                                  {/* GUEST SEATS — 8-seat layout stays 2×4; 16-person room = 15 guest seats in 5×3. */}
+                                  <div className={`${userLiveGuestSeatCapacity === 16 ? "w-full h-[66%]" : "w-1/2 h-full"} relative`}>
                                     {userLiveGuestSeats.some(s => s.name && s.canUseCamera && !s.isCamMuted) && (
                                       <div className="absolute inset-0 z-5 pointer-events-none overflow-hidden rounded-xl">
                                         <AgoraStream
@@ -19322,8 +19337,8 @@ export default function App() {
                                         />
                                       </div>
                                     )}
-                                    <div className={`relative z-10 w-full h-full grid gap-1.5 ${userLiveGuestSeatCapacity === 16 ? "grid-cols-4 grid-rows-4" : "grid-cols-2 grid-rows-4"}`}>
-                                    {userLiveGuestSeats.slice(0, userLiveGuestSeatCapacity).map(seat => (
+                                    <div className={`relative z-10 w-full h-full grid ${userLiveGuestSeatCapacity === 16 ? "grid-cols-5 grid-rows-3 gap-1.5" : "grid-cols-2 grid-rows-4 gap-1.5"}`}>
+                                    {userLiveGuestSeats.slice(0, userLiveGuestSeatCapacity === 16 ? 15 : 8).map(seat => (
                                       <div
                                         key={seat.id}
                                         onClick={() => {
