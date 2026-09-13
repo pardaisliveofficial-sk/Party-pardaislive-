@@ -12862,7 +12862,7 @@ export default function App() {
                                       <div className="flex flex-col items-center justify-center h-full w-full p-1 group cursor-pointer select-none">
                                         <div className="relative flex items-center justify-center w-full h-full min-h-[74px]">
                                           <div className="absolute inset-1 rounded-2xl bg-gradient-to-b from-[#261044]/70 via-[#0c0817]/80 to-black/90 border border-yellow-500/20 shadow-[0_0_18px_rgba(168,85,247,0.18)] group-hover:border-yellow-400/50 group-hover:shadow-[0_0_22px_rgba(250,204,21,0.22)] transition-all" />
-                                          <img src="/assets/royal-guest-throne.svg" alt="Royal guest throne" className="relative z-10 w-[82%] h-[82%] object-contain drop-shadow-[0_0_12px_rgba(250,204,21,0.28)] group-hover:scale-105 transition-transform" />
+                                          <img src="/assets/royal-throne-reference.png" alt="Royal guest throne" className="relative z-10 w-[82%] h-[82%] object-contain drop-shadow-[0_0_12px_rgba(250,204,21,0.28)] group-hover:scale-105 transition-transform" />
                                           {/* Plus sign badge */}
                                           <div className="absolute -bottom-1 -right-1 w-3.5 h-3.5 rounded-full bg-gradient-to-tr from-pink-500 to-purple-600 text-white flex items-center justify-center text-[9px] font-bold shadow-md group-hover:scale-110 transition-transform border border-black">
                                             +
@@ -12924,13 +12924,13 @@ export default function App() {
                               </form>
 
                               {/* LOWER NAVIGATION: Mic / Camera / Rotate / Music / Gift / Share / Requests */}
-                              <div className="w-full shrink-0 border-t border-white/5 bg-black/90 px-2 py-1.5 flex items-center justify-between gap-1.5 safe-area-bottom">
+                              <div className="w-full shrink-0 border-t border-white/5 bg-black/90 px-2 py-1.5 grid grid-cols-7 gap-1 safe-area-bottom">
                                 <button type="button" onClick={() => {
                                   setViewerLiveGuestSeats(prev => prev.map(s => {
                                     if (s.name && String(s.name).toLowerCase() === String(user.username || "").toLowerCase()) return { ...s, isMuted: !s.isMuted };
                                     return s;
                                   }));
-                                }} className="w-10 h-10 rounded-xl bg-emerald-600/20 border border-emerald-400/40 text-emerald-300 flex items-center justify-center active:scale-90" title="Guest microphone">
+                                }} className="w-full min-w-0 h-10 rounded-xl bg-emerald-600/20 border border-emerald-400/40 text-emerald-300 flex items-center justify-center active:scale-90" title="Guest microphone">
                                   {viewerLiveGuestSeats.some(s => s.name && String(s.name).toLowerCase() === String(user.username || "").toLowerCase() && !s.isMuted) ? <Mic className="w-5 h-5" /> : <MicOff className="w-5 h-5" />}
                                 </button>
                                 <button type="button" onClick={() => {
@@ -12938,10 +12938,10 @@ export default function App() {
                                     if (s.name && String(s.name).toLowerCase() === String(user.username || "").toLowerCase()) return { ...s, isCamMuted: !s.isCamMuted, canUseCamera: true };
                                     return s;
                                   }));
-                                }} className="w-10 h-10 rounded-xl bg-pink-600/20 border border-pink-400/40 text-pink-300 flex items-center justify-center active:scale-90" title="Guest camera">
+                                }} className="w-full min-w-0 h-10 rounded-xl bg-pink-600/20 border border-pink-400/40 text-pink-300 flex items-center justify-center active:scale-90" title="Guest camera">
                                   {viewerLiveGuestSeats.some(s => s.name && String(s.name).toLowerCase() === String(user.username || "").toLowerCase() && !s.isCamMuted) ? <Camera className="w-5 h-5" /> : <CameraOff className="w-5 h-5" />}
                                 </button>
-                                <button type="button" onClick={() => setCameraFacingMode(prev => prev === "user" ? "environment" : "user")} className="w-10 h-10 rounded-xl bg-white/5 border border-white/10 text-cyan-300 flex items-center justify-center active:scale-90" title="Rotate camera"><RotateCw className="w-5 h-5" /></button>
+                                <button type="button" onClick={() => setCameraFacingMode(prev => prev === "user" ? "environment" : "user")} className="w-full min-w-0 h-10 rounded-xl bg-white/5 border border-white/10 text-cyan-300 flex items-center justify-center active:scale-90" title="Rotate camera"><RotateCw className="w-5 h-5" /></button>
                                 <button type="button" onClick={() => openUserLiveMusicModal()} className={`w-10 h-10 rounded-xl border flex items-center justify-center active:scale-90 ${partyMusicPlaying ? "bg-amber-500 text-black border-amber-300" : "bg-amber-500/15 border-amber-400/30 text-amber-300"}`} title="Music Player"><Music className="w-5 h-5" /></button>
                                 <button type="button" onClick={() => setViewerGiftDrawerOpen(true)} className="w-10 h-10 rounded-xl bg-gradient-to-r from-pink-600 to-purple-600 border border-pink-400/40 text-white flex items-center justify-center active:scale-90" title="Gift Store"><GiftIcon className="w-5 h-5 text-yellow-300" /></button>
                                 <button type="button" onClick={() => { const data = { title: `@${activeHost?.name || activeHost?.username || "Host"} Guest Room`, text: "Join this Pardais Party Guest Room!", url: window.location.href }; if (navigator.share) navigator.share(data).catch(() => {}); else navigator.clipboard?.writeText(window.location.href); }} className="w-10 h-10 rounded-xl bg-cyan-500/15 border border-cyan-400/30 text-cyan-300 flex items-center justify-center active:scale-90" title="Share Guest Room"><Share2 className="w-5 h-5" /></button>
@@ -19076,7 +19076,9 @@ export default function App() {
                                     coHostName={userLiveCoHost?.username}
                                     coHostVideoMuted={userLiveCoHost?.isCamOff}
                                     onPublishSuccess={handleHostPublishSuccess}
-                                    localVideoMountRef={hostGuestVideoMountRef}
+                                    // Only mount the external video target while the Guest Room overlay is visible.
+                                    // In Solo Live AgoraStream renders its own full-screen local video target.
+                                    localVideoMountRef={userLiveGuestModeActive ? hostGuestVideoMountRef : undefined}
                                   />
                                   </div>
                                 </div>
@@ -19520,7 +19522,7 @@ export default function App() {
                                           <div className="flex flex-col items-center justify-center h-full w-full p-1 group cursor-pointer select-none">
                                             <div className="relative flex items-center justify-center w-full h-full min-h-[74px]">
                                               <div className="absolute inset-1 rounded-2xl bg-gradient-to-b from-[#261044]/70 via-[#0c0817]/80 to-black/90 border border-yellow-500/20 shadow-[0_0_18px_rgba(168,85,247,0.18)] group-hover:border-yellow-400/50 group-hover:shadow-[0_0_22px_rgba(250,204,21,0.22)] transition-all" />
-                                              <img src="/assets/royal-guest-throne.svg" alt="Royal guest throne" className="relative z-10 w-[82%] h-[82%] object-contain drop-shadow-[0_0_12px_rgba(250,204,21,0.28)] group-hover:scale-105 transition-transform" />
+                                              <img src="/assets/royal-throne-reference.png" alt="Royal guest throne" className="relative z-10 w-[82%] h-[82%] object-contain drop-shadow-[0_0_12px_rgba(250,204,21,0.28)] group-hover:scale-105 transition-transform" />
                                               {/* Plus sign badge */}
                                               <div className="absolute -bottom-1 -right-1 w-3.5 h-3.5 rounded-full bg-gradient-to-tr from-pink-500 to-purple-600 text-white flex items-center justify-center text-[9px] font-bold shadow-md group-hover:scale-110 transition-transform border border-black">
                                                 +
@@ -19537,79 +19539,12 @@ export default function App() {
                                   </div>
                                 </div>
 
-                                {/* LOWER 40%: COMMENTS & CONTROLS */}
-                                <div className="h-[40%] w-full flex bg-[#0c0a12] border-t border-white/5 relative z-10">
-                                  {/* CHAT COMMENTS FEED (60% Width) */}
-                                  <div className="w-[60%] h-full flex flex-col p-2.5 justify-between">
-                                    {/* Scrolling Comments Box */}
-                                    <div className="flex-1 overflow-y-auto space-y-1.5 pr-1 max-h-[140px] flex flex-col justify-end">
-                                      {userLiveMessages.map(msg => (
-                                        <div key={msg.id} className="bg-black/35 p-1 rounded-lg text-[9px] text-gray-200">
-                                          <div className="flex items-center space-x-1">
-                                            {msg.vipLevel > 0 && (
-                                              <span className="text-[6px] bg-yellow-400 text-black px-0.5 rounded font-black font-mono">VIP</span>
-                                            )}
-                                            <span 
-                                              onClick={() => {
-                                                const targetLvl = msg.userLevel || getHostLevelFromName(msg.username);
-                                                setViewerMenuUser({
-                                                  username: msg.username,
-                                                  userLevel: targetLvl,
-                                                  vipLevel: msg.vipLevel || getVipLevelFromUserLevel(targetLvl)
-                                                });
-                                              }}
-                                              className="font-black text-[#66fcf1] hover:text-[#45a29e] hover:underline cursor-pointer transition-colors"
-                                              title="Tap for host controls"
-                                            >
-                                              {msg.username}
-                                            </span>
-                                          </div>
-                                          <p className="text-gray-300 text-[8.5px] font-medium leading-tight mt-0.5">{msg.message}</p>
-                                        </div>
-                                      ))}
-                                    </div>
-
-                                    {/* Message input bar */}
-                                    <form
-                                      onSubmit={(e) => {
-                                        e.preventDefault();
-                                        if (!chatInput.trim()) return;
-                                        setUserLiveMessages(prev => [
-                                          ...prev,
-                                          {
-                                            id: "ul-msg-" + Date.now(),
-                                            username: "You (Host)",
-                                            message: chatInput,
-                                            vipLevel: user.vipLevel,
-                                            userLevel: user.userLevel,
-                                            isSystem: false,
-                                            isFlagged: false,
-                                            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-                                          }
-                                        ]);
-                                        setChatInput("");
-                                      }}
-                                      className="flex items-center space-x-1.5 mt-1 bg-white/5 rounded-full px-2 py-0.5 border border-white/5"
-                                    >
-                                      <input
-                                        type="text"
-                                        placeholder="Comment..."
-                                        value={chatInput}
-                                        onChange={(e) => setChatInput(e.target.value)}
-                                        className="bg-transparent text-[8.5px] text-white flex-1 outline-none h-6 placeholder-gray-500"
-                                      />
-                                      <button type="submit" className="text-purple-400 hover:text-purple-300">
-                                        <Send className="w-3 h-3" />
-                                      </button>
-                                    </form>
-                                  </div>
-
                                   {/* LOWER AREA: FULL-WIDTH COMMENTS + LOWER NAVIGATION */}
                                 <div className="h-[40%] w-full flex flex-col bg-[#0c0a12] border-t border-white/5 relative z-10 min-h-0">
                                   {/* FULL-WIDTH CHAT */}
                                   <div className="flex-1 min-h-0 flex flex-col px-3 pt-2 pb-1">
                                     <div className="flex-1 min-h-0 overflow-y-auto space-y-1.5 pr-1 flex flex-col justify-end">
-                                      {userLiveMessages.slice(-15).map(msg => (
+                                      {userLiveMessages.map(msg => (
                                         <div key={msg.id} className="bg-black/35 p-1 rounded-lg text-[9px] text-gray-200">
                                           <div className="flex items-center space-x-1">
                                             {msg.vipLevel > 0 && <span className="text-[6px] bg-yellow-400 text-black px-0.5 rounded font-black font-mono">VIP</span>}
@@ -19626,14 +19561,14 @@ export default function App() {
                                   </div>
 
                                   {/* LOWER NAVIGATION — controls are actual handlers, comment stays full width above */}
-                                  <div className="w-full shrink-0 border-t border-white/5 bg-black/90 px-2 py-1.5 flex items-center justify-between gap-1.5 safe-area-bottom">
+                                  <div className="w-full shrink-0 border-t border-white/5 bg-black/90 px-2 py-1.5 grid grid-cols-7 gap-1 safe-area-bottom">
                                     <button type="button" onClick={() => setUserLiveMic(v => !v)} className={`w-10 h-10 rounded-xl border flex items-center justify-center transition-all active:scale-90 ${userLiveMic ? "bg-emerald-600/30 border-emerald-400/60 text-emerald-300" : "bg-red-600/30 border-red-400/60 text-red-300"}`} title={userLiveMic ? "Mute microphone" : "Unmute microphone"}>
                                       {userLiveMic ? <Mic className="w-5 h-5" /> : <MicOff className="w-5 h-5" />}
                                     </button>
                                     <button type="button" onClick={() => setUserLiveCam(v => !v)} className={`w-10 h-10 rounded-xl border flex items-center justify-center transition-all active:scale-90 ${userLiveCam ? "bg-pink-600/30 border-pink-400/60 text-pink-300" : "bg-white/5 border-white/10 text-gray-300"}`} title={userLiveCam ? "Turn camera off" : "Turn camera on"}>
                                       {userLiveCam ? <Camera className="w-5 h-5" /> : <CameraOff className="w-5 h-5" />}
                                     </button>
-                                    <button type="button" onClick={() => setCameraFacingMode(prev => prev === "user" ? "environment" : "user")} className="w-10 h-10 rounded-xl bg-white/5 border border-white/10 text-cyan-300 flex items-center justify-center transition-all active:scale-90" title="Rotate camera">
+                                    <button type="button" onClick={() => setCameraFacingMode(prev => prev === "user" ? "environment" : "user")} className="w-full min-w-0 h-10 rounded-xl bg-white/5 border border-white/10 text-cyan-300 flex items-center justify-center transition-all active:scale-90" title="Rotate camera">
                                       <RotateCw className="w-5 h-5" />
                                     </button>
                                     <button type="button" onClick={() => setUserLiveShowMusicModal(true)} className={`w-10 h-10 rounded-xl border flex items-center justify-center transition-all active:scale-90 ${partyMusicPlaying ? "bg-amber-500 text-black border-amber-300" : "bg-amber-500/15 border-amber-400/30 text-amber-300"}`} title="Music Player">

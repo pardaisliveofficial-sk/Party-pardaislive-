@@ -305,9 +305,20 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
           await track.setEnabled(false);
         }
         requestAnimationFrame(() => {
-          const target = localVideoMountRef?.current || localVideoContainerRef.current;
-          if (target && track) {
-            try { track.play(target, { fit: "cover", mirror: facingMode === "user" }); } catch (e) {}
+          const playToTarget = () => {
+            const target = localVideoMountRef?.current || localVideoContainerRef.current;
+            if (target && track) {
+              try { track.play(target, { fit: "cover", mirror: facingMode === "user" }); } catch (e) {}
+              return true;
+            }
+            return false;
+          };
+          if (!playToTarget()) {
+            let attempts = 0;
+            const retry = window.setInterval(() => {
+              attempts += 1;
+              if (playToTarget() || attempts >= 20) window.clearInterval(retry);
+            }, 50);
           }
         });
       } catch (err) {
@@ -334,12 +345,25 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
       console.error("[AGORA VIDEO] Camera toggle failed", err);
     });
     if (publishCameraTrack) {
-      const target = localVideoMountRef?.current || localVideoContainerRef.current;
-      if (target) {
-        try { localVideoTrack.play(target, { fit: "cover", mirror: facingMode === "user" }); } catch (e) {}
+      const playLocalVideo = () => {
+        const target = localVideoMountRef?.current || localVideoContainerRef.current;
+        if (target) {
+          try { localVideoTrack.play(target, { fit: "cover", mirror: facingMode === "user" }); } catch (e) {}
+          return true;
+        }
+        return false;
+      };
+      if (!playLocalVideo()) {
+        // External Guest target can appear one render after Agora connects. Retry briefly.
+        let attempts = 0;
+        const retry = window.setInterval(() => {
+          attempts += 1;
+          if (playLocalVideo() || attempts >= 20) window.clearInterval(retry);
+        }, 50);
+        return () => window.clearInterval(retry);
       }
     }
-  }, [publishCameraTrack, videoMuted, localVideoTrack, facingMode, role]);
+  }, [publishCameraTrack, videoMuted, localVideoTrack, facingMode, role, localVideoMountRef?.current]);
 
   // Render remote live video tracks for viewers.
   useEffect(() => {
