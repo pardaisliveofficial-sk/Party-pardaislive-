@@ -3082,9 +3082,6 @@ export default function App() {
   const [viewerLiveGuestModeActive, setViewerLiveGuestModeActive] = useState<boolean>(false);
   // External mount for the current viewer/guest camera so the same Agora client can render local video inside their seat.
   const viewerGuestLocalVideoMountRef = useRef<HTMLDivElement | null>(null);
-  const currentViewerGuestSeat = viewerLiveGuestSeats.find(s => s.name && String(s.name).toLowerCase() === String(user?.username || "").toLowerCase()) || null;
-  const currentViewerIsGuest = Boolean(currentViewerGuestSeat && viewerLiveGuestModeActive);
-  const currentViewerGuestMuted = Boolean(currentViewerGuestSeat?.isMuted);
   const [viewerRequestStatus, setViewerRequestStatus] = useState<"none" | "pending" | "accepted">("none");
   const [viewerGiftDrawerOpen, setViewerGiftDrawerOpen] = useState<boolean>(false);
   const [viewerLiveGiftRecipient, setViewerLiveGiftRecipient] = useState<string>("Host");
@@ -3109,6 +3106,12 @@ export default function App() {
     { id: 7, name: null, avatar: null, diamonds: null, isMuted: false, isCamMuted: false, isBigFrame: false, isModerator: false },
     { id: 8, name: null, avatar: null, diamonds: null, isMuted: false, isCamMuted: false, isBigFrame: false, isModerator: false }
   ]);
+
+  // Derived guest values must come after viewerLiveGuestSeats initialization.
+  // This prevents the deployed bundle's TDZ crash: "Cannot access 'St' before initialization".
+  const currentViewerGuestSeat = viewerLiveGuestSeats.find(s => s.name && String(s.name).toLowerCase() === String(user?.username || "").toLowerCase()) || null;
+  const currentViewerIsGuest = Boolean(currentViewerGuestSeat && viewerLiveGuestModeActive);
+  const currentViewerGuestMuted = Boolean(currentViewerGuestSeat?.isMuted);
 
   // Live Chat Messages
   const [chatInput, setChatInput] = useState<string>("");
@@ -13473,12 +13476,9 @@ export default function App() {
                                 (user.name && s.name.toLowerCase() === user.name.toLowerCase())
                               ));
 
-                              const currentViewerGuestSeat = viewerLiveGuestSeats.find(s => s.name && (
-                                s.name === user.username ||
-                                s.name === "You (Guest)" ||
-                                (user.username && s.name.toLowerCase() === user.username.toLowerCase()) ||
-                                (user.name && s.name.toLowerCase() === user.name.toLowerCase())
-                              ));
+                              // Use the component-level currentViewerGuestSeat declared above.
+                              // Do not redeclare it here: a shadowing lexical declaration causes a
+                              // Temporal Dead Zone crash in the compiled bundle ("Cannot access 'St' before initialization").
 
                               const isSeatedInAudioSeats = audioSeats.some(s => s.name && (
                                 s.name === user.username ||
@@ -13492,8 +13492,10 @@ export default function App() {
                                 (user.name && s.name.toLowerCase() === user.name.toLowerCase())
                               ));
 
-                              const currentViewerIsGuest = isSeatedInViewerGuestSeats || isSeatedInAudioSeats;
-                              const currentViewerGuestMuted = currentViewerGuestSeat ? currentViewerGuestSeat.isMuted : (audioSeatObj ? audioSeatObj.isMuted : false);
+                              // Preserve the legacy audio-seat participation check without shadowing
+                              // the component-level guest state used by the Agora stream.
+                              const viewerGuestParticipantActive = isSeatedInViewerGuestSeats || isSeatedInAudioSeats;
+                              const viewerGuestParticipantMuted = currentViewerGuestSeat ? currentViewerGuestSeat.isMuted : (audioSeatObj ? audioSeatObj.isMuted : false);
 
                               return (
                                 <div
@@ -13511,14 +13513,14 @@ export default function App() {
                                       return activeHost.channelName || (activeHost.uniqueId ? `room_${activeHost.uniqueId}` : (activeHost.username ? `room_${activeHost.username}` : (activeHost.hostUsername ? `room_${activeHost.hostUsername}` : (activeHost.id ? `room_${activeHost.id.replace(/^h-/, '')}` : `room_${activeHost.name}`))));
                                     })()
                                   }
-                                  role={currentViewerIsGuest ? "publisher" : "subscriber"}
+                                  role={viewerGuestParticipantActive ? "publisher" : "subscriber"}
                                   userId={user.username || user.uniqueId || "viewer_101"}
-                                  publishCameraTrack={currentViewerIsGuest && Boolean(currentViewerGuestSeat?.canUseCamera) && !Boolean(currentViewerGuestSeat?.isCamMuted)}
-                                  localVideoMountRef={currentViewerIsGuest ? viewerGuestLocalVideoMountRef : undefined}
-                                  renderRemoteVideoWhenPublisher={currentViewerIsGuest}
-                                  publishMicrophoneTrack={currentViewerIsGuest && !currentViewerGuestMuted}
-                                  muted={currentViewerIsGuest ? currentViewerGuestMuted : false}
-                                  videoMuted={currentViewerIsGuest
+                                  publishCameraTrack={viewerGuestParticipantActive && Boolean(currentViewerGuestSeat?.canUseCamera) && !Boolean(currentViewerGuestSeat?.isCamMuted)}
+                                  localVideoMountRef={viewerGuestParticipantActive ? viewerGuestLocalVideoMountRef : undefined}
+                                  renderRemoteVideoWhenPublisher={viewerGuestParticipantActive}
+                                  publishMicrophoneTrack={viewerGuestParticipantActive && !viewerGuestParticipantMuted}
+                                  muted={viewerGuestParticipantActive ? viewerGuestParticipantMuted : false}
+                                  videoMuted={viewerGuestParticipantActive
                                     ? Boolean(currentViewerGuestSeat?.isCamMuted)
                                     : (activeHost.category === "audio" || activeHost.cameraEnabled === false || activeHost.isCamOff === true || activeHost.cameraMuted === true)}
                                   hostAvatar={activeHost.avatar || activeHost.hostAvatar || liveBroadcasterAvatar}
