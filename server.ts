@@ -372,13 +372,14 @@ const handleAgoraTokenRequest = (req: any, res: any) => {
 
     if (appId && appCertificate && appCertificate.trim().length > 0) {
       try {
-        // Build token with wildcard UID (0) and PUBLISHER privileges for seamless dynamic voice/host role upgrades
+        // Audience tokens are subscribe-only; Host/Guest broadcasters receive publish privilege.
+        const tokenRole = role === "subscriber" ? RtcRole.SUBSCRIBER : RtcRole.PUBLISHER;
         token = RtcTokenBuilder.buildTokenWithUid(
           appId,
           appCertificate.trim(),
           channelName,
-          0,
-          RtcRole.PUBLISHER,
+          agoraUid,
+          tokenRole,
           privilegeExpiredTs,
           privilegeExpiredTs
         );
@@ -4391,12 +4392,20 @@ app.post("/api/v1/hosts/:id/guest-requests/:reqId/respond", (req, res) => {
     if (Array.isArray(host.guestRequests)) {
       const match = host.guestRequests.find((r: any) => r.id === reqId || r.username === reqId);
       if (match && action === "accept") {
-        const targetSeatId = Number(seatId || match.seatId || 1);
+        const requestedSeatId = Number(seatId || match.seatId || 1);
         if (!Array.isArray(host.guestSeats)) {
-          host.guestSeats = [1, 2, 3, 4, 5, 6, 7, 8].map(sId => ({
-            id: sId, name: null, avatar: null, diamonds: null, isMuted: false, isCamMuted: true, canUseCamera: false, isBigFrame: false
+
+          const guestSeatCount = Number(host.guestSeatCapacity) === 16 ? 15 : 8;
+
+          host.guestSeats = Array.from({ length: guestSeatCount }, (_, i) => i + 1).map(sId => ({
+            id: sId, name: null, avatar: null, diamonds: null, isMuted: false, isCamMuted: true, canUseCamera: false, isBigFrame: false, isModerator: false
           }));
         }
+        const availableSeat = host.guestSeats.find((s: any) => Number(s.id) === requestedSeatId && !s.name) || host.guestSeats.find((s: any) => !s.name);
+        if (!availableSeat) {
+          return res.status(409).json({ error: "No available guest seat" });
+        }
+        const targetSeatId = Number(availableSeat.id);
         host.guestSeats = host.guestSeats.map((s: any) => {
           if (s.id === targetSeatId) {
             return {
@@ -4425,7 +4434,7 @@ app.post("/api/v1/hosts/:id/guest-requests/:reqId/respond", (req, res) => {
 
 app.put("/api/v1/hosts/:id/guest-seats/control", (req, res) => {
   const { id } = req.params;
-  const { seatId, action } = req.body || {};
+  const { seatId, action, actorUsername } = req.body || {};
   const index = findHostIndex(id);
   if (index === -1) return res.status(404).json({ error: "Host not found" });
   const host = dbData.hosts[index];
@@ -4433,15 +4442,36 @@ app.put("/api/v1/hosts/:id/guest-seats/control", (req, res) => {
   const sid = Number(seatId);
   const seat = host.guestSeats.find((x: any) => Number(x.id) === sid);
   if (!seat || !seat.name) return res.status(404).json({ error: "Guest seat not occupied" });
+
+  const actor = String(actorUsername || "").toLowerCase();
+  const hostUsername = String(host.hostUsername || host.username || host.name || "").toLowerCase();
+  const actorIsHost = Boolean(actor && actor === hostUsername);
+  const actorIsModerator = host.guestSeats.some((x: any) => String(x.name || "").toLowerCase() === actor && Boolean(x.isModerator));
+  const actorIsTarget = String(seat.name || "").toLowerCase() === actor;
+
+  if (["moderator_on", "moderator_off"].includes(action) && !actorIsHost) {
+    return res.status(403).json({ error: "Only the Host can appoint or revoke moderators" });
+  }
+  if (action === "remove" && !actorIsHost && !actorIsModerator) {
+    return res.status(403).json({ error: "Only the Host or Moderator can remove a guest" });
+  }
+  if (["camera_on", "camera_off", "mic_mute", "mic_unmute"].includes(action) && !actorIsTarget && !actorIsHost && !actorIsModerator) {
+    return res.status(403).json({ error: "Not authorized for this guest control" });
+  }
+
   if (action === "camera_on") { seat.canUseCamera = true; seat.isCamMuted = false; }
   else if (action === "camera_off") { seat.isCamMuted = true; }
   else if (action === "mic_mute") { seat.isMuted = true; }
   else if (action === "mic_unmute") { seat.isMuted = false; }
+  else if (action === "moderator_on") { seat.isModerator = true; }
+  else if (action === "moderator_off") { seat.isModerator = false; }
   else if (action === "remove") {
-    host.guestSeats = host.guestSeats.map((x: any) => Number(x.id) === sid ? { id: x.id, name: null, avatar: null, diamonds: null, isMuted: false, isCamMuted: true, canUseCamera: false, isBigFrame: false } : x);
+    host.guestSeats = host.guestSeats.map((x: any) => Number(x.id) === sid ? { id: x.id, name: null, avatar: null, diamonds: null, isMuted: false, isCamMuted: true, canUseCamera: false, isBigFrame: false, isModerator: false } : x);
   }
   else return res.status(400).json({ error: "Unknown guest control action" });
-  saveDatabase(); syncDocument("hosts", host.id, host);
+
+  saveDatabase();
+  syncDocument("hosts", host.id, host);
   res.json({ success: true, guestSeats: host.guestSeats });
 });
 
@@ -4520,12 +4550,20 @@ app.post("/api/v1/hosts/:id/invites/:username/respond", (req, res) => {
       const match = host.pendingInvites.find((i: any) => String(i.targetUsername).toLowerCase() === String(username).toLowerCase());
       if (match) {
         if (action === "accept") {
-          const targetSeatId = Number(match.seatId) || 1;
+          const requestedSeatId = Number(match.seatId) || 1;
           if (!Array.isArray(host.guestSeats)) {
-            host.guestSeats = [1, 2, 3, 4, 5, 6, 7, 8].map(sId => ({
-              id: sId, name: null, avatar: null, diamonds: null, isMuted: false, isCamMuted: true, canUseCamera: false, isBigFrame: false
+
+            const guestSeatCount = Number(host.guestSeatCapacity) === 16 ? 15 : 8;
+
+            host.guestSeats = Array.from({ length: guestSeatCount }, (_, i) => i + 1).map(sId => ({
+              id: sId, name: null, avatar: null, diamonds: null, isMuted: false, isCamMuted: true, canUseCamera: false, isBigFrame: false, isModerator: false
             }));
           }
+          const availableSeat = host.guestSeats.find((s: any) => Number(s.id) === requestedSeatId && !s.name) || host.guestSeats.find((s: any) => !s.name);
+          if (!availableSeat) {
+            return res.status(409).json({ error: "No available guest seat" });
+          }
+          const targetSeatId = Number(availableSeat.id);
           host.guestSeats = host.guestSeats.map((s: any) => {
             if (s.id === targetSeatId) {
               return {
@@ -4536,7 +4574,8 @@ app.post("/api/v1/hosts/:id/invites/:username/respond", (req, res) => {
                 isMuted: false,
                 isCamMuted: true,
                 canUseCamera: false,
-                isBigFrame: false
+                isBigFrame: false,
+                isModerator: false
               };
             }
             return s;

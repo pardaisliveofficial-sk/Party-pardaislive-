@@ -38,6 +38,8 @@ interface AgoraStreamProps {
   localVideoMountRef?: React.RefObject<HTMLDivElement | null>;
   /** When a guest is a broadcaster, keep the same Agora client and render subscribed remote video as the room background. */
   renderRemoteVideoWhenPublisher?: boolean;
+  renderPkViewerVideo?: boolean;
+  remoteVideoMountIds?: [string, string];
   suppressStatusOverlay?: boolean;
 }
 
@@ -76,6 +78,8 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
   remoteVideoLayout = "single",
   localVideoMountRef,
   renderRemoteVideoWhenPublisher = false,
+  renderPkViewerVideo = false,
+  remoteVideoMountIds,
   suppressStatusOverlay = false
 }) => {
   // Normalize the optional prop to a guaranteed local boolean. This avoids any
@@ -298,15 +302,18 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
   // Render remote live video tracks for viewers.
   useEffect(() => {
     if (role !== "subscriber" && !renderRemoteVideoWhenPublisher) return;
-    remoteUsersList.forEach((remote) => {
+    remoteUsersList.forEach((remote, index) => {
       if (remote.videoTrack) {
-        const el = remoteVideoRefs.current[String(remote.uid)];
+        const ownEl = remoteVideoRefs.current[String(remote.uid)];
+        const targetId = renderPkViewerVideo && remoteVideoMountIds ? remoteVideoMountIds[index] : null;
+        const targetEl = targetId ? document.getElementById(targetId) : null;
+        const el = targetEl || ownEl;
         if (el) {
           try { remote.videoTrack.play(el, { fit: "cover" }); } catch (e) {}
         }
       }
     });
-  }, [remoteUsersList]);
+  }, [remoteUsersList, renderPkViewerVideo, remoteVideoMountIds]);
 
   // Main Engine: Agora RTC Audio Stream for crystal-clear real-time voice broadcasting
   useEffect(() => {
@@ -317,13 +324,16 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
 
     const cleanChannel = sanitizeChannel(channelName);
     const isPublisher = role === "publisher";
-    const myUid = userId || (isPublisher ? "host_streamer" : `viewer_${Math.floor(Math.random() * 89999) + 10000}`);
+    const myUid = userId || (isPublisher ? "host_streamer" : "viewer");
 
     const joinAgoraStream = async () => {
       setStatus("connecting");
       setStatusDetails(isPublisher ? "Starting Audio Live Broadcast..." : "Connecting to Audio Stream...");
 
-      const requestUid = Math.floor(Math.random() * 89999999) + 10000000;
+      const stableUidSource = String(myUid || "viewer");
+    let stableHash = 0;
+    for (let i = 0; i < stableUidSource.length; i++) stableHash = ((stableHash << 5) - stableHash + stableUidSource.charCodeAt(i)) | 0;
+    const requestUid = (Math.abs(stableHash) % 899999999) + 1;
       const tokenUrl = resolveApiUrl("/api/v1/agora/token");
 
       // 1. Request Token from Backend
@@ -655,6 +665,9 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
 
   // 1v1 PK BATTLE AUDIO STAGE
   if (isCoHostMode) {
+    if (role === "subscriber" && renderPkViewerVideo) {
+      return <div className="absolute w-0 h-0 overflow-hidden pointer-events-none opacity-0" aria-hidden="true" />;
+    }
     return (
       <div className="w-full h-full relative overflow-hidden bg-[#0a0814] flex flex-row select-none">
         {/* LEFT HOST (HOST A / MAIN HOST / RED TEAM) */}
