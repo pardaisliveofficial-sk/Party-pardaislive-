@@ -2664,9 +2664,14 @@ export default function App() {
   ]);
   const [requestedToSpeak, setRequestedToSpeak] = useState<boolean>(false);
 
-  // Video Guest Room States (matching the image)
+  // Video Guest Room States (8 or 16 selectable at start).
   const [userLiveGuestModeActive, setUserLiveGuestModeActive] = useState<boolean>(false);
+  const [userLiveGuestSeatCapacity, setUserLiveGuestSeatCapacity] = useState<8 | 16>(8);
+  const [showGuestSeatModePicker, setShowGuestSeatModePicker] = useState<boolean>(false);
   const hostGuestVideoMountRef = useRef<HTMLDivElement | null>(null);
+  const createGuestSeats = (count: 8 | 16) => Array.from({ length: count }, (_, i) => ({
+    id: i + 1, name: null, avatar: null, diamonds: null, isMuted: false, isCamMuted: false, isBigFrame: false
+  }));
   const [userLiveGuestSeats, setUserLiveGuestSeats] = useState<Array<{
     id: number;
     name: string | null;
@@ -2679,16 +2684,7 @@ export default function App() {
     isBigFrame: boolean;
     isModerator?: boolean;
     rotation?: number;
-  }>>([
-    { id: 1, name: null, avatar: null, diamonds: null, isMuted: false, isCamMuted: false, isBigFrame: false },
-    { id: 2, name: null, avatar: null, diamonds: null, isMuted: false, isCamMuted: false, isBigFrame: false },
-    { id: 3, name: null, avatar: null, diamonds: null, isMuted: false, isCamMuted: false, isBigFrame: false },
-    { id: 4, name: null, avatar: null, diamonds: null, isMuted: false, isCamMuted: false, isBigFrame: false },
-    { id: 5, name: null, avatar: null, diamonds: null, isMuted: false, isCamMuted: false, isBigFrame: false },
-    { id: 6, name: null, avatar: null, diamonds: null, isMuted: false, isCamMuted: false, isBigFrame: false },
-    { id: 7, name: null, avatar: null, diamonds: null, isMuted: false, isCamMuted: false, isBigFrame: false },
-    { id: 8, name: null, avatar: null, diamonds: null, isMuted: false, isCamMuted: false, isBigFrame: false }
-  ]);
+  }>>(createGuestSeats(8));
 
   const [userLiveGuestRequests, setUserLiveGuestRequests] = useState<Array<{
     id: string;
@@ -4688,7 +4684,10 @@ export default function App() {
             id: String(r.id), username: r.username, avatar: r.avatar || "", level: Number(r.level || r.userLevel || 1)
           })));
         }
-        if (Array.isArray(data.guestSeats)) setUserLiveGuestSeats(data.guestSeats);
+        if (Array.isArray(data.guestSeats)) {
+          setUserLiveGuestSeats(data.guestSeats);
+          setUserLiveGuestSeatCapacity(data.guestSeats.length >= 16 ? 16 : 8);
+        }
       } catch {}
     };
     poll();
@@ -7684,55 +7683,42 @@ export default function App() {
     setUserLiveShowExitOptions(false);
   };
 
-  const handleStartGuestFromSolo = () => {
+  const handleStartGuestWithCapacity = async (capacity: 8 | 16) => {
+    setUserLiveGuestSeatCapacity(capacity);
+    setShowGuestSeatModePicker(false);
     setUserLiveGuestModeActive(true);
-    if (userLiveGuestRequests && userLiveGuestRequests.length > 0) {
-      const topReq = userLiveGuestRequests[0];
-      setUserLiveGuestSeats(prevSeats => {
-        const copy = [...prevSeats];
-        copy[0] = {
-          id: 1,
-          name: topReq.username || topReq.name || "Guest",
-          avatar: topReq.avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&h=150&q=80",
-          vipLevel: topReq.vipLevel || 0,
-          isMuted: false,
-          isCamMuted: false,
-          isModerator: false,
-          isBigFrame: false
-        };
-        return copy;
+
+    const existing = userLiveGuestSeats.filter(s => s.name);
+    const nextSeats = createGuestSeats(capacity).map((seat, idx) => existing[idx] ? { ...seat, ...existing[idx], id: idx + 1 } : seat);
+    setUserLiveGuestSeats(nextSeats);
+
+    // Persist the selected 8/16-seat layout so all devices use the same seat count.
+    try {
+      const hostId = `h-${user.uniqueId || user.username || "host"}`;
+      await fetch(`/api/v1/hosts/${encodeURIComponent(hostId)}/guest-seats`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ guestSeats: nextSeats, guestSeatCapacity: capacity, guestModeActive: true })
       });
-      setUserLiveGuestRequests(prev => prev.slice(1));
-      setUserLiveMessages(prev => [
-        ...prev,
-        {
-          id: "ul-guest-start-" + Date.now(),
-          username: "System 🎙️",
-          message: `Host ${user.username || "Host"} started Guest Live! Guest @${topReq.username} connected directly.`,
-          vipLevel: 0,
-          userLevel: 0,
-          isSystem: true,
-          isFlagged: false,
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-        }
-      ]);
-      alert(`🎙️ Guest started! @${topReq.username} connected directly from Solo Live.`);
-    } else {
-      setUserLiveMessages(prev => [
-        ...prev,
-        {
-          id: "ul-guest-mode-" + Date.now(),
-          username: "System 🎙️",
-          message: `Host ${user.username || "Host"} opened Guest Mode. Waiting for a real guest request or invitation.`,
-          vipLevel: 0,
-          userLevel: 0,
-          isSystem: true,
-          isFlagged: false,
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-        }
-      ]);
-      alert("🎙️ Guest Mode initialized. Waiting for a real guest request or invitation.");
+    } catch (_) {}
+
+    setUserLiveMessages(prev => [...prev, {
+      id: "ul-guest-start-" + Date.now(),
+      username: "System 🎙️",
+      message: `Host ${user.username || "Host"} started Video Guest Room with ${capacity} seats.`,
+      vipLevel: 0, userLevel: 0, isSystem: true, isFlagged: false,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    }]);
+  };
+
+  const handleStartGuestFromSolo = () => {
+    if (userLiveGuestModeActive) {
+      setUserLiveGuestModeActive(false);
+      setShowGuestSeatModePicker(false);
+      alert("🚫 Guest Room stopped. Solo Live resumed.");
+      return;
     }
+    setShowGuestSeatModePicker(true);
   };
 
   const handleInviteHostTo1v1Match = async (targetHost: any) => {
@@ -12700,7 +12686,7 @@ export default function App() {
                                 })()}
                               </div>
 
-                              {/* RIGHT: 8 GUEST SEATS GRID (50% Width) */}
+                              {/* RIGHT: GUEST SEATS GRID (8 or 16 seats, 50% width) */}
                               <div className="w-1/2 h-full grid grid-cols-2 grid-rows-4 gap-1.5">
                                 {viewerLiveGuestSeats.map(seat => (
                                   <div
@@ -19336,8 +19322,8 @@ export default function App() {
                                         />
                                       </div>
                                     )}
-                                    <div className="relative z-10 w-full h-full grid grid-cols-2 grid-rows-4 gap-1.5">
-                                    {userLiveGuestSeats.map(seat => (
+                                    <div className={`relative z-10 w-full h-full grid gap-1.5 ${userLiveGuestSeatCapacity === 16 ? "grid-cols-4 grid-rows-4" : "grid-cols-2 grid-rows-4"}`}>
+                                    {userLiveGuestSeats.slice(0, userLiveGuestSeatCapacity).map(seat => (
                                       <div
                                         key={seat.id}
                                         onClick={() => {
@@ -22584,32 +22570,34 @@ export default function App() {
                                   </button>
                                   <button
                                     onClick={() => {
-                                      const nextMode = !userLiveGuestModeActive;
-                                      setUserLiveGuestModeActive(nextMode);
                                       setUserLiveShowMoreModal(false);
-                                      if (nextMode) {
-                                        setUserLiveMessages(prev => [
-                                          ...prev,
-                                          {
-                                            id: "ul-guest-start-" + Date.now(),
-                                            username: "System 🎙️",
-                                            message: `Host ${user.username || "Host"} started Guest Mode! Click empty seats to apply or invite viewers.`,
-                                            vipLevel: 0,
-                                            userLevel: 0,
-                                            isSystem: true,
-                                            isFlagged: false,
-                                            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-                                          }
-                                        ]);
-                                        alert("🎙️ Video Guest Room mode initialized! 8 request seats are now on screen.");
-                                      } else {
-                                        alert("🚫 Guest Room stopped. Solo Live resumed.");
-                                      }
+                                      handleStartGuestFromSolo();
                                     }}
                                     className="p-2 rounded bg-gradient-to-r from-purple-600 to-[#ff007f] hover:opacity-90 text-white text-center font-bold text-[8px] col-span-2 border border-purple-500/20"
                                   >
-                                    🎙️ {userLiveGuestModeActive ? "Stop Guest Room" : "Start Video Guest Room"}
+                                    🎙️ {userLiveGuestModeActive ? `Stop Guest Room (${userLiveGuestSeatCapacity})` : "Start Video Guest Room"}
                                   </button>
+                                </div>
+                              </div>
+                            )}
+
+                            {showGuestSeatModePicker && !userLiveGuestModeActive && (
+                              <div className="absolute inset-0 z-[90] flex items-center justify-center bg-black/70 backdrop-blur-sm p-5">
+                                <div className="w-full max-w-sm rounded-3xl border border-purple-500/40 bg-[#0b0912] p-5 shadow-[0_0_40px_rgba(168,85,247,0.25)]">
+                                  <div className="text-center mb-5">
+                                    <div className="text-3xl mb-2">👑</div>
+                                    <h3 className="text-white text-base font-black uppercase tracking-widest">Video Guest Room</h3>
+                                    <p className="text-gray-400 text-[10px] mt-1">Select how many guest seats you want before starting.</p>
+                                  </div>
+                                  <div className="grid grid-cols-2 gap-3">
+                                    {[8, 16].map((count) => (
+                                      <button key={count} type="button" onClick={() => handleStartGuestWithCapacity(count as 8 | 16)} className="rounded-2xl border border-purple-500/40 bg-gradient-to-br from-[#1a1030] to-[#0d0a14] py-5 text-white hover:border-pink-400 hover:scale-[1.02] active:scale-95 transition-all">
+                                        <div className="text-2xl font-black text-pink-300">{count}</div>
+                                        <div className="text-[9px] uppercase tracking-widest text-gray-300 font-bold">Guest Seats</div>
+                                      </button>
+                                    ))}
+                                  </div>
+                                  <button type="button" onClick={() => setShowGuestSeatModePicker(false)} className="w-full mt-4 py-2.5 rounded-xl bg-white/5 border border-white/10 text-gray-300 text-[10px] font-black uppercase">Cancel</button>
                                 </div>
                               </div>
                             )}
