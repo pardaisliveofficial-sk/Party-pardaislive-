@@ -11311,85 +11311,6 @@ export default function App() {
                             />
                           )}
 
-                          {/* LOWER AREA: INFORMATION CARD + COMMENTS + BOTTOM ACTIONS BAR */}
-                          <div className="flex-1 min-h-0 flex flex-col justify-between bg-transparent select-none pb-1">
-                            {/* 🎪 CARNIVAL WELCOME & ROOM INFO CARD (AUTO-DISMISSES AFTER 6 SECONDS OR VIA DISMISS BUTTON) */}
-                            {showCarnivalWelcomeCard && (
-                              <div className="mx-3 my-1 p-2.5 rounded-2xl bg-gradient-to-r from-amber-950/60 via-black/80 to-purple-950/60 border border-amber-500/40 backdrop-blur-md shadow-2xl text-left relative overflow-hidden shrink-0 animate-fadeIn transition-all duration-300">
-                                <div className="absolute top-0 right-0 w-24 h-24 bg-amber-500/10 rounded-full blur-2xl pointer-events-none" />
-                                <div className="flex items-center justify-between mb-1">
-                                  <div className="flex items-center space-x-1.5">
-                                    <span className="text-xs">✨</span>
-                                    <h4 className="text-[9.5px] font-black text-transparent bg-clip-text bg-gradient-to-r from-amber-300 via-yellow-200 to-amber-400 uppercase tracking-widest font-mono">
-                                      PARDAIS PARTY AUDIO LOUNGE CARNIVAL
-                                    </h4>
-                                    <span className="text-xs">✨</span>
-                                  </div>
-                                  <button 
-                                    onClick={() => setShowCarnivalWelcomeCard(false)}
-                                    className="text-amber-400/80 hover:text-amber-200 text-xs p-0.5 rounded-full hover:bg-white/10 cursor-pointer transition-all"
-                                    title="Dismiss Welcome Message"
-                                  >
-                                    <X className="w-3 h-3" />
-                                  </button>
-                                </div>
-                                <p className="text-[8px] text-amber-100/90 leading-relaxed font-sans pr-4">
-                                  Welcome to Pardais Party Audio Lounge! Enjoy {Number(party.maxCapacity || party.seatCount || 12)}-seat real-time voice chat, send premium visual gifts, play Lucky Wheel games, and vibe together. Keep Pardais guidelines intact!
-                                </p>
-                              </div>
-                            )}
-
-                            {/* 💬 INTERACTIVE COMMENTS TIMELINE CHAT STREAM */}
-                            <div className="flex-1 min-h-[120px] mx-3 my-1 bg-black/50 border border-amber-500/20 rounded-2xl flex flex-col justify-between overflow-hidden shadow-2xl backdrop-blur-md">
-                              <div className="relative z-20 flex-1 overflow-y-auto space-y-1.5 scrollbar-thin text-left p-2.5">
-                                {party.comments?.map((comment: any) => {
-                                  if (comment.isSystem) {
-                                    const meta = comment.giftMeta;
-                                    const rawMessage = String(comment.message || "");
-                                    const isGiftSystemMessage = Boolean(meta) || rawMessage.includes("/api/v1/gifts/animation") || /(?:🎁|gift).*sent/i.test(rawMessage);
-                                    let systemMessage = rawMessage;
-                                    if (isGiftSystemMessage) {
-                                      if (meta?.sender && meta?.giftName && meta?.recipient) {
-                                        systemMessage = `🎁 ${meta.sender} sent ${meta.giftName}${Number(meta.count) > 1 ? ` x${meta.count}` : ""} to ${meta.recipient}`;
-                                      } else if (rawMessage.includes("/api/v1/gifts/animation") && party.lastGiftEvent) {
-                                        const lastGift = party.lastGiftEvent as any;
-                                        systemMessage = `🎁 ${lastGift.sender || comment.username || "User"} sent ${lastGift.giftName || "Gift"}${Number(lastGift.count) > 1 ? ` x${lastGift.count}` : ""} to ${lastGift.recipient || party.hostUsername || "Host"}`;
-                                      } else {
-                                        systemMessage = rawMessage
-                                          .replace(/\s*\(?https?:\/\/[^\s)]+\)?/gi, "")
-                                          .replace(/\s*\([^)]*\b(?:png|webm|mp4|svga)\b[^)]*\)/gi, "")
-                                          .replace(/\s*•\s*[0-9,]+\s*coins\.?/gi, "")
-                                          .replace(/\s{2,}/g, " ")
-                                          .trim();
-                                        if (!systemMessage) systemMessage = `🎁 ${comment.username || "User"} sent a gift`;
-                                      }
-                                    }
-                                    return (
-                                      <div key={comment.id} className="text-[8px] font-black text-amber-300 font-mono italic leading-relaxed py-0.5 bg-transparent flex items-center space-x-1">
-                                        <span>✨</span>
-                                        <span>{systemMessage}</span>
-                                      </div>
-                                    );
-                                  }
-
-                                  return (
-                                    <div 
-                                      key={comment.id}
-                                      onClick={() => handleOpenPartyUserProfile(comment.username, comment.avatar, undefined, comment.userLevel, comment.vipLevel)}
-                                      className="bg-white/5 hover:bg-white/10 p-1 px-2 rounded-lg flex items-start space-x-1.5 max-w-[95%] transition-all cursor-pointer leading-snug group border border-amber-500/10"
-                                      title="Click to view User Profile"
-                                    >
-                                      <span className="text-[7.5px] font-bold text-amber-400 font-mono whitespace-nowrap bg-transparent uppercase">Lv.{comment.userLevel || 1}</span>
-                                      <p className="text-[8.5px] bg-transparent text-gray-200">
-                                        <span className="font-bold text-amber-300 mr-1 uppercase font-mono group-hover:underline">@{comment.username}:</span>
-                                        {comment.message}
-                                      </p>
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            </div>
-
                           {/* 🎙️ ACTIVE SEAT POPUP INTERACTION ACTION DROPDOWNS */}
                           {activeSeatMenu && (() => {
                             const isMenuMySeat = activeSeatMenu.occupantName === user.username;
@@ -12122,6 +12043,86 @@ export default function App() {
                                 reactionEvent={isHostOfRoom ? partyReactionEvent : null}
                               />
                             </div>
+
+                          {/* LOWER AREA: INFORMATION CARD + COMMENTS + BOTTOM ACTIONS BAR */}
+                          <div className="flex-1 min-h-0 flex flex-col justify-between bg-transparent select-none pb-1">
+                            {/* 🎪 CARNIVAL WELCOME & ROOM INFO CARD (AUTO-DISMISSES AFTER 6 SECONDS OR VIA DISMISS BUTTON) */}
+                            {showCarnivalWelcomeCard && (
+                              <div className="mx-3 my-1 p-2.5 rounded-2xl bg-gradient-to-r from-amber-950/60 via-black/80 to-purple-950/60 border border-amber-500/40 backdrop-blur-md shadow-2xl text-left relative overflow-hidden shrink-0 animate-fadeIn transition-all duration-300">
+                                <div className="absolute top-0 right-0 w-24 h-24 bg-amber-500/10 rounded-full blur-2xl pointer-events-none" />
+                                <div className="flex items-center justify-between mb-1">
+                                  <div className="flex items-center space-x-1.5">
+                                    <span className="text-xs">✨</span>
+                                    <h4 className="text-[9.5px] font-black text-transparent bg-clip-text bg-gradient-to-r from-amber-300 via-yellow-200 to-amber-400 uppercase tracking-widest font-mono">
+                                      PARDAIS PARTY AUDIO LOUNGE CARNIVAL
+                                    </h4>
+                                    <span className="text-xs">✨</span>
+                                  </div>
+                                  <button 
+                                    onClick={() => setShowCarnivalWelcomeCard(false)}
+                                    className="text-amber-400/80 hover:text-amber-200 text-xs p-0.5 rounded-full hover:bg-white/10 cursor-pointer transition-all"
+                                    title="Dismiss Welcome Message"
+                                  >
+                                    <X className="w-3 h-3" />
+                                  </button>
+                                </div>
+                                <p className="text-[8px] text-amber-100/90 leading-relaxed font-sans pr-4">
+                                  Welcome to Pardais Party Audio Lounge! Enjoy {Number(party.maxCapacity || party.seatCount || 12)}-seat real-time voice chat, send premium visual gifts, play Lucky Wheel games, and vibe together. Keep Pardais guidelines intact!
+                                </p>
+                              </div>
+                            )}
+
+                            {/* 💬 INTERACTIVE COMMENTS TIMELINE CHAT STREAM */}
+                            <div className="flex-1 min-h-[120px] mx-3 my-1 bg-black/50 border border-amber-500/20 rounded-2xl flex flex-col justify-between overflow-hidden shadow-2xl backdrop-blur-md">
+                              <div className="relative z-20 flex-1 overflow-y-auto space-y-1.5 scrollbar-thin text-left p-2.5">
+                                {party.comments?.map((comment: any) => {
+                                  if (comment.isSystem) {
+                                    const meta = comment.giftMeta;
+                                    const rawMessage = String(comment.message || "");
+                                    const isGiftSystemMessage = Boolean(meta) || rawMessage.includes("/api/v1/gifts/animation") || /(?:🎁|gift).*sent/i.test(rawMessage);
+                                    let systemMessage = rawMessage;
+                                    if (isGiftSystemMessage) {
+                                      if (meta?.sender && meta?.giftName && meta?.recipient) {
+                                        systemMessage = `🎁 ${meta.sender} sent ${meta.giftName}${Number(meta.count) > 1 ? ` x${meta.count}` : ""} to ${meta.recipient}`;
+                                      } else if (rawMessage.includes("/api/v1/gifts/animation") && party.lastGiftEvent) {
+                                        const lastGift = party.lastGiftEvent as any;
+                                        systemMessage = `🎁 ${lastGift.sender || comment.username || "User"} sent ${lastGift.giftName || "Gift"}${Number(lastGift.count) > 1 ? ` x${lastGift.count}` : ""} to ${lastGift.recipient || party.hostUsername || "Host"}`;
+                                      } else {
+                                        systemMessage = rawMessage
+                                          .replace(/\s*\(?https?:\/\/[^\s)]+\)?/gi, "")
+                                          .replace(/\s*\([^)]*\b(?:png|webm|mp4|svga)\b[^)]*\)/gi, "")
+                                          .replace(/\s*•\s*[0-9,]+\s*coins\.?/gi, "")
+                                          .replace(/\s{2,}/g, " ")
+                                          .trim();
+                                        if (!systemMessage) systemMessage = `🎁 ${comment.username || "User"} sent a gift`;
+                                      }
+                                    }
+                                    return (
+                                      <div key={comment.id} className="text-[8px] font-black text-amber-300 font-mono italic leading-relaxed py-0.5 bg-transparent flex items-center space-x-1">
+                                        <span>✨</span>
+                                        <span>{systemMessage}</span>
+                                      </div>
+                                    );
+                                  }
+
+                                  return (
+                                    <div 
+                                      key={comment.id}
+                                      onClick={() => handleOpenPartyUserProfile(comment.username, comment.avatar, undefined, comment.userLevel, comment.vipLevel)}
+                                      className="bg-white/5 hover:bg-white/10 p-1 px-2 rounded-lg flex items-start space-x-1.5 max-w-[95%] transition-all cursor-pointer leading-snug group border border-amber-500/10"
+                                      title="Click to view User Profile"
+                                    >
+                                      <span className="text-[7.5px] font-bold text-amber-400 font-mono whitespace-nowrap bg-transparent uppercase">Lv.{comment.userLevel || 1}</span>
+                                      <p className="text-[8.5px] bg-transparent text-gray-200">
+                                        <span className="font-bold text-amber-300 mr-1 uppercase font-mono group-hover:underline">@{comment.username}:</span>
+                                        {comment.message}
+                                      </p>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+
 
                           {/* ⌨️ INTERACTIVE BOTTOM CONTROL ACTIONS ROW */}
                           <div className="relative z-20 w-full min-w-0 max-w-full px-3 pt-1 pb-[calc(0.25rem+env(safe-area-inset-bottom,0px))] flex items-center gap-1.5 sm:gap-2 shrink-0 bg-transparent overflow-hidden">
@@ -19631,38 +19632,55 @@ export default function App() {
                                     </form>
                                   </div>
 
-                                  {/* INTERACTIVE OPTIONS & GUEST CONTROLS (40% Width) - EXACTLY TWO BUTTONS BELOW */}
-                                  <div className="w-[40%] h-full flex flex-col justify-center space-y-1.5 p-2 border-l border-white/5 bg-[#08070e]">
-                                    <div className="grid grid-cols-2 gap-1.5">
-                                      <button onClick={() => openUserLiveMusicModal()} className="h-9 rounded-xl bg-amber-500/15 border border-amber-400/30 text-amber-200 flex items-center justify-center" title="Music Player" aria-label="Music Player"><Music className="w-4 h-4" /></button>
-                                      <button onClick={() => { const data = { title: `@${user.username} Guest Room`, text: "Join my Pardais Party Guest Room!", url: window.location.href }; if (navigator.share) navigator.share(data).catch(() => {}); else navigator.clipboard?.writeText(window.location.href); }} className="h-9 rounded-xl bg-cyan-500/15 border border-cyan-400/30 text-cyan-200 flex items-center justify-center" title="Share Guest Room" aria-label="Share Guest Room"><Share2 className="w-4 h-4" /></button>
+                                  {/* LOWER AREA: FULL-WIDTH COMMENTS + LOWER NAVIGATION */}
+                                <div className="h-[40%] w-full flex flex-col bg-[#0c0a12] border-t border-white/5 relative z-10 min-h-0">
+                                  {/* FULL-WIDTH CHAT */}
+                                  <div className="flex-1 min-h-0 flex flex-col px-3 pt-2 pb-1">
+                                    <div className="flex-1 min-h-0 overflow-y-auto space-y-1.5 pr-1 flex flex-col justify-end">
+                                      {userLiveMessages.slice(-15).map(msg => (
+                                        <div key={msg.id} className="bg-black/35 p-1 rounded-lg text-[9px] text-gray-200">
+                                          <div className="flex items-center space-x-1">
+                                            {msg.vipLevel > 0 && <span className="text-[6px] bg-yellow-400 text-black px-0.5 rounded font-black font-mono">VIP</span>}
+                                            <span onClick={() => { const targetLvl = msg.userLevel || getHostLevelFromName(msg.username); setViewerMenuUser({ username: msg.username, userLevel: targetLvl, vipLevel: msg.vipLevel || getVipLevelFromUserLevel(targetLvl) }); }} className="font-black text-[#66fcf1] hover:underline cursor-pointer">{msg.username}</span>
+                                          </div>
+                                          <p className="text-gray-300 text-[8.5px] font-medium leading-tight mt-0.5">{msg.message}</p>
+                                        </div>
+                                      ))}
                                     </div>
-                                    {/* 1. Gift Box Button (Visible to all users & host) */}
-                                    <button
-                                      onClick={() => setUserLiveShowGiftModal(true)}
-                                      className="w-full bg-gradient-to-r from-pink-600 via-rose-500 to-purple-600 hover:brightness-110 active:scale-95 text-white py-2 px-2 rounded-xl text-[9.5px] font-black uppercase tracking-wider flex items-center justify-center space-x-1.5 transition-all shadow-lg border border-pink-400/30 cursor-pointer"
-                                      title="Open Gift Store & Send Gifts to Host or Viewers/Guests"
-                                    >
-                                      <GiftIcon className="w-3.5 h-3.5 text-yellow-300 animate-bounce" />
-                                      <span>🎁 Gift Box</span>
-                                    </button>
+                                    <form onSubmit={(e) => { e.preventDefault(); if (!chatInput.trim()) return; setUserLiveMessages(prev => [...prev, { id: "ul-msg-" + Date.now(), username: "You (Host)", message: chatInput, vipLevel: user.vipLevel, userLevel: user.userLevel, isSystem: false, isFlagged: false, timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }]); setChatInput(""); }} className="flex items-center gap-1.5 mt-1 bg-white/5 rounded-full px-3 py-1 border border-white/10 w-full shrink-0">
+                                      <input type="text" placeholder="Comment..." value={chatInput} onChange={(e) => setChatInput(e.target.value)} className="bg-transparent text-[9px] text-white flex-1 min-w-0 outline-none h-7 placeholder-gray-500" />
+                                      <button type="submit" className="text-purple-400 hover:text-purple-300 shrink-0"><Send className="w-4 h-4" /></button>
+                                    </form>
+                                  </div>
 
-                                    {/* 2. Requests Button (Host inspects and accepts/rejects requests) */}
-                                    <button
-                                      onClick={() => setShowGuestRequestsModal(true)}
-                                      className="w-full bg-gradient-to-r from-purple-700 via-indigo-600 to-cyan-600 hover:brightness-110 active:scale-95 text-white py-2 px-2 rounded-xl text-[9.5px] font-black uppercase tracking-wider flex items-center justify-center space-x-1.5 transition-all shadow-lg border border-purple-400/30 cursor-pointer relative"
-                                      title="Inspect & Accept/Reject Guest Requests"
-                                    >
-                                      <UserCheck className="w-3.5 h-3.5 text-cyan-300" />
-                                      <span>Requests ({userLiveGuestRequests.length})</span>
-                                      {userLiveGuestRequests.length > 0 && (
-                                        <span className="absolute -top-1 -right-1 w-4.5 h-4.5 bg-red-600 text-white rounded-full text-[8px] font-black flex items-center justify-center shadow animate-bounce border border-white">
-                                          {userLiveGuestRequests.length}
-                                        </span>
-                                      )}
+                                  {/* LOWER NAVIGATION — controls are actual handlers, comment stays full width above */}
+                                  <div className="w-full shrink-0 border-t border-white/5 bg-black/90 px-2 py-1.5 flex items-center justify-between gap-1.5 safe-area-bottom">
+                                    <button type="button" onClick={() => setUserLiveMic(v => !v)} className={`w-10 h-10 rounded-xl border flex items-center justify-center transition-all active:scale-90 ${userLiveMic ? "bg-emerald-600/30 border-emerald-400/60 text-emerald-300" : "bg-red-600/30 border-red-400/60 text-red-300"}`} title={userLiveMic ? "Mute microphone" : "Unmute microphone"}>
+                                      {userLiveMic ? <Mic className="w-5 h-5" /> : <MicOff className="w-5 h-5" />}
+                                    </button>
+                                    <button type="button" onClick={() => setUserLiveCam(v => !v)} className={`w-10 h-10 rounded-xl border flex items-center justify-center transition-all active:scale-90 ${userLiveCam ? "bg-pink-600/30 border-pink-400/60 text-pink-300" : "bg-white/5 border-white/10 text-gray-300"}`} title={userLiveCam ? "Turn camera off" : "Turn camera on"}>
+                                      {userLiveCam ? <Camera className="w-5 h-5" /> : <CameraOff className="w-5 h-5" />}
+                                    </button>
+                                    <button type="button" onClick={() => setCameraFacingMode(prev => prev === "user" ? "environment" : "user")} className="w-10 h-10 rounded-xl bg-white/5 border border-white/10 text-cyan-300 flex items-center justify-center transition-all active:scale-90" title="Rotate camera">
+                                      <RotateCw className="w-5 h-5" />
+                                    </button>
+                                    <button type="button" onClick={() => setUserLiveShowMusicModal(true)} className={`w-10 h-10 rounded-xl border flex items-center justify-center transition-all active:scale-90 ${partyMusicPlaying ? "bg-amber-500 text-black border-amber-300" : "bg-amber-500/15 border-amber-400/30 text-amber-300"}`} title="Music Player">
+                                      <Music className="w-5 h-5" />
+                                    </button>
+                                    <button type="button" onClick={() => setUserLiveShowGiftModal(true)} className="w-10 h-10 rounded-xl bg-gradient-to-r from-pink-600 to-purple-600 border border-pink-400/40 text-white flex items-center justify-center transition-all active:scale-90" title="Gift Store">
+                                      <GiftIcon className="w-5 h-5 text-yellow-300" />
+                                    </button>
+                                    <button type="button" onClick={() => { const data = { title: `@${user.username} Guest Room`, text: "Join my Pardais Party Guest Room!", url: window.location.href }; if (navigator.share) navigator.share(data).catch(() => {}); else navigator.clipboard?.writeText(window.location.href); }} className="w-10 h-10 rounded-xl bg-cyan-500/15 border border-cyan-400/30 text-cyan-300 flex items-center justify-center transition-all active:scale-90" title="Share Guest Room">
+                                      <Share2 className="w-5 h-5" />
+                                    </button>
+                                    <button type="button" onClick={() => setShowGuestRequestsModal(true)} className="relative w-10 h-10 rounded-xl bg-purple-600/20 border border-purple-400/40 text-purple-200 flex items-center justify-center transition-all active:scale-90" title="Guest Requests">
+                                      <UserCheck className="w-5 h-5" />
+                                      {userLiveGuestRequests.length > 0 && <span className="absolute -top-1 -right-1 min-w-4 h-4 px-1 bg-red-600 text-white rounded-full text-[7px] font-black flex items-center justify-center border border-black">{userLiveGuestRequests.length}</span>}
                                     </button>
                                   </div>
                                 </div>
+                              </div>
+
                               </div>
                             ) : (userLivePkActive || userLivePkConnected) ? (
                               <div className="absolute inset-0 bg-[#08070c] flex flex-col z-30 h-full w-full">
