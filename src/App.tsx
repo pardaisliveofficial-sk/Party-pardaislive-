@@ -19588,7 +19588,6 @@ export default function App() {
                                 </div>
                               </div>
 
-                              </div>
                             ) : (userLivePkActive || userLivePkConnected) ? (
                               <div className="absolute inset-0 bg-[#08070c] flex flex-col z-30 h-full w-full">
                                 {/* UPPER 10%: NAVIGATION TYPE HEADER BAR WITH GENEROUS SPACING */}
