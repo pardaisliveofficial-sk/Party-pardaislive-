@@ -38,10 +38,20 @@ interface AgoraStreamProps {
   localVideoMountRef?: React.RefObject<HTMLDivElement | null>;
   /** When a guest is a broadcaster, keep the same Agora client and render subscribed remote video as the room background. */
   renderRemoteVideoWhenPublisher?: boolean;
-  renderPkViewerVideo?: boolean;
-  remoteVideoMountIds?: [string, string];
   suppressStatusOverlay?: boolean;
+  /** Render each remote video track into parent-provided slot elements, in remote-user order. */
+  remoteVideoSlotResolver?: (index: number, remote: IAgoraRTCRemoteUser) => HTMLElement | null;
 }
+
+export const stableAgoraUid = (seed: string): number => {
+  let hash = 2166136261;
+  const value = String(seed || "viewer");
+  for (let i = 0; i < value.length; i += 1) {
+    hash ^= value.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0) % 89999999 + 10000000;
+};
 
 const sanitizeChannel = (ch: string) => {
   if (!ch) return "room_default";
@@ -78,9 +88,8 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
   remoteVideoLayout = "single",
   localVideoMountRef,
   renderRemoteVideoWhenPublisher = false,
-  renderPkViewerVideo = false,
-  remoteVideoMountIds,
-  suppressStatusOverlay = false
+  suppressStatusOverlay = false,
+  remoteVideoSlotResolver
 }) => {
   // Normalize the optional prop to a guaranteed local boolean. This avoids any
   // stale/legacy bundle referring to an undeclared receiveRemoteAudio symbol.
@@ -303,17 +312,14 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
   useEffect(() => {
     if (role !== "subscriber" && !renderRemoteVideoWhenPublisher) return;
     remoteUsersList.forEach((remote, index) => {
-      if (remote.videoTrack) {
-        const ownEl = remoteVideoRefs.current[String(remote.uid)];
-        const targetId = renderPkViewerVideo && remoteVideoMountIds ? remoteVideoMountIds[index] : null;
-        const targetEl = targetId ? document.getElementById(targetId) : null;
-        const el = targetEl || ownEl;
-        if (el) {
-          try { remote.videoTrack.play(el, { fit: "cover" }); } catch (e) {}
-        }
+      if (!remote.videoTrack) return;
+      const slot = remoteVideoSlotResolver?.(index, remote);
+      const el = slot || remoteVideoRefs.current[String(remote.uid)];
+      if (el) {
+        try { remote.videoTrack.play(el, { fit: "cover" }); } catch (e) {}
       }
     });
-  }, [remoteUsersList, renderPkViewerVideo, remoteVideoMountIds]);
+  }, [remoteUsersList, remoteVideoSlotResolver]);
 
   // Main Engine: Agora RTC Audio Stream for crystal-clear real-time voice broadcasting
   useEffect(() => {
@@ -324,16 +330,13 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
 
     const cleanChannel = sanitizeChannel(channelName);
     const isPublisher = role === "publisher";
-    const myUid = userId || (isPublisher ? "host_streamer" : "viewer");
+    const myUid = userId || (isPublisher ? "host_streamer" : `viewer_${Math.floor(Math.random() * 89999) + 10000}`);
 
     const joinAgoraStream = async () => {
       setStatus("connecting");
       setStatusDetails(isPublisher ? "Starting Audio Live Broadcast..." : "Connecting to Audio Stream...");
 
-      const stableUidSource = String(myUid || "viewer");
-    let stableHash = 0;
-    for (let i = 0; i < stableUidSource.length; i++) stableHash = ((stableHash << 5) - stableHash + stableUidSource.charCodeAt(i)) | 0;
-    const requestUid = (Math.abs(stableHash) % 899999999) + 1;
+      const requestUid = stableAgoraUid(`${cleanChannel}:${userId || (isPublisher ? "host_streamer" : "viewer")}`);
       const tokenUrl = resolveApiUrl("/api/v1/agora/token");
 
       // 1. Request Token from Backend
@@ -451,7 +454,8 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
                 await playRemoteAudioOnMediaSpeaker(user);
               }
               setRemoteUsersList(prev => {
-                if (prev.some(u => u.uid === user.uid)) return prev;
+                const existing = prev.find(u => u.uid === user.uid);
+                if (existing) return prev.map(u => u.uid === user.uid ? user : u);
                 return [...prev, user];
               });
             } else if (mediaType === "video") {
@@ -460,7 +464,8 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
                 await agoraClient.subscribe(user, "video");
                 console.log("[AGORA EVENT: SUBSCRIBE SUCCESS]", { remoteUid: user.uid, mediaType: "video" });
                 setRemoteUsersList(prev => {
-                  if (prev.some(u => u.uid === user.uid)) return prev;
+                  const existing = prev.find(u => u.uid === user.uid);
+                  if (existing) return prev.map(u => u.uid === user.uid ? user : u);
                   return [...prev, user];
                 });
                 requestAnimationFrame(() => {
@@ -480,9 +485,12 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
 
         const handleUserUnpublished = (user: IAgoraRTCRemoteUser, mediaType: "video" | "audio") => {
           console.log("[AGORA EVENT: USER-UNPUBLISHED]", { remoteUid: user.uid, mediaType });
-          if (mediaType === "audio") {
-            setRemoteUsersList(prev => prev.filter(u => u.uid !== user.uid));
-          }
+          setRemoteUsersList(prev => prev.map(u => {
+            if (u.uid !== user.uid) return u;
+            if (mediaType === "audio") return { ...u, audioTrack: undefined, hasAudio: false };
+            if (mediaType === "video") return { ...u, videoTrack: undefined, hasVideo: false };
+            return u;
+          }));
         };
 
         agoraClient.on("user-published", handleUserPublished);
@@ -607,17 +615,20 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
           setStatus("connected");
           setStatusDetails("Connected to Audio Stream");
 
-          for (const user of agoraClient.remoteUsers) {
+          for (const remote of agoraClient.remoteUsers) {
             try {
-              if (!receiveRemoteAudio) break;
-              if (!user.audioTrack) {
-                console.log("[AGORA EVENT: SUBSCRIBE START (VIEWER)]", { remoteUid: user.uid });
-                await agoraClient.subscribe(user, "audio");
-                console.log("[AGORA EVENT: SUBSCRIBE SUCCESS (VIEWER)]", { remoteUid: user.uid });
+              if (receiveRemoteAudio && remote.hasAudio && !remote.audioTrack) {
+                await agoraClient.subscribe(remote, "audio");
+                if (remote.audioTrack) await playRemoteAudioOnMediaSpeaker(remote);
               }
-              if (user.audioTrack) {
-                await playRemoteAudioOnMediaSpeaker(user);
+              if (remote.hasVideo && !remote.videoTrack) {
+                await agoraClient.subscribe(remote, "video");
               }
+              setRemoteUsersList(prev => {
+                const existing = prev.find(u => u.uid === remote.uid);
+                if (existing) return prev.map(u => u.uid === remote.uid ? remote : u);
+                return [...prev, remote];
+              });
             } catch (e) {
               console.error("[AGORA ERROR: REMOTE USER SUBSCRIBE IN VIEWER]", e);
             }
@@ -663,11 +674,36 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
     };
   }, [channelName, role, isCoHostMode, receiveRemoteAudio]);
 
+  // 1v1 PK BATTLE VIEWER: subscribers must see the actual two remote camera feeds,
+  // not the old avatar/visualizer demo.
+  if (isCoHostMode && role === "subscriber") {
+    const remoteVideoUsers = remoteUsersList.filter(u => u.videoTrack && (excludeRemoteUid == null || Number(u.uid) !== Number(excludeRemoteUid))).slice(0, 2);
+    return (
+      <div className="w-full h-full relative overflow-hidden bg-black flex select-none">
+        {remoteVideoUsers.length > 0 ? (
+          <div className={`w-full h-full ${remoteVideoUsers.length > 1 ? "grid grid-cols-2" : "relative"}`}>
+            {remoteVideoUsers.map((remote, index) => (
+              <div
+                key={String(remote.uid)}
+                ref={(el) => { remoteVideoRefs.current[String(remote.uid)] = el; }}
+                className={remoteVideoUsers.length > 1 ? "relative min-w-0 min-h-0 overflow-hidden bg-black border border-white/10" : "absolute inset-0 bg-black"}
+              />
+            ))}
+          </div>
+        ) : (
+          <div className="w-full h-full flex items-center justify-center bg-gradient-to-b from-[#1c0d38] via-[#120e2e] to-[#09070d]">
+            <div className="text-center">
+              <img src={avatarUrl} alt={hostName} className="w-20 h-20 rounded-full object-cover border-2 border-pink-500/70 mx-auto opacity-80" />
+              <span className="block mt-2 text-xs font-black text-white">Waiting for live video…</span>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   // 1v1 PK BATTLE AUDIO STAGE
   if (isCoHostMode) {
-    if (role === "subscriber" && renderPkViewerVideo) {
-      return <div className="absolute w-0 h-0 overflow-hidden pointer-events-none opacity-0" aria-hidden="true" />;
-    }
     return (
       <div className="w-full h-full relative overflow-hidden bg-[#0a0814] flex flex-row select-none">
         {/* LEFT HOST (HOST A / MAIN HOST / RED TEAM) */}

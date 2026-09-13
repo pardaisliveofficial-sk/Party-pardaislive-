@@ -372,14 +372,13 @@ const handleAgoraTokenRequest = (req: any, res: any) => {
 
     if (appId && appCertificate && appCertificate.trim().length > 0) {
       try {
-        // Audience tokens are subscribe-only; Host/Guest broadcasters receive publish privilege.
-        const tokenRole = role === "subscriber" ? RtcRole.SUBSCRIBER : RtcRole.PUBLISHER;
+        // Build token with wildcard UID (0) and PUBLISHER privileges for seamless dynamic voice/host role upgrades
         token = RtcTokenBuilder.buildTokenWithUid(
           appId,
           appCertificate.trim(),
           channelName,
-          agoraUid,
-          tokenRole,
+          0,
+          RtcRole.PUBLISHER,
           privilegeExpiredTs,
           privilegeExpiredTs
         );
@@ -4392,35 +4391,23 @@ app.post("/api/v1/hosts/:id/guest-requests/:reqId/respond", (req, res) => {
     if (Array.isArray(host.guestRequests)) {
       const match = host.guestRequests.find((r: any) => r.id === reqId || r.username === reqId);
       if (match && action === "accept") {
-        const requestedSeatId = Number(seatId || match.seatId || 1);
-        if (!Array.isArray(host.guestSeats)) {
-
-          const guestSeatCount = Number(host.guestSeatCapacity) === 16 ? 15 : 8;
-
-          host.guestSeats = Array.from({ length: guestSeatCount }, (_, i) => i + 1).map(sId => ({
-            id: sId, name: null, avatar: null, diamonds: null, isMuted: false, isCamMuted: true, canUseCamera: false, isBigFrame: false, isModerator: false
-          }));
+        const requestedCapacity = Number(host.guestSeatCapacity) === 16 || (Array.isArray(host.guestSeats) && host.guestSeats.length >= 15) ? 16 : 8;
+        const seatCount = requestedCapacity === 16 ? 15 : 8;
+        if (!Array.isArray(host.guestSeats) || host.guestSeats.length !== seatCount) {
+          const existing = Array.isArray(host.guestSeats) ? host.guestSeats : [];
+          host.guestSeats = Array.from({ length: seatCount }, (_, idx) => {
+            const id = idx + 1;
+            return existing.find((s: any) => Number(s.id) === id) || { id, name: null, avatar: null, diamonds: null, isMuted: false, isCamMuted: true, canUseCamera: false, isBigFrame: false, isModerator: false };
+          });
         }
-        const availableSeat = host.guestSeats.find((s: any) => Number(s.id) === requestedSeatId && !s.name) || host.guestSeats.find((s: any) => !s.name);
-        if (!availableSeat) {
-          return res.status(409).json({ error: "No available guest seat" });
+        const requestedSeatId = Number(seatId || match.seatId || 0);
+        const requestedFreeSeat = host.guestSeats.find((s: any) => Number(s.id) === requestedSeatId && !s.name);
+        const availableSeat = host.guestSeats.find((s: any) => !s.name);
+        const targetSeatId = Number(requestedFreeSeat?.id || availableSeat?.id || 0);
+        if (!targetSeatId) {
+          return res.status(409).json({ error: "No guest seat available" });
         }
-        const targetSeatId = Number(availableSeat.id);
-        host.guestSeats = host.guestSeats.map((s: any) => {
-          if (s.id === targetSeatId) {
-            return {
-              ...s,
-              name: match.username,
-              avatar: match.avatar,
-              diamonds: "0.0K",
-              isMuted: false,
-              isCamMuted: false,
-              canUseCamera: true,
-              isBigFrame: false
-            };
-          }
-          return s;
-        });
+        host.guestSeats = host.guestSeats.map((s: any) => s.id === targetSeatId ? { ...s, name: match.username, avatar: match.avatar, diamonds: "0.0K", isMuted: false, isCamMuted: true, canUseCamera: true, isBigFrame: false, isModerator: Boolean(s.isModerator) } : s);
       }
       host.guestRequests = host.guestRequests.filter((r: any) => r.id !== reqId && r.username !== reqId);
     }
@@ -4434,7 +4421,7 @@ app.post("/api/v1/hosts/:id/guest-requests/:reqId/respond", (req, res) => {
 
 app.put("/api/v1/hosts/:id/guest-seats/control", (req, res) => {
   const { id } = req.params;
-  const { seatId, action, actorUsername } = req.body || {};
+  const { seatId, action } = req.body || {};
   const index = findHostIndex(id);
   if (index === -1) return res.status(404).json({ error: "Host not found" });
   const host = dbData.hosts[index];
@@ -4442,23 +4429,10 @@ app.put("/api/v1/hosts/:id/guest-seats/control", (req, res) => {
   const sid = Number(seatId);
   const seat = host.guestSeats.find((x: any) => Number(x.id) === sid);
   if (!seat || !seat.name) return res.status(404).json({ error: "Guest seat not occupied" });
-
-  const actor = String(actorUsername || "").toLowerCase();
-  const hostUsername = String(host.hostUsername || host.username || host.name || "").toLowerCase();
-  const actorIsHost = Boolean(actor && actor === hostUsername);
-  const actorIsModerator = host.guestSeats.some((x: any) => String(x.name || "").toLowerCase() === actor && Boolean(x.isModerator));
-  const actorIsTarget = String(seat.name || "").toLowerCase() === actor;
-
-  if (["moderator_on", "moderator_off"].includes(action) && !actorIsHost) {
-    return res.status(403).json({ error: "Only the Host can appoint or revoke moderators" });
+  const actorUsername = String(req.body?.actorUsername || "");
+  if ((action === "moderator_on" || action === "moderator_off") && actorUsername !== String(host.username || host.hostUsername || "")) {
+    return res.status(403).json({ error: "Only the Host can manage guest moderators" });
   }
-  if (action === "remove" && !actorIsHost && !actorIsModerator) {
-    return res.status(403).json({ error: "Only the Host or Moderator can remove a guest" });
-  }
-  if (["camera_on", "camera_off", "mic_mute", "mic_unmute"].includes(action) && !actorIsTarget && !actorIsHost && !actorIsModerator) {
-    return res.status(403).json({ error: "Not authorized for this guest control" });
-  }
-
   if (action === "camera_on") { seat.canUseCamera = true; seat.isCamMuted = false; }
   else if (action === "camera_off") { seat.isCamMuted = true; }
   else if (action === "mic_mute") { seat.isMuted = true; }
@@ -4466,12 +4440,10 @@ app.put("/api/v1/hosts/:id/guest-seats/control", (req, res) => {
   else if (action === "moderator_on") { seat.isModerator = true; }
   else if (action === "moderator_off") { seat.isModerator = false; }
   else if (action === "remove") {
-    host.guestSeats = host.guestSeats.map((x: any) => Number(x.id) === sid ? { id: x.id, name: null, avatar: null, diamonds: null, isMuted: false, isCamMuted: true, canUseCamera: false, isBigFrame: false, isModerator: false } : x);
+    host.guestSeats = host.guestSeats.map((x: any) => Number(x.id) === sid ? { id: x.id, name: null, avatar: null, diamonds: null, isMuted: false, isCamMuted: true, canUseCamera: false, isBigFrame: false } : x);
   }
   else return res.status(400).json({ error: "Unknown guest control action" });
-
-  saveDatabase();
-  syncDocument("hosts", host.id, host);
+  saveDatabase(); syncDocument("hosts", host.id, host);
   res.json({ success: true, guestSeats: host.guestSeats });
 });
 
@@ -4550,36 +4522,21 @@ app.post("/api/v1/hosts/:id/invites/:username/respond", (req, res) => {
       const match = host.pendingInvites.find((i: any) => String(i.targetUsername).toLowerCase() === String(username).toLowerCase());
       if (match) {
         if (action === "accept") {
-          const requestedSeatId = Number(match.seatId) || 1;
-          if (!Array.isArray(host.guestSeats)) {
-
-            const guestSeatCount = Number(host.guestSeatCapacity) === 16 ? 15 : 8;
-
-            host.guestSeats = Array.from({ length: guestSeatCount }, (_, i) => i + 1).map(sId => ({
-              id: sId, name: null, avatar: null, diamonds: null, isMuted: false, isCamMuted: true, canUseCamera: false, isBigFrame: false, isModerator: false
-            }));
+          const requestedCapacity = Number(host.guestSeatCapacity) === 16 || (Array.isArray(host.guestSeats) && host.guestSeats.length >= 15) ? 16 : 8;
+          const seatCount = requestedCapacity === 16 ? 15 : 8;
+          if (!Array.isArray(host.guestSeats) || host.guestSeats.length !== seatCount) {
+            const existing = Array.isArray(host.guestSeats) ? host.guestSeats : [];
+            host.guestSeats = Array.from({ length: seatCount }, (_, idx) => {
+              const id = idx + 1;
+              return existing.find((s: any) => Number(s.id) === id) || { id, name: null, avatar: null, diamonds: null, isMuted: false, isCamMuted: true, canUseCamera: false, isBigFrame: false, isModerator: false };
+            });
           }
-          const availableSeat = host.guestSeats.find((s: any) => Number(s.id) === requestedSeatId && !s.name) || host.guestSeats.find((s: any) => !s.name);
-          if (!availableSeat) {
-            return res.status(409).json({ error: "No available guest seat" });
-          }
-          const targetSeatId = Number(availableSeat.id);
-          host.guestSeats = host.guestSeats.map((s: any) => {
-            if (s.id === targetSeatId) {
-              return {
-                ...s,
-                name: username,
-                avatar: avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&h=150&q=80",
-                diamonds: "0.0K",
-                isMuted: false,
-                isCamMuted: true,
-                canUseCamera: false,
-                isBigFrame: false,
-                isModerator: false
-              };
-            }
-            return s;
-          });
+          const requestedSeatId = Number(match.seatId) || 0;
+          const requestedFreeSeat = host.guestSeats.find((s: any) => Number(s.id) === requestedSeatId && !s.name);
+          const availableSeat = host.guestSeats.find((s: any) => !s.name);
+          const targetSeatId = Number(requestedFreeSeat?.id || availableSeat?.id || 0);
+          if (!targetSeatId) return res.status(409).json({ error: "No guest seat available" });
+          host.guestSeats = host.guestSeats.map((s: any) => s.id === targetSeatId ? { ...s, name: username, avatar: avatar || "", diamonds: "0.0K", isMuted: false, isCamMuted: true, canUseCamera: true, isBigFrame: false, isModerator: Boolean(s.isModerator) } : s);
           host.guestModeActive = true;
           if (!Array.isArray(host.comments)) host.comments = [];
           host.comments.push({
