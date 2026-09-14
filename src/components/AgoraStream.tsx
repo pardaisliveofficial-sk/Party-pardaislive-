@@ -317,6 +317,11 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
       const el = slot || remoteVideoRefs.current[String(remote.uid)];
       if (el) {
         try { remote.videoTrack.play(el, { fit: "cover" }); } catch (e) {}
+      } else if (remote.videoTrack) {
+        requestAnimationFrame(() => {
+          const retryEl = remoteVideoSlotResolver?.(index, remote) || remoteVideoRefs.current[String(remote.uid)];
+          if (retryEl) { try { remote.videoTrack?.play(retryEl, { fit: "cover" }); } catch (e) {} }
+        });
       }
     });
   }, [remoteUsersList, remoteVideoSlotResolver]);
@@ -330,7 +335,7 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
 
     const cleanChannel = sanitizeChannel(channelName);
     const isPublisher = role === "publisher";
-    const myUid = userId || (isPublisher ? "host_streamer" : `viewer_${Math.floor(Math.random() * 89999) + 10000}`);
+    const myUid = userId || (isPublisher ? "host_streamer" : "viewer");
 
     const joinAgoraStream = async () => {
       setStatus("connecting");
@@ -468,10 +473,20 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
                   if (existing) return prev.map(u => u.uid === user.uid ? user : u);
                   return [...prev, user];
                 });
+                const playRemoteVideo = () => {
+                  const resolved = remoteVideoSlotResolver?.(0, user) || remoteVideoRefs.current[String(user.uid)];
+                  if (resolved && user.videoTrack) {
+                    try { user.videoTrack.play(resolved, { fit: "cover" }); return true; } catch (e) {}
+                  }
+                  return false;
+                };
                 requestAnimationFrame(() => {
-                  const el = remoteVideoRefs.current[String(user.uid)];
-                  if (el && user.videoTrack) {
-                    try { user.videoTrack.play(el, { fit: "cover" }); } catch (e) {}
+                  if (!playRemoteVideo()) {
+                    let attempts = 0;
+                    const retry = window.setInterval(() => {
+                      attempts += 1;
+                      if (playRemoteVideo() || attempts >= 20) window.clearInterval(retry);
+                    }, 50);
                   }
                 });
               } catch (subErr) {
@@ -623,6 +638,10 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
               }
               if (remote.hasVideo && !remote.videoTrack) {
                 await agoraClient.subscribe(remote, "video");
+              }
+              if (remote.videoTrack) {
+                const target = remoteVideoSlotResolver?.(0, remote) || remoteVideoRefs.current[String(remote.uid)];
+                if (target) { try { remote.videoTrack.play(target, { fit: "cover" }); } catch (e) {} }
               }
               setRemoteUsersList(prev => {
                 const existing = prev.find(u => u.uid === remote.uid);

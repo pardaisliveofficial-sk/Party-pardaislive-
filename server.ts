@@ -372,13 +372,18 @@ const handleAgoraTokenRequest = (req: any, res: any) => {
 
     if (appId && appCertificate && appCertificate.trim().length > 0) {
       try {
-        // Build token with wildcard UID (0) and PUBLISHER privileges for seamless dynamic voice/host role upgrades
+        // Build a token for the exact UID and role that the client will use.
+        // Using wildcard UID + publisher privileges caused role/identity mismatches
+        // when a viewer moved between Solo, PK and Guest modes.
+        const tokenRole = String(role || "subscriber").toLowerCase() === "publisher"
+          ? RtcRole.PUBLISHER
+          : RtcRole.SUBSCRIBER;
         token = RtcTokenBuilder.buildTokenWithUid(
           appId,
           appCertificate.trim(),
           channelName,
-          0,
-          RtcRole.PUBLISHER,
+          agoraUid,
+          tokenRole,
           privilegeExpiredTs,
           privilegeExpiredTs
         );

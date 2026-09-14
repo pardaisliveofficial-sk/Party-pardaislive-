@@ -5500,11 +5500,10 @@ export default function App() {
   useEffect(() => {
     if (clientView === "live-room" && activeHost) {
       const hostHasGuestRoom = Boolean(
-        activeHost.guestModeActive ||
+        activeHost.guestModeActive === true ||
         activeHost.category === "guest" ||
         activeHost.subCategory === "Guest" ||
-        activeHost.subCategory === "Multi-guest" ||
-        (Array.isArray(activeHost.guestSeats) && activeHost.guestSeats.length > 0)
+        activeHost.subCategory === "Multi-guest"
       );
       setViewerLiveGuestModeActive(hostHasGuestRoom);
     } else {
@@ -5520,7 +5519,7 @@ export default function App() {
     const hostId = `h-${user.uniqueId || user.username || "pardais_1001"}`;
     const syncHostState = () => {
       const isPk = Boolean(userLivePkActive || userLivePkConnected || userLiveCoHost?.username);
-      const isGuest = Boolean(userLiveGuestModeActive || (Array.isArray(userLiveGuestSeats) && userLiveGuestSeats.some(s => s.name !== null)));
+      const isGuest = Boolean(userLiveGuestModeActive);
       const currentCategory = isPk ? "pk" : (isGuest ? "guest" : "video");
       const currentSubCategory = isPk ? (prepLiveCategory === "1v1" ? "1v1" : "PK") : (isGuest ? "Guest" : (prepLiveCategory || "Solo"));
 
@@ -5778,11 +5777,10 @@ export default function App() {
 
           // Sync guest mode state & seats
           const isHostGuestMode = Boolean(
-            data.guestModeActive || 
+            data.guestModeActive === true || 
             data.subCategory === "Guest" || 
             data.subCategory === "Multi-guest" || 
-            data.category === "guest" || 
-            (Array.isArray(data.guestSeats) && data.guestSeats.some((s: any) => s.name !== null))
+            data.category === "guest"
           );
           setViewerLiveGuestModeActive(isHostGuestMode);
 
@@ -7695,6 +7693,11 @@ export default function App() {
     setUserLivePkScoreMy(0);
     setUserLivePkScoreOther(0);
     setUserLivePkTimer(300);
+    // A new Solo broadcast must never inherit the previous Guest Room layout.
+    setUserLiveGuestModeActive(false);
+    setShowGuestSeatModePicker(false);
+    setUserLiveGuestSeatCapacity(8);
+    setUserLiveGuestSeats(createGuestSeats(8));
     setIncoming1v1Invite(null);
     setCurrentOutgoingInviteId(null);
     setUserLiveInvitedHostId(null);
@@ -7732,8 +7735,22 @@ export default function App() {
 
   const handleStartGuestFromSolo = () => {
     if (userLiveGuestModeActive) {
+      const hostId = `h-${user.uniqueId || user.username || "host"}`;
       setUserLiveGuestModeActive(false);
       setShowGuestSeatModePicker(false);
+      setUserLiveGuestSeatCapacity(8);
+      setUserLiveGuestSeats(createGuestSeats(8));
+      fetch(`/api/v1/hosts/${encodeURIComponent(hostId)}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          guestModeActive: false,
+          guestSeats: createGuestSeats(8),
+          guestSeatCapacity: 8,
+          category: "video",
+          subCategory: "Solo"
+        })
+      }).catch(() => {});
       alert("🚫 Guest Room stopped. Solo Live resumed.");
       return;
     }
@@ -12613,7 +12630,7 @@ export default function App() {
                               <div className={is16PersonGuestRoom
                                 ? "w-full h-[34%] min-h-0 rounded-2xl overflow-hidden relative border border-pink-500/30 bg-[#0e0c15] shadow-lg flex items-center justify-center"
                                 : "w-1/2 h-full min-h-0 rounded-2xl overflow-hidden relative border border-pink-500/30 bg-[#0e0c15] shadow-lg flex items-center justify-center"}>
-                                <div ref={(el) => { viewerGuestRemoteVideoSlotsRef.current["host"] = el; }} className="absolute inset-0 z-10 bg-black" />
+                                <div ref={(el) => { viewerGuestRemoteVideoSlotsRef.current["host"] = el; }} className="absolute inset-0 z-10 bg-transparent" />
                                 {(() => {
                                   const pinnedGuest = viewerLiveGuestSeats.find(s => s.name !== null && s.isBigFrame);
                                   if (pinnedGuest) {
@@ -12751,7 +12768,7 @@ export default function App() {
                                     }`}
                                   >
                                     {seat.name && (
-                                      <div ref={(el) => { viewerGuestRemoteVideoSlotsRef.current[String(seat.id)] = el; }} className="absolute inset-0 z-15 bg-black pointer-events-none" />
+                                      <div ref={(el) => { viewerGuestRemoteVideoSlotsRef.current[String(seat.id)] = el; }} className="absolute inset-0 z-20 bg-transparent pointer-events-none" />
                                     )}
                                     {seat.name ? (
                                       <>
