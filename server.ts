@@ -4345,7 +4345,7 @@ app.post("/api/v1/hosts/:id/comments", (req, res) => {
 // Real-time Guest Requests & Seat Management Endpoints
 app.post("/api/v1/hosts/:id/guest-requests", (req, res) => {
   const { id } = req.params;
-  const { username, avatar, seatId, vipLevel, coins } = req.body || {};
+  const { username, avatar, seatId, vipLevel, coins, sessionId } = req.body || {};
   if (!username) {
     return res.status(400).json({ error: "Username is required for guest request" });
   }
@@ -4355,6 +4355,17 @@ app.post("/api/v1/hosts/:id/guest-requests", (req, res) => {
     if (!Array.isArray(host.guestRequests)) {
       host.guestRequests = [];
     }
+    // Release abandoned guest seats from older browser/app sessions.
+    // A new visit must request again rather than silently inheriting an old seat.
+    const staleCutoff = Date.now() - 15000;
+    if (Array.isArray(host.guestSeats)) {
+      host.guestSeats = host.guestSeats.map((seat: any) => {
+        if (seat?.name && seat?.sessionId && Number(seat.lastSeenAt || 0) > 0 && Number(seat.lastSeenAt) < staleCutoff) {
+          return { id: seat.id, name: null, avatar: null, diamonds: null, isMuted: false, isCamMuted: true, canUseCamera: false, isBigFrame: false, isModerator: false };
+        }
+        return seat;
+      });
+    }
     const reqId = `req-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
     const newReq = {
       id: reqId,
@@ -4363,6 +4374,7 @@ app.post("/api/v1/hosts/:id/guest-requests", (req, res) => {
       seatId: seatId || 1,
       vipLevel: vipLevel || 0,
       coins: coins || 0,
+      sessionId: String(sessionId || `pending_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`),
       timestamp: Date.now()
     };
     if (!host.guestRequests.some((r: any) => r.username === username)) {
@@ -4382,6 +4394,22 @@ app.get("/api/v1/hosts/:id/guest-requests", (req, res) => {
   const index = findHostIndex(id);
   if (index !== -1) {
     const host = dbData.hosts[index];
+    // Garbage-collect abandoned guest seats on every state read. This handles app/browser
+    // closes even when the viewer never gets a chance to send an explicit leave request.
+    const staleCutoff = Date.now() - 15000;
+    if (Array.isArray(host.guestSeats)) {
+      let changed = false;
+      host.guestSeats = host.guestSeats.map((seat: any) => {
+        const hasSession = Boolean(seat?.sessionId);
+        const stale = hasSession ? Number(seat.lastSeenAt || 0) < staleCutoff : Boolean(seat?.name);
+        if (seat?.name && stale) {
+          changed = true;
+          return { id: seat.id, name: null, avatar: null, diamonds: null, isMuted: false, isCamMuted: true, canUseCamera: false, isBigFrame: false, isModerator: false };
+        }
+        return seat;
+      });
+      if (changed) { saveDatabase(); syncDocument("hosts", host.id, host); }
+    }
     return res.json({ guestRequests: host.guestRequests || [], guestSeats: host.guestSeats || [], guestSeatCapacity: Number(host.guestSeatCapacity || ((host.guestSeats || []).length >= 15 ? 16 : 8)) });
   }
   res.status(404).json({ error: "Host not found" });
@@ -4412,7 +4440,7 @@ app.post("/api/v1/hosts/:id/guest-requests/:reqId/respond", (req, res) => {
         if (!targetSeatId) {
           return res.status(409).json({ error: "No guest seat available" });
         }
-        host.guestSeats = host.guestSeats.map((s: any) => s.id === targetSeatId ? { ...s, name: match.username, avatar: match.avatar, diamonds: "0.0K", isMuted: false, isCamMuted: true, canUseCamera: true, isBigFrame: false, isModerator: Boolean(s.isModerator) } : s);
+        host.guestSeats = host.guestSeats.map((s: any) => s.id === targetSeatId ? { ...s, name: match.username, avatar: match.avatar, diamonds: "0.0K", isMuted: false, isCamMuted: true, canUseCamera: true, isBigFrame: false, isModerator: Boolean(s.isModerator), sessionId: String(match.sessionId || `accepted_${Date.now()}`), lastSeenAt: Date.now() } : s);
       }
       host.guestRequests = host.guestRequests.filter((r: any) => r.id !== reqId && r.username !== reqId);
     }
@@ -4422,6 +4450,43 @@ app.post("/api/v1/hosts/:id/guest-requests/:reqId/respond", (req, res) => {
   } else {
     res.status(404).json({ error: "Host not found" });
   }
+});
+
+// Guest session heartbeat / leave. This keeps accepted seats tied to the current visit.
+app.post("/api/v1/hosts/:id/guest-seats/heartbeat", (req, res) => {
+  const { id } = req.params;
+  const { seatId, username, sessionId } = req.body || {};
+  const index = findHostIndex(id);
+  if (index === -1) return res.status(404).json({ error: "Host not found" });
+  const host = dbData.hosts[index];
+  const sid = Number(seatId);
+  const seat = Array.isArray(host.guestSeats) ? host.guestSeats.find((x: any) => Number(x.id) === sid) : null;
+  if (!seat || !seat.name) return res.status(404).json({ error: "Guest seat not occupied" });
+  if (String(seat.name).toLowerCase() !== String(username || "").toLowerCase() || String(seat.sessionId || "") !== String(sessionId || "")) {
+    return res.status(403).json({ error: "Guest seat session mismatch" });
+  }
+  seat.lastSeenAt = Date.now();
+  saveDatabase();
+  syncDocument("hosts", host.id, host);
+  res.json({ success: true, guestSeat: seat });
+});
+
+app.post("/api/v1/hosts/:id/guest-seats/leave", (req, res) => {
+  const { id } = req.params;
+  const { seatId, username, sessionId } = req.body || {};
+  const index = findHostIndex(id);
+  if (index === -1) return res.status(404).json({ error: "Host not found" });
+  const host = dbData.hosts[index];
+  const sid = Number(seatId);
+  const seat = Array.isArray(host.guestSeats) ? host.guestSeats.find((x: any) => Number(x.id) === sid) : null;
+  if (!seat || !seat.name) return res.json({ success: true, guestSeats: host.guestSeats || [] });
+  if (String(seat.name).toLowerCase() !== String(username || "").toLowerCase() || String(seat.sessionId || "") !== String(sessionId || "")) {
+    return res.status(403).json({ error: "Guest seat session mismatch" });
+  }
+  host.guestSeats = host.guestSeats.map((x: any) => Number(x.id) === sid ? { id: x.id, name: null, avatar: null, diamonds: null, isMuted: false, isCamMuted: true, canUseCamera: false, isBigFrame: false, isModerator: false } : x);
+  saveDatabase();
+  syncDocument("hosts", host.id, host);
+  res.json({ success: true, guestSeats: host.guestSeats });
 });
 
 app.put("/api/v1/hosts/:id/guest-seats/control", (req, res) => {
@@ -4445,7 +4510,7 @@ app.put("/api/v1/hosts/:id/guest-seats/control", (req, res) => {
   else if (action === "moderator_on") { seat.isModerator = true; }
   else if (action === "moderator_off") { seat.isModerator = false; }
   else if (action === "remove") {
-    host.guestSeats = host.guestSeats.map((x: any) => Number(x.id) === sid ? { id: x.id, name: null, avatar: null, diamonds: null, isMuted: false, isCamMuted: true, canUseCamera: false, isBigFrame: false } : x);
+    host.guestSeats = host.guestSeats.map((x: any) => Number(x.id) === sid ? { id: x.id, name: null, avatar: null, diamonds: null, isMuted: false, isCamMuted: true, canUseCamera: false, isBigFrame: false, isModerator: false } : x);
   }
   else return res.status(400).json({ error: "Unknown guest control action" });
   saveDatabase(); syncDocument("hosts", host.id, host);

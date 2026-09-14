@@ -398,8 +398,36 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
         setClient(agoraClient);
 
         // Event listeners: connection state change, user joined, user left
+        const resyncRemoteMedia = async () => {
+          if (isUnmounted) return;
+          for (const remote of agoraClient.remoteUsers) {
+            try {
+              if (receiveRemoteAudio && remote.hasAudio && !remote.audioTrack) {
+                await agoraClient.subscribe(remote, "audio");
+              }
+              if (receiveRemoteAudio && remote.audioTrack) {
+                remote.audioTrack.setVolume(100);
+                if (!remote.audioTrack.isPlaying) await remote.audioTrack.play();
+              }
+              if (remote.hasVideo && !remote.videoTrack) {
+                await agoraClient.subscribe(remote, "video");
+              }
+              if (remote.videoTrack) {
+                const target = remoteVideoSlotResolver?.(0, remote) || remoteVideoRefs.current[String(remote.uid)];
+                if (target) remote.videoTrack.play(target, { fit: "cover" });
+              }
+            } catch (e) {
+              console.warn("[AGORA MEDIA RESYNC]", { uid: remote.uid, error: e });
+            }
+          }
+        };
+
         agoraClient.on("connection-state-change", (curState, revState, reason) => {
           console.log("[AGORA EVENT: CONNECTION STATE CHANGE]", { curState, revState, reason });
+          if (curState === "CONNECTED") {
+            window.setTimeout(() => { void resyncRemoteMedia(); }, 250);
+            window.setTimeout(() => { void resyncRemoteMedia(); }, 1500);
+          }
         });
 
         agoraClient.on("user-joined", (user) => {
@@ -534,7 +562,7 @@ export const AgoraStream: React.FC<AgoraStreamProps> = ({
               setAudioBlocked(true);
             }
           });
-        }, 1000);
+        }, 750);
 
         // Join Agora Channel
         console.log("[AGORA EVENT: JOIN ATTEMPT]", { appId: targetAppId, channel: targetChannel, token: targetToken ? "PRESENT" : "NULL", uid: targetUid, role });

@@ -3081,6 +3081,8 @@ export default function App() {
   const viewerGuestLocalVideoMountRef = useRef<HTMLDivElement | null>(null);
   const viewerGuestRemoteVideoSlotsRef = useRef<Record<string, HTMLDivElement | null>>({});
   const [viewerRequestStatus, setViewerRequestStatus] = useState<"none" | "pending" | "accepted">("none");
+  // Each visit to a Video Guest Room gets a fresh participation session. A seat accepted in an older visit must never auto-reseat the viewer.
+  const [viewerGuestSessionId, setViewerGuestSessionId] = useState<string>("");
   const [viewerGiftDrawerOpen, setViewerGiftDrawerOpen] = useState<boolean>(false);
   const [viewerLiveGiftRecipient, setViewerLiveGiftRecipient] = useState<string>("Host");
   const [viewerLiveGuestSeats, setViewerLiveGuestSeats] = useState<Array<{
@@ -4700,6 +4702,19 @@ export default function App() {
     return () => window.clearInterval(timer);
   }, [clientView, user?.username, user?.uniqueId, userLiveGuestModeActive]);
 
+  // Fresh guest participation session on every entry into a live room.
+  // This intentionally does NOT persist to localStorage, so leaving/reopening the room
+  // requires a new request instead of silently restoring an old seat.
+  useEffect(() => {
+    if (clientView === "live-room" && activeHost?.id) {
+      setViewerGuestSessionId(`vg_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`);
+      setViewerRequestStatus("none");
+    } else if (clientView !== "live-room") {
+      setViewerGuestSessionId("");
+      setViewerRequestStatus("none");
+    }
+  }, [clientView, activeHost?.id]);
+
   // Viewer-side Guest Room sync: keep seat acceptance/rejection and camera permission
   // in sync with the host device. This is the production source of truth for guest seats.
   useEffect(() => {
@@ -4716,9 +4731,13 @@ export default function App() {
           const mySeat = data.guestSeats.find((seat: any) =>
             seat.name && String(seat.name).toLowerCase() === String(user?.username || "").toLowerCase()
           );
-          if (mySeat) {
+          // A seat is accepted for THIS browser/app visit only. Older seat records
+          // are ignored and are released by the server when stale.
+          if (mySeat && viewerGuestSessionId && String(mySeat.sessionId || "") === viewerGuestSessionId) {
             setViewerRequestStatus("accepted");
             wasPending = false;
+          } else if (mySeat && viewerGuestSessionId && String(mySeat.sessionId || "") !== viewerGuestSessionId) {
+            if (!wasPending) setViewerRequestStatus("none");
           } else if (wasPending && !(data.guestRequests || []).some((r: any) =>
             String(r.username).toLowerCase() === String(user?.username || "").toLowerCase()
           )) {
@@ -4738,7 +4757,24 @@ export default function App() {
     pollGuestState();
     const timer = window.setInterval(pollGuestState, 1000);
     return () => window.clearInterval(timer);
-  }, [clientView, viewerLiveGuestModeActive, activeHost?.id, user?.username, viewerRequestStatus]);
+  }, [clientView, viewerLiveGuestModeActive, activeHost?.id, user?.username, viewerRequestStatus, viewerGuestSessionId]);
+
+  // Keep the accepted guest seat alive only for this exact room visit. If the app/browser
+  // is closed, heartbeats stop and the server releases the seat after the stale timeout.
+  useEffect(() => {
+    if (clientView !== "live-room" || !viewerLiveGuestModeActive || !currentViewerGuestSeat || !viewerGuestSessionId || !user?.username || !activeHost?.id) return;
+    const hostId = activeHost.id;
+    const sendHeartbeat = () => {
+      fetch(`/api/v1/hosts/${encodeURIComponent(hostId)}/guest-seats/heartbeat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ seatId: currentViewerGuestSeat.id, username: user.username, sessionId: viewerGuestSessionId })
+      }).catch(() => {});
+    };
+    sendHeartbeat();
+    const timer = window.setInterval(sendHeartbeat, 5000);
+    return () => window.clearInterval(timer);
+  }, [clientView, viewerLiveGuestModeActive, currentViewerGuestSeat?.id, viewerGuestSessionId, user?.username, activeHost?.id]);
 
   const missedActiveSessionCountRef = useRef<number>(0);
 
@@ -5545,10 +5581,21 @@ export default function App() {
           coHostAvatar: userLiveCoHost?.avatar,
           coHostVipLevel: Number(userLiveCoHost?.vipLevel || 0),
           guestModeActive: isGuest,
-          guestSeats: userLiveGuestSeats,
+          // Never let the 1-second sync overwrite a freshly selected 16-seat layout
+          // with the previous 8-seat React snapshot while state is settling.
+          guestSeats: isGuest
+            ? (userLiveGuestSeats.length === (userLiveGuestSeatCapacity === 16 ? 15 : 8)
+                ? userLiveGuestSeats
+                : createGuestSeats(userLiveGuestSeatCapacity))
+            : createGuestSeats(8),
+          guestSeatCapacity: isGuest ? userLiveGuestSeatCapacity : 8,
           category: currentCategory,
           subCategory: currentSubCategory,
-          channelName: `room_${user.uniqueId || user.username || "pardais_1001"}`,
+          // Viewers must follow the exact same Agora channel as the broadcasters.
+          // During PK this is the PK channel, not the original Solo room channel.
+          channelName: isPk
+            ? (userLivePkChannelName || `pk_room_${[String(user.username || "host").toLowerCase(), String(userLiveCoHost?.username || "opponent").toLowerCase()].sort().join("_")}`)
+            : `room_${user.uniqueId || user.username || "pardais_1001"}`,
           statusText: prepLiveTitle || "Live Stream Active",
           isLive: true,
           status: "live",
@@ -12746,7 +12793,7 @@ export default function App() {
                                         try {
                                           const res = await fetch(`/api/v1/hosts/${activeHost.id}/guest-requests`, {
                                             method: "POST", headers: { "Content-Type": "application/json" },
-                                            body: JSON.stringify({ username: user.username, avatar: user.avatar, seatId: seat.id, vipLevel: user.vipLevel || 0, level: user.userLevel || 1 })
+                                            body: JSON.stringify({ username: user.username, avatar: user.avatar, seatId: seat.id, vipLevel: user.vipLevel || 0, level: user.userLevel || 1, sessionId: viewerGuestSessionId })
                                           });
                                           if (!res.ok) throw new Error("Request failed");
                                           setViewerRequestStatus("pending");
