@@ -1368,7 +1368,7 @@ app.post("/api/v1/auth/email-status", async (req, res) => {
 // 2. Dispatch Email Verification OTP Code
 // Email delivery uses the Resend HTTPS API instead of SMTP. This avoids
 // Railway's outbound SMTP port restrictions and keeps the OTP logic unchanged.
-async function sendPardaisPartyOtpEmail(to: string, otp: string, purpose: "signup" | "password-reset" | "account-deletion" | "account-restore" = "signup"): Promise<void> {
+async function sendPardaisPartyOtpEmail(to: string, otp: string, purpose: "signup" | "login" | "password-reset" | "account-deletion" | "account-restore" = "signup"): Promise<void> {
   const resendApiKey = process.env.RESEND_API_KEY?.trim();
   // IMPORTANT: never hard-code an unverified sender. Resend only delivers
   // production mail when the From address belongs to a verified domain.
@@ -1394,12 +1394,14 @@ async function sendPardaisPartyOtpEmail(to: string, otp: string, purpose: "signu
       purpose === "password-reset" ? "Account Recovery"
       : purpose === "account-deletion" ? "Account Deletion Confirmation"
       : purpose === "account-restore" ? "Account Restore Code"
+      : purpose === "login" ? "Login Verification"
       : "Email Verification"
     }</h2>
     <p>Your 6-digit ${
       purpose === "password-reset" ? "account recovery"
       : purpose === "account-deletion" ? "account deletion confirmation"
       : purpose === "account-restore" ? "account restore"
+      : purpose === "login" ? "login"
       : "verification"
     } code is:</p>
     <div style="font-size: 32px; font-weight: bold; letter-spacing: 6px; color: #00f5ff; margin: 20px 0;">${otp}</div>
@@ -1425,6 +1427,8 @@ async function sendPardaisPartyOtpEmail(to: string, otp: string, purpose: "signu
           ? "Your Pardais Party Account Deletion Code"
           : purpose === "account-restore"
           ? "Your Pardais Party Account Restore Code"
+          : purpose === "login"
+          ? "Your Pardais Party Login Code"
           : "Your Pardais Party Email Verification Code",
         ...(replyTo ? { reply_to: replyTo } : {}),
         html
@@ -1535,6 +1539,119 @@ app.post("/api/v1/auth/send-email-otp", async (req, res) => {
 // CRITICAL: this route is intentionally a FAST AUTH GATE.
 // The browser must receive the signed session token immediately after the OTP
 // matches. No Firestore read/write is awaited on this request.
+// Login OTP is a separate challenge type: it never creates a new account and
+// never reuses the signup verification token flow.
+app.post("/api/v1/auth/send-login-otp", async (req, res) => {
+  const cleanEmail = String(req.body?.email || "").trim().toLowerCase();
+  if (!cleanEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+    return res.status(400).json({ success: false, error: "Enter a valid registered email address." });
+  }
+
+  const lastSentAt = otpSendLocks.get(cleanEmail) || 0;
+  const remaining = 60000 - (Date.now() - lastSentAt);
+  if (remaining > 0) {
+    return res.status(429).json({
+      success: false,
+      code: "OTP_COOLDOWN",
+      error: `Please wait ${Math.ceil(remaining / 1000)} seconds before requesting another code.`,
+      retryAfterSeconds: Math.ceil(remaining / 1000)
+    });
+  }
+  otpSendLocks.set(cleanEmail, Date.now());
+
+  try {
+    const user = await findUserByIdentifierDurably(cleanEmail);
+    // Use the same response for unknown, banned, and deletion-scheduled accounts
+    // to avoid exposing account existence through the OTP-send endpoint.
+    if (!user || user.isBanned || user.deletionScheduledAt) {
+      return res.json({
+        success: true,
+        message: "If an active Pardais Party account exists for this email, a login code has been sent."
+      });
+    }
+
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const challenge = {
+      otp,
+      email: cleanEmail,
+      type: "login",
+      expiresAt: Date.now() + 10 * 60 * 1000,
+      createdAt: new Date().toISOString()
+    };
+    const challengeKey = `email_${cleanEmail.replace(/[^a-zA-Z0-9]/g, "_")}`;
+    if (!dbData.emailOtps) dbData.emailOtps = {};
+    dbData.emailOtps[cleanEmail] = challenge;
+    saveDatabase();
+    void persistAuthChallenge(challengeKey, challenge).catch((err) => {
+      console.warn("[PARDAIS LOGIN OTP] Durable challenge write delayed/unavailable.", err);
+    });
+
+    await sendPardaisPartyOtpEmail(cleanEmail, otp, "login");
+    return res.json({
+      success: true,
+      message: "If an active Pardais Party account exists for this email, a login code has been sent."
+    });
+  } catch (error: any) {
+    otpSendLocks.delete(cleanEmail);
+    delete dbData.emailOtps?.[cleanEmail];
+    saveDatabase();
+    console.error("[PARDAIS LOGIN OTP] Delivery failed:", error?.message || error);
+    return res.status(400).json({
+      success: false,
+      code: "OTP_DELIVERY_FAILED",
+      error: "Could not send a login code right now. Please try again."
+    });
+  }
+});
+
+app.post("/api/v1/auth/verify-login-otp", async (req, res) => {
+  const cleanEmail = String(req.body?.email || "").trim().toLowerCase();
+  const cleanOtp = String(req.body?.otp || "").replace(/\D/g, "");
+  if (!cleanEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail) || cleanOtp.length !== 6) {
+    return res.status(400).json({ success: false, error: "Enter your email and the 6-digit login code." });
+  }
+
+  const challengeKey = `email_${cleanEmail.replace(/[^a-zA-Z0-9]/g, "_")}`;
+  let stored = dbData.emailOtps?.[cleanEmail] || null;
+  if (!stored) {
+    try {
+      stored = await Promise.race([
+        getPersistedAuthChallenge(challengeKey),
+        new Promise<any | null>((resolve) => setTimeout(() => resolve(null), 1500))
+      ]);
+    } catch {
+      stored = null;
+    }
+  }
+
+  if (!stored || stored.type !== "login") {
+    return res.status(401).json({ success: false, error: "No active login code found. Request a new code and try again." });
+  }
+  if (stored.expiresAt && Date.now() > Number(stored.expiresAt)) {
+    delete dbData.emailOtps[cleanEmail];
+    void deletePersistedAuthChallenge(challengeKey).catch(() => undefined);
+    return res.status(401).json({ success: false, error: "Login code expired. Request a new code." });
+  }
+  if (String(stored.otp).trim() !== cleanOtp) {
+    return res.status(401).json({ success: false, error: "Incorrect login code. Please check and try again." });
+  }
+
+  delete dbData.emailOtps[cleanEmail];
+  void deletePersistedAuthChallenge(challengeKey).catch(() => undefined);
+
+  const user = await findUserByIdentifierDurably(cleanEmail);
+  if (!user || user.isBanned || user.deletionScheduledAt) {
+    return res.status(401).json({ success: false, error: "This account cannot sign in. Contact Pardais Party support if you need help." });
+  }
+
+  ensureStableEmailIdentity(user, cleanEmail);
+  applyAdminAccountState(user, { initializeCoins: true });
+  const token = await createSession(user);
+  saveDatabase();
+  void persistUserDurably(user).catch((err) => console.warn("[PARDAIS LOGIN OTP] Background user sync note:", err));
+  return res.json({ success: true, message: "Logged in successfully.", token, user });
+});
+
 app.post("/api/v1/auth/verify-email-otp", async (req, res) => {
   const { email, otp } = req.body || {};
   if (!email || !otp) {
@@ -1567,6 +1684,9 @@ app.post("/api/v1/auth/verify-email-otp", async (req, res) => {
 
   if (!stored) {
     return res.status(401).json({ success: false, error: "No OTP code requested for this email or OTP expired. Please request a new code." });
+  }
+  if (stored.type && stored.type !== "signup") {
+    return res.status(401).json({ success: false, error: "This code belongs to a different authentication flow. Request a new signup code." });
   }
 
   if (stored.expiresAt && Date.now() > Number(stored.expiresAt)) {
@@ -1650,7 +1770,7 @@ app.post("/api/v1/auth/verify-email-otp", async (req, res) => {
   res.status(200).set("Content-Type", "application/json").end(payload);
 
   // Persist after the response has been handed to the client.
-  setImmediate(() => {
+  setTimeout(() => {
     void (async () => {
       try { await persistUserDurably(user); } catch (err) {
         console.warn("[PARDAIS AUTH] Background pending-user persistence delayed:", err);
@@ -2716,6 +2836,184 @@ app.post("/api/v1/user", authenticateUser, async (req: any, res: any) => {
 });
 
 // ------------------------------------------------------------------
+const PARDAIS_STORE_CATALOG: Record<string, { priceCoins: number; category: string; requiredLevel?: number; vipTier?: number }> = {
+  "vip_frame_1": {"priceCoins": 300000, "category": "vip_frames", "requiredLevel": 8, "vipTier": 1},
+  "vip_frame_2": {"priceCoins": 300000, "category": "vip_frames", "requiredLevel": 16, "vipTier": 2},
+  "vip_frame_3": {"priceCoins": 300000, "category": "vip_frames", "requiredLevel": 24, "vipTier": 3},
+  "vip_frame_4": {"priceCoins": 1000000, "category": "vip_frames", "requiredLevel": 32, "vipTier": 4},
+  "vip_frame_5": {"priceCoins": 1000000, "category": "vip_frames", "requiredLevel": 40, "vipTier": 5},
+  "vip_frame_6": {"priceCoins": 3000000, "category": "vip_frames", "requiredLevel": 48, "vipTier": 6},
+  "vip_frame_7": {"priceCoins": 3000000, "category": "vip_frames", "requiredLevel": 56, "vipTier": 7},
+  "vip_frame_8": {"priceCoins": 3000000, "category": "vip_frames", "requiredLevel": 64, "vipTier": 8},
+  "vip_frame_9": {"priceCoins": 3000000, "category": "vip_frames", "requiredLevel": 72, "vipTier": 9},
+  "vip_frame_10": {"priceCoins": 3000000, "category": "vip_frames", "requiredLevel": 80, "vipTier": 10},
+  "vip_frame_11": {"priceCoins": 3000000, "category": "vip_frames", "requiredLevel": 88, "vipTier": 11},
+  "vip_frame_12": {"priceCoins": 3000000, "category": "vip_frames", "requiredLevel": 96, "vipTier": 12},
+  "frame_fairy_blossom": {"priceCoins": 300000, "category": "vip_frames"},
+  "frame_golden_splendor": {"priceCoins": 300000, "category": "vip_frames"},
+  "frame_cupid_carriage": {"priceCoins": 300000, "category": "vip_frames"},
+  "frame_golden_lion": {"priceCoins": 1000000, "category": "vip_frames"},
+  "frame_halloween_specter": {"priceCoins": 1000000, "category": "vip_frames"},
+  "frame_arabian_sheik": {"priceCoins": 1000000, "category": "vip_frames"},
+  "frame_neon_pink_heart": {"priceCoins": 1000000, "category": "vip_frames"},
+  "frame_dollar_dynasty": {"priceCoins": 1000000, "category": "vip_frames"},
+  "entry_flower_bike": {"priceCoins": 3000000, "category": "special_entries"},
+  "entry_ghost_motorcycle": {"priceCoins": 3000000, "category": "special_entries"},
+  "entry_pink_crystal_car": {"priceCoins": 10000000, "category": "special_entries"},
+  "entry_mecha_warrior": {"priceCoins": 10000000, "category": "special_entries"},
+  "entry_balloon_airship": {"priceCoins": 10000000, "category": "special_entries"},
+  "entry_fairy_carriage": {"priceCoins": 10000000, "category": "special_entries"},
+  "entry_ice_pegasus": {"priceCoins": 10000000, "category": "special_entries"},
+  "entry_frost_beast": {"priceCoins": 10000000, "category": "special_entries"},
+  "entry_violet_hypercar": {"priceCoins": 10000000, "category": "special_entries"},
+  "entry_emerald_hypercar": {"priceCoins": 10000000, "category": "special_entries"},
+  "entry_royal_elephant": {"priceCoins": 10000000, "category": "special_entries"},
+  "entry_golden_sun_lion": {"priceCoins": 10000000, "category": "special_entries"},
+  "entry_phoenix_wargod": {"priceCoins": 10000000, "category": "special_entries", "requiredLevel": 7},
+  "entry_dragon_stalker": {"priceCoins": 10000000, "category": "special_entries", "requiredLevel": 7},
+  "gift_diamond_ring": {"priceCoins": 500000, "category": "custom_gifts"},
+  "gift_fairy_castle": {"priceCoins": 2000000, "category": "custom_gifts"},
+  "gift_alpha_yacht": {"priceCoins": 5000000, "category": "custom_gifts"},
+  "gift_cosmic_shuttle": {"priceCoins": 8000000, "category": "custom_gifts"},
+  "gift_emperor_crown": {"priceCoins": 10000000, "category": "custom_gifts"},
+  "gift_golden_heli": {"priceCoins": 3500000, "category": "custom_gifts"},
+  "gift_galaxy_heart": {"priceCoins": 6000000, "category": "custom_gifts"},
+  "gift_flame_dragon": {"priceCoins": 12000000, "category": "custom_gifts"},
+  "gift_rose_meteor": {"priceCoins": 300000, "category": "custom_gifts"},
+  "customized_nameplate_banner": {"priceCoins": 1000000, "category": "customized_gifts"},
+  "customized_photo_frame": {"priceCoins": 2500000, "category": "customized_gifts"},
+  "customized_voice_fanfare": {"priceCoins": 5000000, "category": "customized_gifts"},
+  "customized_fireworks_text": {"priceCoins": 8000000, "category": "customized_gifts"},
+  "customized_hall_of_fame_trophy": {"priceCoins": 10000000, "category": "customized_gifts"},
+  "customized_engraved_ring": {"priceCoins": 15000000, "category": "customized_gifts"},
+  "tag_alpha_king": {"priceCoins": 3000000, "category": "tags"},
+  "tag_top_giver": {"priceCoins": 2000000, "category": "tags"},
+  "tag_super_star": {"priceCoins": 1500000, "category": "tags"},
+  "tag_guardian_angel": {"priceCoins": 1000000, "category": "tags"},
+  "tag_trendsetter": {"priceCoins": 800000, "category": "tags"},
+  "tag_heartthrob": {"priceCoins": 1200000, "category": "tags"},
+  "tag_lightning_god": {"priceCoins": 2500000, "category": "tags"},
+  "tag_dragon_master": {"priceCoins": 5000000, "category": "tags"},
+  "tag_billionaire": {"priceCoins": 10000000, "category": "tags"},
+};
+
+// Alpha Mate-style Store: server-authoritative catalog, coin debit and inventory.
+// Never trust client-supplied prices or balances.
+app.get("/api/v1/store/inventory", authenticateUser, (req: any, res: any) => {
+  const inventory = Array.isArray(req.user?.storeInventory) ? req.user.storeInventory : [];
+  res.json({
+    success: true,
+    inventory,
+    equipped: req.user?.storeEquipped || {
+      vipFrameId: req.user?.vipFrameId || null,
+      entranceId: req.user?.entranceAnimation || null,
+      tagId: req.user?.equippedTagId || null
+    }
+  });
+});
+
+app.post("/api/v1/store/purchase", authenticateUser, async (req: any, res: any) => {
+  const itemId = String(req.body?.itemId || "").trim();
+  const item = PARDAIS_STORE_CATALOG[itemId];
+  if (!item) return res.status(400).json({ success: false, error: "This Store item is not available." });
+
+  const inventory: string[] = Array.isArray(req.user.storeInventory) ? req.user.storeInventory : [];
+  if (inventory.includes(itemId)) {
+    return res.status(409).json({ success: false, error: "This item is already in your backpack.", inventory });
+  }
+
+  const userLevel = Number(req.user.userLevel || req.user.level || 1);
+  if (item.requiredLevel && userLevel < item.requiredLevel) {
+    return res.status(403).json({ success: false, error: `Requires Level ${item.requiredLevel}. Your current level is ${userLevel}.` });
+  }
+
+  const balance = Math.max(0, Math.floor(Number(req.user.coins) || 0));
+  if (balance < item.priceCoins) {
+    return res.status(400).json({ success: false, error: "Not enough coins to purchase this item.", requiredCoins: item.priceCoins, coins: balance });
+  }
+
+  req.user.coins = balance - item.priceCoins;
+  req.user.storeInventory = [...inventory, itemId];
+  const equipped = { ...(req.user.storeEquipped || {}) };
+  if (item.category === "vip_frames") {
+    equipped.vipFrameId = itemId;
+    req.user.vipFrameId = itemId;
+    req.user.vipLevel = Math.max(Number(req.user.vipLevel || 0), Number(item.vipTier || 0));
+    req.user.selectedFrameId = `vip-frame-${Number(item.vipTier || 1)}`;
+  } else if (item.category === "special_entries") {
+    equipped.entranceId = itemId;
+    req.user.entranceAnimation = itemId;
+  } else if (item.category === "tags") {
+    equipped.tagId = itemId;
+    req.user.equippedTagId = itemId;
+  }
+  req.user.storeEquipped = equipped;
+  req.user.profileUpdatedAt = new Date().toISOString();
+
+  const userIndex = (dbData.users || []).findIndex((u: any) =>
+    u?.uid === req.user?.uid ||
+    (u?.email && req.user?.email && String(u.email).toLowerCase() === String(req.user.email).toLowerCase())
+  );
+  if (userIndex >= 0) dbData.users[userIndex] = { ...dbData.users[userIndex], ...req.user };
+  else dbData.users.push(req.user);
+
+  const tx = {
+    id: `store_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    type: "store_purchase",
+    username: req.user.username,
+    itemId,
+    category: item.category,
+    amount: item.priceCoins,
+    currency: "coins",
+    timestamp: new Date().toISOString(),
+    status: "Completed"
+  };
+  if (!Array.isArray(dbData.storeTransactions)) dbData.storeTransactions = [];
+  dbData.storeTransactions.unshift(tx);
+  saveDatabase();
+  const persisted = await persistUserDurably(req.user);
+  if (!persisted) return res.status(503).json({ success: false, error: "Purchase could not be permanently saved. Please retry." });
+  void syncDocument("store_transactions", tx.id, tx).catch(() => undefined);
+  return res.json({ success: true, message: "Item purchased and equipped.", user: req.user, inventory: req.user.storeInventory, equipped, transaction: tx });
+});
+
+app.post("/api/v1/store/equip", authenticateUser, async (req: any, res: any) => {
+  const itemId = String(req.body?.itemId || "").trim();
+  const item = PARDAIS_STORE_CATALOG[itemId];
+  if (!item) return res.status(400).json({ success: false, error: "This Store item is not available." });
+  const inventory: string[] = Array.isArray(req.user.storeInventory) ? req.user.storeInventory : [];
+  const vipTierOwned = item.category === "vip_frames" && Number(req.user.vipLevel || 0) >= Number(item.vipTier || 0);
+  if (!inventory.includes(itemId) && !vipTierOwned) {
+    return res.status(403).json({ success: false, error: "You do not own this item." });
+  }
+
+  const equipped = { ...(req.user.storeEquipped || {}) };
+  if (item.category === "vip_frames") {
+    equipped.vipFrameId = itemId;
+    req.user.vipFrameId = itemId;
+    req.user.selectedFrameId = `vip-frame-${Number(item.vipTier || 1)}`;
+    if (item.vipTier) req.user.vipLevel = Math.max(Number(req.user.vipLevel || 0), item.vipTier);
+  } else if (item.category === "special_entries") {
+    equipped.entranceId = itemId;
+    req.user.entranceAnimation = itemId;
+  } else if (item.category === "tags") {
+    equipped.tagId = itemId;
+    req.user.equippedTagId = itemId;
+  }
+  req.user.storeEquipped = equipped;
+  req.user.profileUpdatedAt = new Date().toISOString();
+  const userIndex = (dbData.users || []).findIndex((u: any) =>
+    u?.uid === req.user?.uid ||
+    (u?.email && req.user?.email && String(u.email).toLowerCase() === String(req.user.email).toLowerCase())
+  );
+  if (userIndex >= 0) dbData.users[userIndex] = { ...dbData.users[userIndex], ...req.user };
+  else dbData.users.push(req.user);
+  saveDatabase();
+  const persisted = await persistUserDurably(req.user);
+  if (!persisted) return res.status(503).json({ success: false, error: "Equipped item could not be permanently saved." });
+  return res.json({ success: true, user: req.user, inventory, equipped });
+});
+
 // PERMANENT USER FOLLOWING / ENGAGEMENT STATE
 // ------------------------------------------------------------------
 app.get("/api/v1/user/following", authenticateUser, (req: any, res: any) => {
@@ -3386,7 +3684,7 @@ app.post("/api/v1/gifts/send", authenticateUser, (req, res) => {
 
   saveDatabase();
 
-  const responseData = {
+  const responseData: any = {
     success: true,
     transactionId: txId,
     gift,

@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from "react";
-import pardaisPartyMark from "../assets/pardais-p-mark.png";
+import pardaisPartyMark from "../assets/pardais-party-official-brand.png";
 
 interface PardaisPartySplashScreenProps {
   onComplete?: () => void;
@@ -43,24 +43,21 @@ export const PardaisPartySplashScreen: React.FC<PardaisPartySplashScreenProps> =
     >
       <div className="relative flex flex-col items-center justify-center space-y-4 max-w-xs px-6 text-center">
         {/* Animated App Logo / Brand Icon with Exact Neon P Emblem */}
-        <div className="relative w-32 h-32 flex items-center justify-center">
-          <div className="absolute inset-0 rounded-full bg-gradient-to-tr from-[#ff007f] via-[#7b2cbf] to-[#00d2ff] animate-pulse blur-xl opacity-70"></div>
-          <div className="relative w-28 h-28 rounded-3xl bg-[#090514] border-2 border-[#ff007f]/70 p-2 flex items-center justify-center shadow-[0_0_35px_rgba(255,0,127,0.5)] overflow-hidden">
+        <div className="relative w-[min(82vw,360px)] aspect-square flex items-center justify-center">
+          <div className="absolute inset-8 rounded-full bg-gradient-to-tr from-[#ff007f] via-[#7b2cbf] to-[#00d2ff] animate-pulse blur-2xl opacity-60"></div>
+          <div className="relative w-full h-full flex items-center justify-center overflow-hidden">
             <img
               src={pardaisPartyMark}
               alt="Pardais Party"
-              className="w-full h-full object-contain filter drop-shadow-[0_0_12px_rgba(255,0,127,0.8)] select-none"
+              className="w-full h-full object-contain select-none"
               draggable={false}
             />
           </div>
         </div>
 
         <div className="space-y-1">
-          <h1 className="text-xl font-black tracking-wider uppercase text-white font-mono">
-            PARDAIS PARTY
-          </h1>
-          <p className="text-[11px] text-pink-400 font-medium tracking-wide">
-            Where Every Party Comes Alive ✨
+          <p className="text-[11px] text-pink-300/90 font-semibold tracking-[0.22em]">
+            WHERE EVERY PARTY COMES ALIVE
           </p>
         </div>
 

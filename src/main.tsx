@@ -1,7 +1,6 @@
 import React, { StrictMode, useState, useEffect, Component, ErrorInfo, ReactNode } from 'react';
 import {createRoot} from 'react-dom/client';
 import App from './App.tsx';
-import AdminApp from './AdminApp.tsx';
 import './index.css';
 
 // Intercept and handle Firestore quota/resource-exhausted errors cleanly to prevent developer log pollution
@@ -237,71 +236,7 @@ class AppErrorBoundary extends (React.Component as any) {
 }
 
 function MainRouter() {
-  const [isAdminView, setIsAdminView] = useState(() => {
-    if (typeof window === "undefined") return false;
-    const path = window.location.pathname.toLowerCase();
-    const search = window.location.search.toLowerCase();
-    const hash = window.location.hash.toLowerCase();
-    return path.startsWith("/admin") || search.includes("admin") || hash.includes("admin");
-  });
-
-  useEffect(() => {
-    const checkRoute = () => {
-      const path = window.location.pathname.toLowerCase();
-      const search = window.location.search.toLowerCase();
-      const hash = window.location.hash.toLowerCase();
-      setIsAdminView(path.startsWith("/admin") || search.includes("admin") || hash.includes("admin"));
-    };
-
-    const originalPushState = window.history.pushState;
-    const originalReplaceState = window.history.replaceState;
-
-    window.history.pushState = function (...args) {
-      originalPushState.apply(this, args);
-      window.dispatchEvent(new PopStateEvent("popstate"));
-    };
-
-    window.history.replaceState = function (...args) {
-      originalReplaceState.apply(this, args);
-      window.dispatchEvent(new PopStateEvent("popstate"));
-    };
-
-    window.addEventListener("popstate", checkRoute);
-    window.addEventListener("hashchange", checkRoute);
-    return () => {
-      window.history.pushState = originalPushState;
-      window.history.replaceState = originalReplaceState;
-      window.removeEventListener("popstate", checkRoute);
-      window.removeEventListener("hashchange", checkRoute);
-    };
-  }, []);
-
-  if (isAdminView) {
-    return (
-      <div className="relative min-h-screen">
-        {/* Top return banner to switch back to Pardais Party app */}
-        <div className="bg-gradient-to-r from-purple-900 via-pink-900 to-slate-900 text-white px-4 py-2 border-b border-pink-500/30 flex items-center justify-between text-xs font-mono">
-          <div className="flex items-center space-x-2">
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
-            <span className="font-bold text-pink-300">👑 Pardais Party Web Administration Portal</span>
-          </div>
-          <button
-            onClick={() => {
-              window.history.pushState({}, "", "/");
-              setIsAdminView(false);
-            }}
-            className="bg-white/10 hover:bg-white/20 text-white font-bold px-3 py-1 rounded-lg border border-white/20 transition-all cursor-pointer flex items-center space-x-1"
-          >
-            <span>📱 Switch to Mobile App View</span>
-          </button>
-        </div>
-        <AppErrorBoundary>
-          <AdminApp />
-        </AppErrorBoundary>
-      </div>
-    );
-  }
-
+  // Admin is hosted as a separate application; consumer app has no admin route.
   return (
     <AppErrorBoundary>
       <App />

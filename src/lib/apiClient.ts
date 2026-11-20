@@ -334,6 +334,36 @@ export async function emailPasswordLogin(identifier: string, password: string) {
   return data;
 }
 
+export async function sendLoginOtp(email: string) {
+  const cleanEmail = email.trim().toLowerCase();
+  const { ok, data } = await safeAuthFetch("/api/v1/auth/send-login-otp", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: cleanEmail })
+  });
+  if (!ok || !data?.success) {
+    const err: any = new Error(data?.error || "Could not send a login code. Please try again.");
+    err.code = data?.code;
+    err.retryAfterSeconds = data?.retryAfterSeconds;
+    throw err;
+  }
+  return data;
+}
+
+export async function verifyLoginOtp(email: string, otp: string) {
+  const cleanEmail = email.trim().toLowerCase();
+  const cleanOtp = otp.trim().replace(/\D/g, "");
+  const { ok, data } = await safeAuthFetch("/api/v1/auth/verify-login-otp", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: cleanEmail, otp: cleanOtp })
+  });
+  if (!ok || !data?.success || !data?.token || !data?.user) {
+    throw new Error(data?.error || "Login code is invalid or expired.");
+  }
+  return data;
+}
+
 export async function createEmailPassword(token: string, password: string) {
   const { ok, data } = await safeAuthFetch("/api/v1/auth/set-password", {
     method: "POST",

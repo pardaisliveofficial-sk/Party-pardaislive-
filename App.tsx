@@ -2577,7 +2577,9 @@ export default function App() {
   
   // 🔊 Host-only short reaction sound effects. The actual sound is published through Agora in real time.
   const handlePartyReactionSound = async (sound: PartyReactionSoundId) => {
-    if (!activePartyId || !isHostOfRoom) return;
+    const activeReactionParty = partiesList.find((party: any) => String(party.id) === String(activePartyId));
+    const isActiveReactionHost = Boolean(activeReactionParty && String(activeReactionParty.hostUsername || "").toLowerCase() === String(user.username || "").toLowerCase());
+    if (!activePartyId || !isActiveReactionHost) return;
     const event = { id: `reaction-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, sound };
     setPartyReactionEvent(event);
     setShowPartyReactionSounds(false);
@@ -12822,47 +12824,34 @@ export default function App() {
                                         {(() => {
                                           const isMyGuestSeat = String(seat.name || "").toLowerCase() === String(user.username || "").toLowerCase();
                                           const isMyLiveCamera = isMyGuestSeat && !seat.isCamMuted && seat.canUseCamera && (currentViewerIsGuest || viewerRequestStatus === "accepted");
-
-                                          /* IMPORTANT: the local Agora video mount must NOT be covered by the avatar/cam-off fallback.
-                                             Previously the fallback rendered on top of this div, so the viewer only saw DP even
-                                             though the local camera track was actually being published. */}
-                                          if (isMyLiveCamera) {
-                                            return (
-                                              <>
-                                                <img
-                                                  src={seat.avatar || DEFAULT_USER.avatar}
-                                                  className="absolute inset-0 w-full h-full object-cover opacity-80"
-                                                  alt="guest camera fallback"
-                                                />
-                                                <div
-                                                  ref={viewerGuestLocalVideoMountRef}
-                                                  className="absolute inset-0 z-30 w-full h-full bg-transparent"
-                                                />
-                                              </>
-                                            );
-                                          }
-
-                                          /* Camera OFF / unavailable: show the guest DP normally. */
-                                          if (isMyGuestSeat || seat.isCamMuted || !seat.canUseCamera) {
-                                            return (
-                                              <>
-                                                <img
-                                                  src={seat.avatar || DEFAULT_USER.avatar}
-                                                  style={{ transform: `rotate(${seat.rotation || 0}deg)`, transition: "transform 0.3s ease" }}
-                                                  className="absolute inset-0 w-full h-full object-cover opacity-85"
-                                                  alt="guest avatar"
-                                                />
-                                                <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/10 to-transparent pointer-events-none"></div>
-                                                {seat.isCamMuted && (
-                                                  <div className="absolute top-1 right-1 z-20 bg-black/60 rounded-full p-1">
-                                                    <CameraOff className="w-3 h-3 text-gray-300" />
-                                                  </div>
-                                                )}
-                                              </>
-                                            );
-                                          }
-
-                                          return (
+                                          return isMyLiveCamera ? (
+                                            <>
+                                              <img
+                                                src={seat.avatar || DEFAULT_USER.avatar}
+                                                className="absolute inset-0 w-full h-full object-cover opacity-80"
+                                                alt="guest camera fallback"
+                                              />
+                                              <div
+                                                ref={viewerGuestLocalVideoMountRef}
+                                                className="absolute inset-0 z-30 w-full h-full bg-transparent"
+                                              />
+                                            </>
+                                          ) : (isMyGuestSeat || seat.isCamMuted || !seat.canUseCamera) ? (
+                                            <>
+                                              <img
+                                                src={seat.avatar || DEFAULT_USER.avatar}
+                                                style={{ transform: `rotate(${seat.rotation || 0}deg)`, transition: "transform 0.3s ease" }}
+                                                className="absolute inset-0 w-full h-full object-cover opacity-85"
+                                                alt="guest avatar"
+                                              />
+                                              <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/10 to-transparent pointer-events-none"></div>
+                                              {seat.isCamMuted && (
+                                                <div className="absolute top-1 right-1 z-20 bg-black/60 rounded-full p-1">
+                                                  <CameraOff className="w-3 h-3 text-gray-300" />
+                                                </div>
+                                              )}
+                                            </>
+                                          ) : (
                                             <div className="absolute inset-0 bg-[#0c0919] flex flex-col items-center justify-center space-y-1">
                                               <CameraOff className="w-4 h-4 text-gray-600" />
                                               <span className="text-[6px] text-gray-600 font-mono uppercase tracking-widest scale-90">Cam Off</span>
@@ -15502,38 +15491,7 @@ export default function App() {
                             </div>
                           </div>
 
-                          {/* ===================================================================== */}
-                          {/* 👑 PARDAIS WEB ADMIN PORTAL LAUNCH CARD - RESTRICTED TO AUTHORIZED ADMIN EMAILS ONLY */}
-                          {/* ===================================================================== */}
-                          {isAuthorizedAdmin(user) && (
-                            <div 
-                              onClick={() => {
-                                window.location.href = "/admin.html";
-                              }}
-                              className="bg-gradient-to-r from-pink-950/40 via-[#1e1e2d] to-purple-950/40 p-3.5 rounded-xl border border-pink-500/40 hover:border-pink-400 shadow-xl cursor-pointer group transition-all duration-200 active:scale-[0.98] flex items-center justify-between"
-                            >
-                              <div className="flex items-center space-x-2.5">
-                                <div className="p-2 rounded-xl bg-gradient-to-tr from-[#ff007f] to-[#7b2cbf] text-white shadow-md group-hover:scale-110 transition-transform">
-                                  <Shield className="w-5 h-5 text-white" />
-                                </div>
-                                <div className="text-left">
-                                  <h5 className="text-[11px] uppercase tracking-wider text-white font-black font-mono flex items-center">
-                                    <span>Web Admin Portal</span>
-                                    <span className="ml-1.5 text-[7px] bg-[#ff007f] text-white px-1.5 py-0.2 rounded font-mono font-bold animate-pulse">👑 MASTER CONSOLE</span>
-                                  </h5>
-                                  <p className="text-[8.5px] text-pink-200/90 mt-0.5 font-sans">
-                                    Full Web Management: <span className="text-white font-bold">Users, KYC, Coins, Withdrawals & Stream Nodes</span>
-                                  </p>
-                                </div>
-                              </div>
-                              <div className="flex items-center space-x-1 text-[9.5px] text-pink-400 font-black group-hover:translate-x-1 transition-transform bg-pink-500/10 border border-pink-500/30 px-2 py-1 rounded-lg">
-                                <span>Enter Portal</span>
-                                <span>➔</span>
-                              </div>
-                            </div>
-                          )}
-
-                          {/* Level Progress */}
+                                                    {/* Level Progress */}
                           {(() => {
                             const profileProg = getProgressionFromCoins(user.xp || 0);
                             return (
@@ -21769,7 +21727,7 @@ export default function App() {
                                 <div className="space-y-2.5 text-[9px] bg-transparent">
                                   <p className="text-gray-400 font-medium">Currently requesting viewers to join audio/video slots:</p>
                                   <div className="space-y-2 bg-transparent">
-                                    {userLiveGuestRequests.map((req) => (
+                                    {userLiveGuestRequests.map((req, idx) => (
                                       <div key={idx} className="flex justify-between items-center bg-white/5 p-2 rounded-lg border border-white/5">
                                         <div className="flex items-center space-x-1.5 bg-transparent">
                                           <img src={req.avatar || DEFAULT_USER.avatar} className="w-5 h-5 rounded-full object-cover shrink-0" />
@@ -27126,49 +27084,7 @@ export default function App() {
                             </div>
                           </div>
 
-                          {/* 👑 WEB ADMIN PORTAL LAUNCHER (Restricted to Authorized Admin Emails) */}
-                          {isAuthorizedAdmin(user) && (
-                            <div className="bg-gradient-to-r from-purple-950/80 to-pink-950/80 p-3 rounded-xl border border-purple-500/40 space-y-2">
-                              <div className="flex justify-between items-center text-[10px]">
-                                <span className="font-extrabold text-pink-300 flex items-center font-mono">
-                                  <Shield className="w-4 h-4 text-pink-400 mr-1.5" />
-                                  <span>Web Admin Portal</span>
-                                </span>
-                                <span className="text-[7.5px] bg-purple-500/30 text-pink-300 border border-purple-400/40 px-1.5 py-0.2 rounded font-black font-mono">
-                                  RESTRICTED
-                                </span>
-                              </div>
-                              <p className="text-[8px] text-gray-300">
-                                Comprehensive live stream oversight, KYC verification approvals, agency payouts, and user management.
-                              </p>
-                              <div className="flex space-x-2 pt-1">
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    window.location.href = "/admin.html";
-                                    setShowSettingsDrawer(false);
-                                  }}
-                                  className="flex-1 bg-gradient-to-r from-purple-700 to-pink-600 hover:from-purple-600 hover:to-pink-500 text-white font-black text-[8.5px] uppercase py-2 rounded-xl transition-all shadow-md active:scale-95 flex items-center justify-center space-x-1 cursor-pointer"
-                                >
-                                  <Shield className="w-3 h-3 text-pink-200" />
-                                  <span>Web Portal</span>
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setShowWhatsappAdminModal(true);
-                                    setShowSettingsDrawer(false);
-                                  }}
-                                  className="flex-1 bg-[#25D366]/20 hover:bg-[#25D366]/30 border border-[#25D366]/40 text-[#25D366] font-black text-[8.5px] uppercase py-2 rounded-xl transition-all shadow-md active:scale-95 flex items-center justify-center space-x-1 cursor-pointer"
-                                >
-                                  <MessageCircle className="w-3 h-3 text-[#25D366]" />
-                                  <span>WhatsApp Setup</span>
-                                </button>
-                              </div>
-                            </div>
-                          )}
-
-                          {/* Profile Quick Edit */}
+                                                    {/* Profile Quick Edit */}
                           <div className="bg-[#12121a] p-3 rounded-xl border border-[#303040] space-y-3">
                             <span className="text-[8px] uppercase tracking-wider text-pink-400 block font-bold font-mono">Quick Profile Customization</span>
                             

@@ -64,7 +64,7 @@ export const DragonTigerGame: React.FC<DragonTigerProps> = ({
   const [lastWinAmount, setLastWinAmount] = useState<number>(0);
   const [history, setHistory] = useState<("D" | "T" | "Tie")[]>(["D", "T", "T", "D", "Tie", "D", "T", "D"]);
 
-  const totalBet = Object.values(bets).reduce((a, b) => a + b, 0);
+  const totalBet = (Object.values(bets) as number[]).reduce((a, b) => a + b, 0);
 
   // Sound effect trigger
   const playSound = (freq: number, type: OscillatorType = "sine", duration: number = 0.1) => {

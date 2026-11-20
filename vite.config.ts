@@ -24,7 +24,6 @@ export default defineConfig(() => {
       rollupOptions: {
         input: {
           main: path.resolve(process.cwd(), 'index.html'),
-          admin: path.resolve(process.cwd(), 'admin.html'),
         },
         output: {
           manualChunks(id) {

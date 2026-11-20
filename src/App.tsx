@@ -10,6 +10,7 @@ import { AgoraPartyAudio } from "./components/AgoraPartyAudio";
 import { VipAnimatedFrame, VIP_FRAMES_LIST } from "./components/VipAnimatedFrame";
 import { VipRideAnimationOverlay } from "./components/VipRideAnimationOverlay";
 import { VipEntranceStoreModal } from "./components/VipEntranceStoreModal";
+import { AlphaParityStoreScreen, type StoreItem } from "./components/AlphaParityStoreScreen";
 import { getVipEntryEffect } from "./vipEntryConfig";
 import { getDeviceInformation, fetchRealDeviceLocation } from "./utils/deviceInfo";
 import {
@@ -1964,7 +1965,8 @@ export default function App() {
   }, [reels, stories, user.uniqueId, user.username, user.fullName]);
 
   // Client Navigation View (within mobile)
-  const [clientView, setClientView] = useState<"feed" | "live-room" | "profile" | "wallet" | "family-agency" | "chat" | "reels" | "user-live" | "camera-prep" | "party-room" | "notifications" | "stream" | "shop" | "moments" | "revenue-share">("feed");
+  const [clientView, setClientView] = useState<"feed" | "rooms" | "live-room" | "profile" | "wallet" | "family-agency" | "chat" | "reels" | "user-live" | "camera-prep" | "party-room" | "notifications" | "stream" | "shop" | "moments" | "revenue-share">("feed");
+  const [storeInventory, setStoreInventory] = useState<string[]>(Array.isArray((user as any)?.storeInventory) ? (user as any).storeInventory : []);
   const [viewHistory, setViewHistory] = useState<string[]>(["feed"]);
 
   useEffect(() => {
@@ -2577,7 +2579,9 @@ export default function App() {
   
   // 🔊 Host-only short reaction sound effects. The actual sound is published through Agora in real time.
   const handlePartyReactionSound = async (sound: PartyReactionSoundId) => {
-    if (!activePartyId || !isHostOfRoom) return;
+    const activeReactionParty = partiesList.find((party: any) => String(party.id) === String(activePartyId));
+    const isActiveReactionHost = Boolean(activeReactionParty && String(activeReactionParty.hostUsername || "").toLowerCase() === String(user.username || "").toLowerCase());
+    if (!activePartyId || !isActiveReactionHost) return;
     const event = { id: `reaction-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, sound };
     setPartyReactionEvent(event);
     setShowPartyReactionSounds(false);
@@ -9379,6 +9383,49 @@ export default function App() {
     }
   };
 
+
+  const refreshStoreInventory = async () => {
+    const response = await authenticatedFetch("/api/v1/store/inventory", { method: "GET" }, { username: user.username, uid: user.uid });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data?.success) throw new Error(data?.error || "Unable to load Store inventory.");
+    setStoreInventory(Array.isArray(data.inventory) ? data.inventory : []);
+    return data;
+  };
+
+  const handleStorePurchase = async (item: StoreItem) => {
+    const response = await authenticatedFetch("/api/v1/store/purchase", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ itemId: item.id })
+    }, { username: user.username, uid: user.uid });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data?.success) throw new Error(data?.error || "Purchase failed.");
+    if (data.user) setUser((previous: any) => ({ ...previous, ...data.user }));
+    if (Array.isArray(data.inventory)) setStoreInventory(data.inventory);
+    return data;
+  };
+
+  const handleStoreEquip = async (item: StoreItem) => {
+    const response = await authenticatedFetch("/api/v1/store/equip", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ itemId: item.id })
+    }, { username: user.username, uid: user.uid });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data?.success) throw new Error(data?.error || "Could not equip this item.");
+    if (data.user) setUser((previous: any) => ({ ...previous, ...data.user }));
+    if (Array.isArray(data.inventory)) setStoreInventory(data.inventory);
+    return data;
+  };
+
+  useEffect(() => {
+    if (clientView !== "shop" || !user?.uid) return;
+    refreshStoreInventory().catch((error) => {
+      console.warn("[PARDAIS STORE] Inventory load failed:", error);
+    });
+  }, [clientView, user?.uid]);
+
+
   return (
     <div className="min-h-screen bg-[#0b0c10] text-[#c5c6c7] font-sans flex flex-col items-center justify-center p-0 sm:p-4">
       {/* Dynamic Theme Stylesheet Override */}
@@ -9853,6 +9900,21 @@ export default function App() {
                           </button>
                         </div>
 
+                        <button
+                          type="button"
+                          onClick={() => { setClientView("profile"); setShowDailyTasksOverlay(true); }}
+                          className="w-full rounded-2xl p-3 border border-purple-400/25 bg-gradient-to-r from-[#241535] via-[#17152b] to-[#26133c] shadow-[0_8px_22px_rgba(124,77,255,0.12)] flex items-center justify-between gap-3 text-left active:scale-[0.99] transition-all"
+                        >
+                          <div className="flex items-center gap-3 min-w-0">
+                            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-amber-300/20 to-pink-500/20 border border-amber-300/25 flex items-center justify-center text-xl">🎁</div>
+                            <div className="min-w-0">
+                              <p className="text-[10px] font-black uppercase tracking-[0.16em] text-amber-300">Daily Rewards</p>
+                              <p className="text-[9px] text-purple-100/80 mt-0.5">Open your daily tasks and rewards</p>
+                            </div>
+                          </div>
+                          <span className="shrink-0 px-3 py-1.5 rounded-full bg-gradient-to-r from-amber-400 to-orange-500 text-[#251208] text-[9px] font-black">VIEW →</span>
+                        </button>
+
                         {/* 🎙️ LIVE / PARTY HOME DISCOVERY SWITCH */}
                         <div className="bg-[#12121a]/95 border border-[#303040]/60 rounded-2xl p-1.5 flex items-center gap-1 shadow-lg">
                           <button
@@ -10249,7 +10311,7 @@ export default function App() {
                                 feedTab === "explore" ? "text-[#ff007f]" : "text-gray-400 hover:text-gray-200"
                               }`}
                             >
-                              <span>Explore 🗺️</span>
+                              <span>For You ✨</span>
                               {feedTab === "explore" && (
                                 <span className="absolute bottom-0 inset-x-4 h-0.5 bg-[#ff007f] rounded-full"></span>
                               )}
@@ -10635,6 +10697,158 @@ export default function App() {
                     {/* ===================================================================== */}
                     {/* VIEW 1.8: 12-SEAT AUDIO PARTY ROOM (AUDIO LOUNGE & SEATING CONTROL)  */}
                     {/* ===================================================================== */}
+                    {clientView === "rooms" && (
+                      <div className="flex-1 scroll-view-y p-3 pb-5 space-y-4">
+                        <div className="rounded-2xl border border-purple-500/30 bg-gradient-to-br from-[#241535] via-[#15162a] to-[#0d202b] p-4 shadow-[0_0_25px_rgba(124,77,255,0.12)]">
+                          <div className="flex items-center justify-between gap-3">
+                            <div>
+                              <p className="text-[10px] uppercase tracking-[0.2em] text-cyan-300 font-black">Pardais Party</p>
+                              <h2 className="text-xl font-black text-white mt-1">Party Rooms</h2>
+                              <p className="text-[10px] text-gray-400 mt-1">Join live voice lounges and meet the community</p>
+                            </div>
+                            <div className="w-12 h-12 rounded-2xl bg-purple-500/15 border border-purple-400/30 flex items-center justify-center">
+                              <Users className="w-6 h-6 text-purple-300" />
+                            </div>
+                          </div>
+                          <div className="flex items-center justify-between mt-4">
+                            <span className="text-[10px] text-gray-300 font-bold">
+                              {(partiesList || []).filter((party: any) => party && party.status !== "ended").length} ACTIVE ROOMS
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                fetch("/api/v1/parties")
+                                  .then((response) => response.json())
+                                  .then((data) => { if (Array.isArray(data)) setPartiesList(data); })
+                                  .catch((error) => console.error("Party room refresh failed:", error));
+                              }}
+                              className="px-3 py-1.5 rounded-lg bg-white/10 border border-white/15 text-[10px] text-white font-bold flex items-center gap-1.5"
+                            >
+                              <RefreshCw className="w-3 h-3" /> Refresh
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-none">
+                          {[
+                            { id: "all", label: "🔥 All Rooms" },
+                            { id: "Music", label: "🎙️ Music" },
+                            { id: "Talk", label: "💬 Talk" },
+                            { id: "Chill", label: "🍵 Chill" },
+                            { id: "Gaming", label: "🎮 Gaming" },
+                            { id: "Friends", label: "💖 Friends" }
+                          ].map((category) => (
+                            <button
+                              key={category.id}
+                              type="button"
+                              onClick={() => setPartyCategory(category.id)}
+                              className={`shrink-0 px-3 py-2 rounded-full border text-[10px] font-black transition-all ${
+                                partyCategory === category.id
+                                  ? "bg-gradient-to-r from-pink-500 to-purple-600 text-white border-transparent"
+                                  : "bg-[#1e1e2d] text-gray-400 border-white/10"
+                              }`}
+                            >
+                              {category.label}
+                            </button>
+                          ))}
+                        </div>
+
+                        {(() => {
+                          const activeParties = (partiesList || []).filter((party: any) =>
+                            party && party.status !== "ended" &&
+                            (partyCategory === "all" || party.category === partyCategory)
+                          );
+                          if (activeParties.length === 0) {
+                            return (
+                              <div className="rounded-2xl border border-white/10 bg-[#12121a]/70 p-8 text-center space-y-3">
+                                <div className="text-4xl">🎙️</div>
+                                <h3 className="text-sm font-black text-white">No Active Rooms</h3>
+                                <p className="text-[10px] text-gray-400">Start a room or check another category.</p>
+                                <button type="button" onClick={() => setShowCreatePartyModal(true)} className="px-4 py-2 rounded-xl bg-gradient-to-r from-pink-600 to-purple-600 text-white text-[10px] font-black uppercase">
+                                  + Start Your Room
+                                </button>
+                              </div>
+                            );
+                          }
+                          return (
+                            <div className="space-y-2.5">
+                              {activeParties
+                                .slice()
+                                .sort((a: any, b: any) => Number(b.participantCount || 0) - Number(a.participantCount || 0))
+                                .map((party: any, index: number) => {
+                                  const roomSeats = Array.isArray(party.seats) ? party.seats : [];
+                                  const filledSeats = roomSeats.filter((seat: any) => seat && seat.name).length;
+                                  const capacity = Number(party.maxCapacity || party.seatCount || roomSeats.length || 12);
+                                  const viewers = Math.max(0, Number(party.activeViewers || party.participantCount || filledSeats || 0));
+                                  const hostAvatar = party.hostAvatar || party.avatar || roomSeats.find((seat: any) => seat?.name)?.avatar || DEFAULT_USER.avatar;
+                                  const isFeatured = index < 2;
+                                  return (
+                                    <button
+                                      key={party.id}
+                                      type="button"
+                                      onClick={() => handleJoinParty(party.id)}
+                                      className={`relative w-full text-left p-3.5 sm:p-4 rounded-2xl overflow-hidden transform hover:-translate-y-0.5 transition-all shadow-xl ${
+                                        isFeatured
+                                          ? "bg-gradient-to-r from-[#2B104A] via-[#1F0C3B] to-[#140A28] border border-amber-400/45 shadow-amber-500/10"
+                                          : "bg-gradient-to-r from-[#20103A] to-[#120824] border border-[#A855F7]/25 hover:border-[#EC4899]/50"
+                                      }`}
+                                    >
+                                      <div className="absolute inset-0 opacity-20 pointer-events-none" style={{ backgroundImage: "radial-gradient(circle at 90% 10%, rgba(192,132,252,0.25), transparent 45%)" }} />
+                                      {isFeatured && (
+                                        <div className={`absolute top-0 right-0 px-3 py-1 rounded-bl-2xl text-[9px] font-black uppercase tracking-wider shadow-md ${index === 0 ? "bg-gradient-to-r from-amber-400 to-yellow-500 text-amber-950" : "bg-gradient-to-r from-[#EC4899] to-[#7928CA] text-white"}`}>
+                                          {index === 0 ? "👑 TRENDING" : "✨ POPULAR"}
+                                        </div>
+                                      )}
+                                      <div className="relative flex items-start justify-between gap-3 mb-3 pr-16">
+                                        <div className="flex items-center gap-3 min-w-0">
+                                          <div className="relative shrink-0">
+                                            <img
+                                              src={hostAvatar}
+                                              alt={party.hostUsername || "Room host"}
+                                              className={`w-12 h-12 sm:w-14 sm:h-14 rounded-2xl object-cover shadow-lg ${isFeatured ? "border-2 border-amber-400/80" : "border border-purple-400/60"}`}
+                                            />
+                                            <span className="absolute -top-1 -left-1 px-1 py-0.5 rounded bg-black/80 border border-white/20 text-[7px] font-black text-amber-300">HD</span>
+                                            <span className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-[#EC4899] flex items-center justify-center shadow-md border border-[#140C26]">
+                                              <Mic className="w-3 h-3 text-white" />
+                                            </span>
+                                          </div>
+                                          <div className="min-w-0">
+                                            <div className="flex items-center gap-1.5 min-w-0">
+                                              <h3 className="text-sm font-black text-white truncate">{party.title || "Party Room"}</h3>
+                                              {party.countryFlag && <span className="text-xs shrink-0">{party.countryFlag}</span>}
+                                            </div>
+                                            <p className="text-[10px] text-zinc-300 mt-0.5 truncate">
+                                              Host: @{party.hostUsername || "Host"}
+                                            </p>
+                                            <p className="text-[9px] text-zinc-400 mt-1 line-clamp-2">{party.description || "Join the conversation and meet the community."}</p>
+                                          </div>
+                                        </div>
+                                      </div>
+                                      <div className="relative flex items-center justify-between gap-2 pt-2 border-t border-white/10">
+                                        <div className="flex items-center gap-1.5 flex-wrap">
+                                          <span className="px-2 py-1 rounded-full bg-amber-400/10 border border-amber-400/25 text-amber-300 text-[8px] font-black">
+                                            🎁 {Number(party.totalGiftCoins || party.giftCoins || 0).toLocaleString()} Coins
+                                          </span>
+                                          <span className="px-2 py-1 rounded-full bg-white/10 text-zinc-300 text-[8px] font-bold flex items-center gap-1">
+                                            <Users className="w-3 h-3 text-[#C084FC]" /> {viewers} Online
+                                          </span>
+                                        </div>
+                                        <div className="flex items-center -space-x-1.5 shrink-0">
+                                          {roomSeats.filter((seat: any) => seat && seat.name).slice(0, 3).map((seat: any, seatIndex: number) => (
+                                            <img key={`${party.id}-seat-${seatIndex}`} src={seat.avatar || DEFAULT_USER.avatar} alt="Guest" className="w-5 h-5 rounded-full object-cover border border-[#140C26]" />
+                                          ))}
+                                          <span className="text-[8px] text-[#C084FC] font-bold ml-2 whitespace-nowrap">{Math.max(0, capacity - filledSeats)} seats left</span>
+                                        </div>
+                                      </div>
+                                    </button>
+                                  );
+                                })}
+                            </div>
+                          );
+                        })()}
+                      </div>
+                    )}
+
                     {clientView === "party-room" && (() => {
                       const party = partiesList.find(p => p.id === activePartyId);
                       if (!party) {
@@ -14755,62 +14969,20 @@ export default function App() {
                     )}
 
                     {clientView === "shop" && (
-                      <div className="flex-1 scroll-view-y p-3 pb-5 space-y-4">
-                        <div className="rounded-2xl p-4 border border-yellow-400/30 bg-gradient-to-br from-[#241535] via-[#15162a] to-[#0d202b] shadow-[0_0_30px_rgba(255,0,127,0.12)]">
-                          <div className="flex items-start justify-between gap-3">
-                            <div>
-                              <div className="flex items-center gap-2">
-                                <ShoppingBag className="w-5 h-5 text-yellow-400" />
-                                <span className="text-[9px] font-black tracking-[0.18em] text-pink-400 uppercase">Pardais Shop</span>
-                              </div>
-                              <h2 className="text-xl font-black text-white mt-1">Exclusive Collection</h2>
-                              <p className="text-[9px] text-gray-400 mt-1 leading-relaxed">VIP frames, custom gifts and special Pardais products — all in one place.</p>
-                            </div>
-                            <div className="px-2 py-1 rounded-full bg-yellow-400/10 border border-yellow-400/20 text-yellow-300 text-[8px] font-black uppercase">Coming Soon</div>
-                          </div>
-                        </div>
-
-                        <button type="button" onClick={() => setClientView("revenue-share")} className="w-full text-left rounded-2xl p-4 border border-emerald-400/25 bg-gradient-to-r from-[#14251f] via-[#17162a] to-[#25142c] shadow-[0_0_28px_rgba(16,185,129,0.10)] active:scale-[0.99] transition-all">
-                          <div className="flex items-center justify-between gap-3">
-                            <div className="flex items-start gap-3">
-                              <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-emerald-400/20 to-yellow-400/20 border border-emerald-300/20 flex items-center justify-center text-2xl">💰</div>
-                              <div><div className="text-[8px] font-black uppercase tracking-[0.16em] text-emerald-300">Gifter Revenue Share</div><h3 className="text-sm font-black text-white mt-1">Grow with Pardais Party</h3><p className="text-[8px] text-gray-400 mt-1">Turn eligible deposits into tracked platform revenue participation.</p><p className="text-[8px] text-yellow-300 font-black mt-1">Minimum {revenueShareMinDeposit != null ? `$${revenueShareMinDeposit.toLocaleString()}` : "set by plan"}</p></div>
-                            </div>
-                            <span className="shrink-0 px-2.5 py-2 rounded-xl bg-emerald-400 text-black text-[8px] font-black uppercase">View Plans</span>
-                          </div>
-                        </button>
-
-                        <div className="grid grid-cols-2 gap-3">
-                          {[
-                            { icon: "👑", title: "VIP Frames", desc: "Premium animated profile frames", tag: "VIP" },
-                            { icon: "🎁", title: "Custom Gifts", desc: "Exclusive gifts for live & parties", tag: "GIFTS" },
-                            { icon: "✨", title: "Exclusive Items", desc: "Limited Pardais digital products", tag: "EXCLUSIVE" },
-                            { icon: "🏆", title: "Special Drops", desc: "Event-only collections & rewards", tag: "LIMITED" },
-                          ].map((item) => (
-                            <button
-                              key={item.title}
-                              type="button"
-                              onClick={() => setReportSuccessToast(`${item.title} collection is coming soon.`)}
-                              className="text-left rounded-2xl border border-white/10 bg-[#12121c]/90 p-3 hover:border-pink-500/50 active:scale-[0.98] transition-all shadow-lg"
-                            >
-                              <div className="h-24 rounded-xl bg-gradient-to-br from-purple-900/50 via-[#17172a] to-cyan-900/30 border border-white/5 flex items-center justify-center text-5xl">{item.icon}</div>
-                              <div className="mt-3 flex items-center justify-between gap-2">
-                                <h3 className="text-[11px] font-black text-white">{item.title}</h3>
-                                <span className="text-[7px] font-black text-pink-400 border border-pink-500/20 rounded-full px-1.5 py-0.5">{item.tag}</span>
-                              </div>
-                              <p className="text-[8px] text-gray-500 mt-1 leading-snug">{item.desc}</p>
-                            </button>
-                          ))}
-                        </div>
-
-                        <div className="rounded-2xl border border-cyan-500/20 bg-[#0d1720]/90 p-3 flex items-center gap-3">
-                          <div className="w-11 h-11 rounded-full bg-gradient-to-br from-pink-500/20 to-cyan-400/20 border border-cyan-400/20 flex items-center justify-center">🛍️</div>
-                          <div className="flex-1">
-                            <p className="text-[10px] font-black text-white">Pardais Shop is being prepared</p>
-                            <p className="text-[8px] text-gray-500 mt-0.5">Product details, pricing and checkout will be connected here later.</p>
-                          </div>
-                        </div>
-                      </div>
+                      <AlphaParityStoreScreen
+                        currentUser={{
+                          ...user,
+                          avatar: user.avatar || user.avatarUrl || DEFAULT_USER.avatar,
+                          vipTier: Number(user.vipLevel || 0),
+                          level: Number(user.userLevel || user.level || 1),
+                          entranceAnimation: (user as any).entranceAnimation || null
+                        }}
+                        coins={Number(user.coins || 0)}
+                        inventory={storeInventory}
+                        onNavigate={(screen) => setClientView(screen === "wallet" ? "wallet" : "feed")}
+                        onPurchase={handleStorePurchase}
+                        onEquip={handleStoreEquip}
+                      />
                     )}
 
                     {/* VIEW 3: USER PROFILE & MISSION BADGES */}
@@ -14890,7 +15062,18 @@ export default function App() {
                             onChange={handleCoverPhotoUpload}
                           />
 
-                          <img src={user.coverPhoto || DEFAULT_USER.coverPhoto} className="w-full h-36 object-cover" alt="cover" />
+                          <div className="relative w-full h-64 sm:h-72 overflow-hidden bg-gradient-to-br from-[#3B0764] via-[#1E113A] to-[#09070F]">
+                            <img src={user.coverPhoto || DEFAULT_USER.coverPhoto} className="w-full h-full object-cover" alt="cover" />
+                            <div className="absolute inset-0 bg-gradient-to-t from-[#09070F] via-black/25 to-black/35 pointer-events-none" />
+                            <div className="absolute inset-0 opacity-20 pointer-events-none" style={{ backgroundImage: "radial-gradient(circle at 50% 50%, rgba(255,255,255,0.18) 1px, transparent 1px)", backgroundSize: "24px 24px" }} />
+                            <div className="absolute left-4 bottom-20 z-10 pointer-events-none">
+                              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/45 border border-white/15 backdrop-blur-md text-[8px] font-black tracking-[0.18em] text-amber-300 uppercase">
+                                <Radio className="w-3 h-3 text-pink-400 animate-pulse" /> PARDAIS PARTY
+                              </span>
+                              <h2 className="mt-2 text-lg sm:text-xl font-black tracking-wide text-white drop-shadow-lg">YOUR PARTY PROFILE</h2>
+                              <p className="text-[9px] text-purple-100/90 mt-0.5">Your identity • Your community • Your stage</p>
+                            </div>
+                          </div>
                           
                           {/* LARGER PROFILE PICTURE WITH STORIES RINGS AND ACTION BUTTONS */}
                           {(() => {
@@ -15473,38 +15656,7 @@ export default function App() {
                             </div>
                           </div>
 
-                          {/* ===================================================================== */}
-                          {/* 👑 PARDAIS WEB ADMIN PORTAL LAUNCH CARD - RESTRICTED TO AUTHORIZED ADMIN EMAILS ONLY */}
-                          {/* ===================================================================== */}
-                          {isAuthorizedAdmin(user) && (
-                            <div 
-                              onClick={() => {
-                                window.location.href = "/admin.html";
-                              }}
-                              className="bg-gradient-to-r from-pink-950/40 via-[#1e1e2d] to-purple-950/40 p-3.5 rounded-xl border border-pink-500/40 hover:border-pink-400 shadow-xl cursor-pointer group transition-all duration-200 active:scale-[0.98] flex items-center justify-between"
-                            >
-                              <div className="flex items-center space-x-2.5">
-                                <div className="p-2 rounded-xl bg-gradient-to-tr from-[#ff007f] to-[#7b2cbf] text-white shadow-md group-hover:scale-110 transition-transform">
-                                  <Shield className="w-5 h-5 text-white" />
-                                </div>
-                                <div className="text-left">
-                                  <h5 className="text-[11px] uppercase tracking-wider text-white font-black font-mono flex items-center">
-                                    <span>Web Admin Portal</span>
-                                    <span className="ml-1.5 text-[7px] bg-[#ff007f] text-white px-1.5 py-0.2 rounded font-mono font-bold animate-pulse">👑 MASTER CONSOLE</span>
-                                  </h5>
-                                  <p className="text-[8.5px] text-pink-200/90 mt-0.5 font-sans">
-                                    Full Web Management: <span className="text-white font-bold">Users, KYC, Coins, Withdrawals & Stream Nodes</span>
-                                  </p>
-                                </div>
-                              </div>
-                              <div className="flex items-center space-x-1 text-[9.5px] text-pink-400 font-black group-hover:translate-x-1 transition-transform bg-pink-500/10 border border-pink-500/30 px-2 py-1 rounded-lg">
-                                <span>Enter Portal</span>
-                                <span>➔</span>
-                              </div>
-                            </div>
-                          )}
-
-                          {/* Level Progress */}
+                                                    {/* Level Progress */}
                           {(() => {
                             const profileProg = getProgressionFromCoins(user.xp || 0);
                             return (
@@ -21740,7 +21892,7 @@ export default function App() {
                                 <div className="space-y-2.5 text-[9px] bg-transparent">
                                   <p className="text-gray-400 font-medium">Currently requesting viewers to join audio/video slots:</p>
                                   <div className="space-y-2 bg-transparent">
-                                    {userLiveGuestRequests.map((req) => (
+                                    {userLiveGuestRequests.map((req, idx) => (
                                       <div key={idx} className="flex justify-between items-center bg-white/5 p-2 rounded-lg border border-white/5">
                                         <div className="flex items-center space-x-1.5 bg-transparent">
                                           <img src={req.avatar || DEFAULT_USER.avatar} className="w-5 h-5 rounded-full object-cover shrink-0" />
@@ -24054,7 +24206,7 @@ export default function App() {
                             onClick={() => setCurrentChatTab("messages")}
                             className={`flex-1 py-2 text-[9.5px] font-extrabold uppercase tracking-wider font-mono transition-all border-b-2 ${currentChatTab === "messages" ? "text-amber-400 border-amber-400 bg-amber-500/10 drop-shadow-[0_0_8px_rgba(245,158,11,0.5)]" : "text-amber-200/60 border-transparent hover:text-amber-200"}`}
                           >
-                            💬 WhatsApp Inbox
+                            💬 Direct Messages
                           </button>
                           <button
                             type="button"
@@ -24132,7 +24284,7 @@ export default function App() {
                             </div>
                           </div>
                         ) : activeChatContact === null ? (
-                          /* Golden WhatsApp Style Contacts/Chats List */
+                          /* Direct Messages and Contacts List */
                           <div className="flex-1 flex flex-col bg-gradient-to-b from-[#141008] via-[#0b0a06] to-[#120f08] text-white overflow-hidden">
                             {/* Golden WhatsApp Search Bar */}
                             <div className="p-3 bg-[#1a150d] border-b border-amber-500/30 flex items-center space-x-2 shrink-0 shadow-md">
@@ -24342,7 +24494,7 @@ export default function App() {
                                 <div className="p-6 text-center space-y-4">
                                   <div className="text-4xl text-amber-400/40 font-mono animate-bounce mt-4">💬</div>
                                   <p className="text-amber-200/70 text-xs font-mono">No active conversations yet.</p>
-                                  <p className="text-amber-400/50 text-[10px] max-w-[200px] mx-auto leading-relaxed">Search for any registered user above by name or username to start WhatsApp chatting!</p>
+                                  <p className="text-amber-400/50 text-[10px] max-w-[200px] mx-auto leading-relaxed">Search for any registered user by name or username to start a private conversation.</p>
                                   
                                   {(allRegisteredUsers || []).filter(u => u && u.username !== user.username).length > 0 && (
                                     <div className="mt-6 text-left space-y-2 max-w-sm mx-auto">
@@ -24413,7 +24565,7 @@ export default function App() {
                             </div>
                           </div>
                         ) : (
-                          /* Active Golden WhatsApp Chat Screen */
+                          /* Active Pardais Private Chat Screen */
                           <div 
                             className="flex-1 flex flex-col bg-[#0b0a06] relative justify-between overflow-hidden"
                             style={{
@@ -25740,7 +25892,19 @@ export default function App() {
                           )}
                         </button>
 
-                        {/* Shop */}
+                        {/* Rooms */}
+                        <button
+                          onClick={() => setClientView("rooms")}
+                          className={`flex flex-col items-center flex-1 py-1 transition-all relative group cursor-pointer ${
+                            clientView === "rooms" ? "text-[#ff007f] scale-110 font-black" : "text-gray-400 hover:text-purple-300"
+                          }`}
+                        >
+                          <Users className={`w-4.5 h-4.5 mb-0.5 transition-transform ${clientView === "rooms" ? "drop-shadow-[0_0_10px_rgba(255,0,127,0.8)]" : "group-hover:scale-110"}`} />
+                          <span className="text-[8.5px] font-extrabold uppercase tracking-wider">Rooms</span>
+                          {clientView === "rooms" && <span className="w-1.5 h-1.5 rounded-full bg-[#ff007f] shadow-[0_0_8px_#ff007f] mt-0.5 animate-pulse" />}
+                        </button>
+
+                        {/* Store */}
                         <button
                           onClick={() => setClientView("shop")}
                           className={`flex flex-col items-center flex-1 py-1 transition-all relative group cursor-pointer ${
@@ -25748,24 +25912,8 @@ export default function App() {
                           }`}
                         >
                           <ShoppingBag className={`w-4.5 h-4.5 mb-0.5 transition-transform ${clientView === "shop" ? "drop-shadow-[0_0_10px_rgba(255,213,79,0.8)]" : "group-hover:scale-110"}`} />
-                          <span className="text-[8.5px] font-extrabold uppercase tracking-wider">Shop</span>
-                          {clientView === "shop" && (
-                            <span className="w-1.5 h-1.5 rounded-full bg-[#ffd54f] shadow-[0_0_8px_#ffd54f] mt-0.5 animate-pulse" />
-                          )}
-                        </button>
-
-                        {/* Moments (formerly Reels) */}
-                        <button
-                          onClick={() => setClientView("moments")}
-                          className={`flex flex-col items-center flex-1 py-1 transition-all relative group cursor-pointer ${
-                            clientView === "moments" ? "text-[#ffd54f] scale-110 font-black" : "text-gray-400 hover:text-amber-200"
-                          }`}
-                        >
-                          <Film className={`w-4.5 h-4.5 mb-0.5 transition-transform ${clientView === "moments" ? "drop-shadow-[0_0_10px_rgba(255,213,79,0.8)]" : "group-hover:scale-110"}`} />
-                          <span className="text-[8.5px] font-extrabold uppercase tracking-wider">Moments</span>
-                          {clientView === "moments" && (
-                            <span className="w-1.5 h-1.5 rounded-full bg-[#ffd54f] shadow-[0_0_8px_#ffd54f] mt-0.5 animate-pulse" />
-                          )}
+                          <span className="text-[8.5px] font-extrabold uppercase tracking-wider">Store</span>
+                          {clientView === "shop" && <span className="w-1.5 h-1.5 rounded-full bg-[#ffd54f] shadow-[0_0_8px_#ffd54f] mt-0.5 animate-pulse" />}
                         </button>
 
                         {/* Create (+) Center Floating Accent Button */}
@@ -25781,18 +25929,16 @@ export default function App() {
                           </div>
                         </button>
 
-                        {/* Live (Video Live, PK, Solo Live) */}
+                        {/* Videos */}
                         <button
-                          onClick={() => setClientView("stream")}
+                          onClick={() => setClientView("moments")}
                           className={`flex flex-col items-center flex-1 py-1 transition-all relative group cursor-pointer ${
-                            clientView === "stream" ? "text-[#00e5ff] scale-110 font-black" : "text-gray-400 hover:text-cyan-200"
+                            clientView === "moments" ? "text-[#00e5ff] scale-110 font-black" : "text-gray-400 hover:text-cyan-200"
                           }`}
                         >
-                          <Tv className={`w-4.5 h-4.5 mb-0.5 transition-transform ${clientView === "stream" ? "drop-shadow-[0_0_10px_rgba(0,229,255,0.8)]" : "group-hover:scale-110"}`} />
-                          <span className="text-[8.5px] font-extrabold uppercase tracking-wider">Live</span>
-                          {clientView === "stream" && (
-                            <span className="w-1.5 h-1.5 rounded-full bg-[#00e5ff] shadow-[0_0_8px_#00e5ff] mt-0.5 animate-pulse" />
-                          )}
+                          <Film className={`w-4.5 h-4.5 mb-0.5 transition-transform ${clientView === "moments" ? "drop-shadow-[0_0_10px_rgba(0,229,255,0.8)]" : "group-hover:scale-110"}`} />
+                          <span className="text-[8.5px] font-extrabold uppercase tracking-wider">Videos</span>
+                          {clientView === "moments" && <span className="w-1.5 h-1.5 rounded-full bg-[#00e5ff] shadow-[0_0_8px_#00e5ff] mt-0.5 animate-pulse" />}
                         </button>
 
                         {/* DM (Chat messages) */}
@@ -25803,7 +25949,7 @@ export default function App() {
                           }`}
                         >
                           <MessageSquare className={`w-4.5 h-4.5 mb-0.5 transition-transform ${clientView === "chat" ? "drop-shadow-[0_0_10px_rgba(156,107,255,0.8)]" : "group-hover:scale-110"}`} />
-                          <span className="text-[8.5px] font-extrabold uppercase tracking-wider">DM</span>
+                          <span className="text-[8.5px] font-extrabold uppercase tracking-wider">Chat</span>
                           {clientView === "chat" && (
                             <span className="w-1.5 h-1.5 rounded-full bg-[#9c6bff] shadow-[0_0_8px_#9c6bff] mt-0.5 animate-pulse" />
                           )}
@@ -27097,49 +27243,7 @@ export default function App() {
                             </div>
                           </div>
 
-                          {/* 👑 WEB ADMIN PORTAL LAUNCHER (Restricted to Authorized Admin Emails) */}
-                          {isAuthorizedAdmin(user) && (
-                            <div className="bg-gradient-to-r from-purple-950/80 to-pink-950/80 p-3 rounded-xl border border-purple-500/40 space-y-2">
-                              <div className="flex justify-between items-center text-[10px]">
-                                <span className="font-extrabold text-pink-300 flex items-center font-mono">
-                                  <Shield className="w-4 h-4 text-pink-400 mr-1.5" />
-                                  <span>Web Admin Portal</span>
-                                </span>
-                                <span className="text-[7.5px] bg-purple-500/30 text-pink-300 border border-purple-400/40 px-1.5 py-0.2 rounded font-black font-mono">
-                                  RESTRICTED
-                                </span>
-                              </div>
-                              <p className="text-[8px] text-gray-300">
-                                Comprehensive live stream oversight, KYC verification approvals, agency payouts, and user management.
-                              </p>
-                              <div className="flex space-x-2 pt-1">
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    window.location.href = "/admin.html";
-                                    setShowSettingsDrawer(false);
-                                  }}
-                                  className="flex-1 bg-gradient-to-r from-purple-700 to-pink-600 hover:from-purple-600 hover:to-pink-500 text-white font-black text-[8.5px] uppercase py-2 rounded-xl transition-all shadow-md active:scale-95 flex items-center justify-center space-x-1 cursor-pointer"
-                                >
-                                  <Shield className="w-3 h-3 text-pink-200" />
-                                  <span>Web Portal</span>
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setShowWhatsappAdminModal(true);
-                                    setShowSettingsDrawer(false);
-                                  }}
-                                  className="flex-1 bg-[#25D366]/20 hover:bg-[#25D366]/30 border border-[#25D366]/40 text-[#25D366] font-black text-[8.5px] uppercase py-2 rounded-xl transition-all shadow-md active:scale-95 flex items-center justify-center space-x-1 cursor-pointer"
-                                >
-                                  <MessageCircle className="w-3 h-3 text-[#25D366]" />
-                                  <span>WhatsApp Setup</span>
-                                </button>
-                              </div>
-                            </div>
-                          )}
-
-                          {/* Profile Quick Edit */}
+                                                    {/* Profile Quick Edit */}
                           <div className="bg-[#12121a] p-3 rounded-xl border border-[#303040] space-y-3">
                             <span className="text-[8px] uppercase tracking-wider text-pink-400 block font-bold font-mono">Quick Profile Customization</span>
                             

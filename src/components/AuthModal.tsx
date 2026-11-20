@@ -23,7 +23,9 @@ import {
   sendEmailOtp,
   emailPasswordLogin,
   requestPasswordReset,
-  resetEmailPassword
+  resetEmailPassword,
+  sendLoginOtp,
+  verifyLoginOtp
 } from "../lib/apiClient";
 import { getSavedAccounts, saveAccountToDevice } from "../lib/accountStorage";
 import { SavedAccount } from "../types";
@@ -56,6 +58,9 @@ export default function AuthModal({
   const [loginIdentifier, setLoginIdentifier] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
   const [showLoginPassword, setShowLoginPassword] = useState(false);
+  const [loginMethod, setLoginMethod] = useState<"password" | "otp">("password");
+  const [loginOtp, setLoginOtp] = useState("");
+  const [loginOtpSent, setLoginOtpSent] = useState(false);
 
   // Signup fields
   const [signupStep, setSignupStep] = useState<"email" | "otp" | "register">("email");
@@ -99,6 +104,11 @@ export default function AuthModal({
     setActiveTab(tab);
     setErrorMsg("");
     setSuccessMsg("");
+    if (tab !== "login") {
+      setLoginMethod("password");
+      setLoginOtp("");
+      setLoginOtpSent(false);
+    }
     if (tab === "signup" && signupStep === "register" && !signupToken) {
       setSignupStep("email");
     }
@@ -125,6 +135,54 @@ export default function AuthModal({
       onClose();
     } catch (err: any) {
       setErrorMsg(err?.message || "Login failed. Please verify your credentials.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Passwordless login uses a Pardais-owned OTP challenge and the existing
+  // Pardais user/session database. It never calls Alpha Mate Firebase.
+  const handleSendLoginOtp = async () => {
+    const cleanEmail = loginIdentifier.trim().toLowerCase();
+    if (!cleanEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+      setErrorMsg("Enter the email address registered to your Pardais Party account.");
+      return;
+    }
+    if (resendCooldown > 0) return;
+    setErrorMsg("");
+    setSuccessMsg("");
+    setLoading(true);
+    try {
+      const data = await sendLoginOtp(cleanEmail);
+      setLoginOtpSent(true);
+      setLoginOtp("");
+      setResendCooldown(60);
+      setSuccessMsg(data.message || "If an active account exists, a login code has been sent.");
+    } catch (err: any) {
+      if (err?.retryAfterSeconds) setResendCooldown(Number(err.retryAfterSeconds));
+      setErrorMsg(err?.message || "Could not send a login code. Please try again.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleVerifyLoginOtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanEmail = loginIdentifier.trim().toLowerCase();
+    const cleanOtp = loginOtp.trim().replace(/\D/g, "");
+    if (!cleanEmail || cleanOtp.length !== 6) {
+      setErrorMsg("Enter the 6-digit login code sent to your registered email.");
+      return;
+    }
+    setErrorMsg("");
+    setSuccessMsg("");
+    setLoading(true);
+    try {
+      const data = await verifyLoginOtp(cleanEmail, cleanOtp);
+      onSuccess(data.user, data.token);
+      onClose();
+    } catch (err: any) {
+      setErrorMsg(err?.message || "Login code is invalid or expired.");
     } finally {
       setLoading(false);
     }
@@ -450,7 +508,12 @@ export default function AuthModal({
               );
             })()}
 
-            <form onSubmit={handlePasswordLogin} className="space-y-4">
+            <div className="grid grid-cols-2 gap-2 rounded-xl bg-black/30 p-1 border border-white/10">
+              <button type="button" onClick={() => { setLoginMethod("password"); setLoginOtpSent(false); setLoginOtp(""); setErrorMsg(""); setSuccessMsg(""); }} className={`py-2 rounded-lg text-xs font-bold transition-all ${loginMethod === "password" ? "bg-[#ff007f] text-white" : "text-gray-400"}`}>Password</button>
+              <button type="button" onClick={() => { setLoginMethod("otp"); setLoginOtpSent(false); setLoginOtp(""); setErrorMsg(""); setSuccessMsg(""); }} className={`py-2 rounded-lg text-xs font-bold transition-all ${loginMethod === "otp" ? "bg-[#7b2cbf] text-white" : "text-gray-400"}`}>Email OTP</button>
+            </div>
+
+            <form onSubmit={loginMethod === "password" ? handlePasswordLogin : handleVerifyLoginOtp} className="space-y-4">
             <div>
               <label className="block text-xs font-semibold text-gray-300 mb-1.5">
                 Email Address or Username
@@ -466,39 +529,50 @@ export default function AuthModal({
               />
             </div>
 
-            <div>
-              <div className="flex items-center justify-between mb-1.5">
-                <label className="text-xs font-semibold text-gray-300">
-                  Password
-                </label>
-                <button
-                  type="button"
-                  onClick={() => switchTab("forgot")}
-                  className="text-xs text-pink-400 hover:underline"
-                >
-                  Forgot Password?
+            {loginMethod === "password" ? (
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-xs font-semibold text-gray-300">Password</label>
+                  <button type="button" onClick={() => switchTab("forgot")} className="text-xs text-pink-400 hover:underline">Forgot Password?</button>
+                </div>
+                <div className="relative">
+                  <input
+                    type={showLoginPassword ? "text" : "password"}
+                    value={loginPassword}
+                    onChange={(e) => setLoginPassword(e.target.value)}
+                    placeholder="Enter your password"
+                    required
+                    autoComplete="current-password"
+                    className="w-full bg-[#dde7f5] text-gray-900 font-medium text-sm rounded-2xl px-4 py-3.5 pr-12 outline-none transition-all placeholder:text-gray-500 focus:ring-2 focus:ring-pink-500"
+                  />
+                  <button type="button" onClick={() => setShowLoginPassword((v) => !v)} className="absolute inset-y-0 right-3.5 flex items-center text-gray-600 hover:text-gray-900" aria-label={showLoginPassword ? "Hide password" : "Show password"}>
+                    {showLoginPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div>
+                <label className="block text-xs font-semibold text-gray-300 mb-1.5">6-Digit Email Code</label>
+                {loginOtpSent ? (
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    maxLength={6}
+                    value={loginOtp}
+                    onChange={(e) => setLoginOtp(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                    placeholder="Enter 6-digit code"
+                    required
+                    className="w-full bg-[#dde7f5] text-gray-900 font-bold text-lg tracking-[0.35em] text-center rounded-2xl px-4 py-3.5 outline-none focus:ring-2 focus:ring-pink-500"
+                  />
+                ) : (
+                  <p className="text-[11px] text-gray-400">We will send a one-time login code to your registered email address.</p>
+                )}
+                <button type="button" onClick={handleSendLoginOtp} disabled={loading || resendCooldown > 0} className="mt-2 w-full rounded-xl border border-cyan-400/40 bg-cyan-500/10 text-cyan-200 py-2.5 text-xs font-bold disabled:opacity-50">
+                  {loginOtpSent ? (resendCooldown > 0 ? `Resend code in ${resendCooldown}s` : "Resend login code") : "Send login code"}
                 </button>
               </div>
-              <div className="relative">
-                <input
-                  type={showLoginPassword ? "text" : "password"}
-                  value={loginPassword}
-                  onChange={(e) => setLoginPassword(e.target.value)}
-                  placeholder="Enter your password"
-                  required
-                  autoComplete="current-password"
-                  className="w-full bg-[#dde7f5] text-gray-900 font-medium text-sm rounded-2xl px-4 py-3.5 pr-12 outline-none transition-all placeholder:text-gray-500 focus:ring-2 focus:ring-pink-500"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowLoginPassword((v) => !v)}
-                  className="absolute inset-y-0 right-3.5 flex items-center text-gray-600 hover:text-gray-900"
-                  aria-label={showLoginPassword ? "Hide password" : "Show password"}
-                >
-                  {showLoginPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                </button>
-              </div>
-            </div>
+            )}
 
             <button
               type="submit"
@@ -511,7 +585,7 @@ export default function AuthModal({
                   <span>Logging in…</span>
                 </>
               ) : (
-                <span>Log In</span>
+                <span>{loginMethod === "otp" ? "Verify & Log In" : "Log In"}</span>
               )}
             </button>
 

@@ -1,0 +1,163 @@
+Pardais Party migration progress — 20 Nov 2026
+================================================
+
+OVERALL STATUS: IN PROGRESS — NOT A PRODUCTION RELEASE.
+
+STAGE 1 — SIGNUP / LOGIN
+------------------------
+Implemented in the Pardais Party codebase:
+- Existing Pardais email signup OTP flow retained.
+- Existing Pardais email/username + password login retained.
+- Existing Google sign-in flow retained.
+- Existing forgot-password / reset-password OTP flow retained.
+- Added Pardais-owned email OTP login endpoints:
+  POST /api/v1/auth/send-login-otp
+  POST /api/v1/auth/verify-login-otp
+- Added client helpers and Login UI mode toggle (Password / Email OTP).
+- Signup and login OTP challenges have distinct type checks so one flow's
+  challenge cannot be consumed by the other.
+- Login OTP sends a generic response for unknown/ineligible accounts to reduce
+  account-enumeration risk.
+- Alpha Mate Firebase Auth is not used by Pardais login. Pardais API/session and
+  Pardais database remain authoritative.
+
+STAGE 2 — MAIN UI / NAVIGATION
+-----------------------------
+Implemented:
+- Added dedicated Party Rooms view using Pardais Party's existing party records.
+- Reused Pardais room join flow, category filtering, and create-room modal.
+- Updated bottom navigation to:
+  Home → Rooms → Store → Plus → Videos → Chat → Profile
+- Store maps to the existing Shop screen.
+- Videos maps to the existing Moments feed.
+- Plus retains the existing create/stream action sheet.
+- Removed obsolete Live tab from bottom navigation; live functionality remains
+  reachable from the existing Home/Live controls and create/stream actions.
+
+PROFILE / CHAT / DM AUDIT
+-------------------------
+Existing Pardais modules were inspected and retained rather than replacing
+their data layer with Alpha Mate's AppContext/Firebase:
+- Profile: cover/avatar upload, edit profile, permanent Pardais ID, follower/
+  following/likes stats, level badge, VIP frames/rides, stories, reels, agency
+  controls, settings, account switching, wallet and profile actions.
+- Chat/DM: Pardais Firestore conversation collection, live conversation list,
+  live message subscription, unread counts, read receipts, text/image/voice/
+  sticker message payloads, registered-user search, profile preview, and
+  block/unblock controls.
+- Updated user-facing chat wording from "WhatsApp Inbox" to "Direct Messages".
+- These modules continue to use Pardais Party identity and Pardais Firestore.
+
+ERROR FIXES / STATIC VALIDATION
+-------------------------------
+- Rewrote the malformed inline guest-camera JSX expression.
+- Fixed the host-only party reaction guard to derive host identity from the
+  active Pardais room.
+- Fixed an undefined idx in the guest request list map callback.
+- Fixed Dragon Tiger bet total typing for TypeScript 7's Object.values typing.
+- Typed the gift response object to allow the canonical giftEvent property.
+- Replaced a Node-only setImmediate callback with zero-delay setTimeout.
+- TypeScript transpileModule syntax validation passed for all 48 TypeScript/
+  TSX source files (no syntax diagnostics).
+- Global tsc semantic check reports no remaining project-specific TS2365,
+  TS2339, or TS2304 errors. Full typecheck/build is still blocked because
+  node_modules could not be installed in this environment; missing-module and
+  Node type errors remain until npm ci completes.
+
+DATA / BACKUP SAFETY
+--------------------
+- Pardais Firebase config, backend API client, server, database JSON, and
+  package configuration remain based on the original Pardais project.
+- Alpha Mate original ZIP and its Firebase/database files were not modified.
+- No Alpha Mate database was copied into Pardais.
+- No production database was cleared, overwritten, or migrated.
+
+REMAINING BEFORE FINAL ZIP
+--------------------------
+- Complete visual parity review of Home, Profile, and Chat/DM against Alpha Mate.
+- Confirm all screen navigation and responsive/mobile layout behavior.
+- Complete build with dependencies installed (npm ci, npm run build).
+- Run API integration tests for signup/login OTP against the configured Pardais
+  backend and email provider.
+- Run Android Gradle APK/AAB build and runtime smoke tests.
+- Re-run archive integrity and final source/config audit.
+
+Do not publish this working tree as production-ready until the remaining build,
+backend integration, and Android runtime tests pass.
+
+
+BRANDING ASSET VALIDATION
+-------------------------
+- Supplied artwork converted to a genuine PNG asset (not a JPEG renamed as PNG).
+- Updated in-app splash screen, PWA 192/512 icons, browser favicon, Apple touch icon,
+  Android launcher icons, and Android adaptive foreground icons.
+
+
+SEPARATE ADMIN FRONTEND
+-----------------------
+- The admin frontend was removed from the consumer app entry/build.
+- A separate Admin Portal source package was created from the original admin
+  frontend dependency graph. It still calls the Pardais backend API.
+- Admin API routes remain in the Pardais server; they were not extracted into a
+  second backend service. Server-side authorization must remain enforced.
+
+
+CORRECTIVE ALPHA MATE UI / FUNCTIONALITY PARITY PASS — 20 NOV 2026
+-----------------------------------------------------------------
+This pass corrects the earlier incomplete migration. The prior release had only
+a placeholder Shop page and basic Rooms navigation; that did NOT satisfy the
+requested Alpha Mate parity.
+
+STORE — IMPLEMENTED IN THIS CORRECTIVE SOURCE
+- Replaced the incomplete Pardais Shop / "Coming Soon" cards with the full
+  Alpha Mate StoreScreen UI adapted to Pardais Party.
+- Ported the full catalog: 12 VIP frames, 8 decorative frames, 14 special
+  entrances, 9 custom gifts, 6 customized gifts, and 9 tags/badges (58
+  server-allowlisted purchasable items).
+- Ported the five Store categories, item preview/details, price/level locks,
+  backpack/inventory view, purchase and equip UI, and store sound effects.
+- The Alpha Mate StoreScreen was adapted to explicit Pardais callbacks; its
+  original useApp / Alpha Firebase dependency was removed.
+- Added Pardais-authenticated API routes:
+  GET  /api/v1/store/inventory
+  POST /api/v1/store/purchase
+  POST /api/v1/store/equip
+- Purchase prices and item IDs are validated on the Pardais server. The server
+  deducts the Pardais user's coin balance, persists inventory/equipped items,
+  and writes a store transaction. The client cannot submit a trusted price or
+  self-award coins.
+- VIP frames map to Pardais' existing vip-frame-N profile renderer.
+
+HOME — UI / FUNCTIONALITY ALIGNMENT
+- Renamed the Explore feed tab to "For You", preserving its existing discovery
+  filters and host discovery; Following remains a separate tab.
+- Added a Home Daily Rewards shortcut to Pardais' existing daily-task overlay.
+- Existing Pardais stories, search, host discovery, party/live switch, PK
+  discovery and stream entry functions remain in the Pardais data layer.
+
+PROFILE — UI ALIGNMENT / EXISTING FUNCTIONALITY PRESERVED
+- Restyled the profile cover hero to Alpha Mate's taller stage-cover treatment,
+  ambient gradient, glass label and visual hierarchy, using Pardais branding.
+- Preserved Pardais avatar/cover upload, profile edit, stats, stories, reels,
+  wallet, agency, settings, notifications and account-switching actions.
+- Profile edit continues to use Pardais' own server/profile update path.
+
+PARTY ROOMS — CARD DESIGN ALIGNMENT
+- Reworked external room listing cards to match Alpha Mate's purple glass,
+  trending/featured, host-avatar, viewer, gift and seat-preview card hierarchy.
+- Pardais room creation, room records, categories, join handler, seat model,
+  voice engine and in-room design remain Pardais-owned and unchanged.
+
+LIVE — FUNCTIONALITY PRESERVED
+- Kept Pardais' Agora live engine, host/viewer sessions, camera filters,
+  comments, gift events/animations, combo counter, viewer list, top givers,
+  reactions, PK and backend live records.
+- These were not replaced with Alpha Mate Firebase-dependent components.
+- Further visual QA on real Android devices is still required.
+
+VALIDATION
+- TypeScript syntax/transpile scan passed for all 50 TS/TSX source files.
+- Global tsc cannot complete because dependencies/node_modules are absent;
+  remaining diagnostics are missing module / Node typings only, with no
+  non-dependency project errors found.
+- Production Vite build and Android APK/AAB runtime tests remain unverified.
